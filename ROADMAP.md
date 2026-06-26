@@ -19,32 +19,44 @@ Lock a typed, frame-exact representation of an MLT timeline that round-trips
 losslessly to `.mlt` and renders faithfully. This is the "infrastructure works
 exactly as we want" gate; everything stacks on it.
 
-- [ ] Port studio's `src/mlt` (types, builder, serialize, profile) as the seed;
+- [x] Port studio's `src/mlt` (types, builder, serialize, profile) as the seed;
       **strip the `@/brand` coupling** — colors become plain hex/named, no palette.
-- [ ] Extend the IR: multiple video + audio tracks (`tractor` of `playlist`s);
+- [x] Extend the IR: multiple video + audio tracks (`tractor` of `playlist`s);
       explicit audio clips + gain + A/V link; first-class filters & transitions
       (not just dissolve); a real keyframe model.
 - [ ] Keyframe model + animation-string parser/serializer — round-trips MLT's
       `"0=100;50~=0"` strings byte-faithfully (full marker table: `|` hold, `~`
       smooth, `$`/`-` natural/tight, Penner easings; `%`÷100; negative/relative
       frames; rect/color component-wise; re-base to `in`; `LC_NUMERIC` `.`-decimal).
-- [ ] Serializer: deterministic IR → `.mlt` (two-pass defs-before-refs, inclusive
+      <!-- markers, %, negative/relative frames, rect/color all round-trip
+           (tests/adversarial); BUT a comma-decimal INSIDE an animation string is
+           NOT migrated to dot (LC_NUMERIC defect) → leave unchecked. See GATE.md. -->
+- [x] Serializer: deterministic IR → `.mlt` (two-pass defs-before-refs, inclusive
       0-based in/out, `<blank length>` gaps, `a_track`/`b_track` integer indices,
       nested-tractor dissolve, `LC_NUMERIC`). Same IR → byte-identical XML.
-- [ ] Parser: `.mlt` → IR (reads Shotcut-saved files; normalizes like Shotcut's
+- [x] Parser: `.mlt` → IR (reads Shotcut-saved files; normalizes like Shotcut's
       `MltXmlChecker` — decimal separators, relative paths, version guard).
-- [ ] Assemble the test corpus in `corpus/`: a few hand-authored `.mlt`, studio's
+- [x] Assemble the test corpus in `corpus/`: a few hand-authored `.mlt`, studio's
       own emissions, and a couple saved out of Shotcut.
-- [ ] `melt`/ffmpeg driver: headless render + single-frame grab + contact sheet.
+- [x] `melt`/ffmpeg driver: headless render + single-frame grab + contact sheet.
 
 **Gate (all green):**
-- [ ] Round-trip golden: every corpus file → IR → serialize → **semantically
-      equal** (byte-identical for our own emissions).
-- [ ] Render-faithfulness: `melt` renders the re-emitted XML; still-frame
-      hashes/SSIM match rendering the original XML (within tolerance).
+- [x] Round-trip golden: every corpus file → IR → serialize → **semantically
+      equal** (byte-identical for our own emissions). <!-- 10/10 fixpoint; the 2
+      vean emissions byte-identical (corpus-golden.test.ts). -->
+- [x] Render-faithfulness: `melt` renders the re-emitted XML; still-frame
+      hashes/SSIM match rendering the original XML (within tolerance). <!-- verify:corpus
+      OVERALL PASS — 10/10; min SSIM 0.9997 (shotcut-dissolve), all others 1.0000. -->
 - [ ] Keyframe round-trip: parse → typed model → serialize is identical (golden).
-- [ ] `bun run test` green; `bun run typecheck` clean.
+      <!-- mostly faithful, but adversarial verification found 3 real defects:
+           (1) comma-decimal inside an animation string survives uncorrected →
+           SILENT mis-render; (2) producer-level shotcut:caption/eof/aspect_ratio
+           DROPPED; (3) empty animation property fabricates "0". Not lossless →
+           unchecked. Pinned as KNOWN DEFECT tests; see GATE.md. -->
+- [x] `bun run test` green; `bun run typecheck` clean. <!-- 161 tests / 10 files
+      pass; tsc --noEmit clean; biome clean (auto-fixable lint nits resolved). -->
 - [ ] Human spot-check: open a re-emitted `.mlt` in Shotcut, confirm it looks right.
+      <!-- awaiting Tejas: open corpus/vean-multitrack.mlt in Shotcut (see GATE.md). -->
 
 ---
 

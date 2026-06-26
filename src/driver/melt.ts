@@ -1,0 +1,238 @@
+// The render/inspect driver — vean's arm's-length bridge to `melt` (MLT/FFmpeg).
+// It shells out to the `melt` and `ffmpeg`/`ffprobe` BINARIES as separate
+// processes (never linking libmlt/libavcodec — Hard boundary #1: that keeps vean
+// AGPL-by-choice, not GPL-by-force). Files in, files out; no state, no network.
+//
+// Every body spawns the right subprocess with `Bun.spawn`, streams its stderr
+// (melt/ffmpeg are chatty — they write progress to stderr), waits for exit, and
+// maps a nonzero exit code to a thrown `MeltError` carrying the captured stderr.
+// No library is linked; the boundary is a process boundary, by construction:
+//   • render      → `melt <mlt> -consumer avformat:<out> vcodec=libx264 pix_fmt=yuv420p real_time=-N`
+//   • still       → `melt <mlt> in=<f> out=<f> -consumer avformat:<png>` (one exact frame)
+//   • contactSheet→ `ffprobe` frame-count probe + `ffmpeg` tile filter over
+//     evenly-spaced frames of <video> into one PNG, with the cell→frame map.
+
+/** Result of a subprocess render: where the artifact landed + the exit signal. */
+export type RenderResult = {
+  /** Absolute path to the produced file. */
+  outPath: string;
+  /** Subprocess exit code (0 = success). */
+  code: number;
+  /** Captured stderr (melt/ffmpeg are chatty; surfaced for diagnostics). */
+  stderr: string;
+};
+
+export type RenderOpts = {
+  /** Override the video codec (default libx264). */
+  vcodec?: string;
+  /** Override the pixel format (default yuv420p). */
+  pixFmt?: string;
+  /** Extra raw `melt` consumer args, appended verbatim. */
+  extraArgs?: string[];
+};
+
+// ─── Subprocess plumbing ───────────────────────────────────────────────────
+
+/** Thrown when a spawned binary exits nonzero. Carries the full command line
+ *  and the captured stderr so a failed render is debuggable from the message
+ *  alone (the agent reads this, not a scrollback). */
+export class MeltError extends Error {
+  constructor(
+    readonly bin: string,
+    readonly args: readonly string[],
+    readonly code: number,
+    readonly stderr: string,
+  ) {
+    super(
+      `${bin} exited ${code}\n  command: ${bin} ${args.join(" ")}\n${
+        stderr.trim() ? `  stderr:\n${indent(stderr.trim())}` : "  stderr: <empty>"
+      }`,
+    );
+    this.name = "MeltError";
+  }
+}
+
+function indent(s: string): string {
+  return s
+    .split("\n")
+    .map((l) => `    ${l}`)
+    .join("\n");
+}
+
+/** Spawn `bin args`, drain stdout/stderr to strings, await exit. Returns the
+ *  exit code + captured stderr — the caller decides whether nonzero throws. */
+async function spawnCapture(
+  bin: string,
+  args: string[],
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  const proc = Bun.spawn([bin, ...args], { stdout: "pipe", stderr: "pipe" });
+  // Read both pipes concurrently so a large stream can't deadlock the buffer.
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  return { code, stdout, stderr };
+}
+
+/** Spawn, and throw `MeltError` on a nonzero exit. The common case for renders. */
+async function run(bin: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+  const { code, stdout, stderr } = await spawnCapture(bin, args);
+  if (code !== 0) throw new MeltError(bin, args, code, stderr);
+  return { stdout, stderr };
+}
+
+// ─── render ─────────────────────────────────────────────────────────────────
+
+/** Render a `.mlt` document headless to a video file via `melt`.
+ *
+ *  `real_time=-N` lets melt use as many worker threads as it wants for a
+ *  headless (non-realtime) render — the negative form is "use N threads but
+ *  drop frames is OFF", the standard headless throughput flag. */
+export async function render(
+  mltPath: string,
+  outPath: string,
+  opts: RenderOpts = {},
+): Promise<RenderResult> {
+  const vcodec = opts.vcodec ?? "libx264";
+  const pixFmt = opts.pixFmt ?? "yuv420p";
+  const args = [
+    mltPath,
+    "-consumer",
+    `avformat:${outPath}`,
+    `vcodec=${vcodec}`,
+    `pix_fmt=${pixFmt}`,
+    "real_time=-1",
+    ...(opts.extraArgs ?? []),
+  ];
+  const { stderr } = await run("melt", args);
+  return { outPath, code: 0, stderr };
+}
+
+// ─── still ────────────────────────────────────────────────────────────────────
+
+/** Grab ONE exact frame (`frame`, 0-based) of a `.mlt` to a PNG at full fidelity.
+ *
+ *  `in=`/`out=` on the .mlt argument window the producer to a single inclusive
+ *  frame (playtime = out - in + 1 = 1); `frames=1` stops melt after that one
+ *  frame. `vcodec=png` is REQUIRED, not optional: melt's avformat consumer
+ *  ignores the `.png` extension and defaults to the mjpeg encoder, silently
+ *  writing a (lossy) JPEG into a `.png` file — pinning the codec makes the
+ *  artifact a true, lossless PNG for agent inspection. */
+export async function still(
+  mltPath: string,
+  frame: number,
+  outPath: string,
+): Promise<RenderResult> {
+  if (!Number.isInteger(frame) || frame < 0) {
+    throw new Error(`still: frame must be a non-negative integer, got ${frame}`);
+  }
+  const args = [
+    `${mltPath}`,
+    `in=${frame}`,
+    `out=${frame}`,
+    "-consumer",
+    `avformat:${outPath}`,
+    "vcodec=png",
+    "frames=1",
+  ];
+  const { stderr } = await run("melt", args);
+  return { outPath, code: 0, stderr };
+}
+
+// ─── contactSheet ───────────────────────────────────────────────────────────
+
+/** Metadata for a contact sheet: the grid + the cell→source-frame mapping, so a
+ *  flaw spotted in a cell maps back to a real frame to fix. */
+export type ContactSheet = {
+  outPath: string;
+  cols: number;
+  rows: number;
+  /** cell index (row-major) → the source frame sampled into that cell. */
+  cellFrames: number[];
+};
+
+/** Background/pad colour for the tile grid (ffmpeg wants `0xRRGGBB`). No brand
+ *  coupling here — the driver is brand-agnostic; a neutral dark pad keeps the
+ *  contact sheet readable for any content. */
+const SHEET_BG = "0x101010";
+/** Each cell is scaled to ~this width before tiling; keeps a sheet legible
+ *  without exploding the PNG. `-2` on the height keeps it even for the encoder. */
+const SHEET_CELL_TARGET_W = 1280;
+
+/** Probe the exact decoded frame count of a video stream via `ffprobe`. Counts
+ *  real frames (`-count_frames`) so sampling spans the WHOLE clip, not a
+ *  container-duration estimate. */
+async function probeFrameCount(video: string): Promise<number> {
+  const { stdout } = await run("ffprobe", [
+    "-v",
+    "error",
+    "-select_streams",
+    "v:0",
+    "-count_frames",
+    "-show_entries",
+    "stream=nb_read_frames",
+    "-of",
+    "default=nokey=1:noprint_wrappers=1",
+    video,
+  ]);
+  const total = Number(stdout.trim());
+  if (!Number.isFinite(total) || total <= 0) {
+    throw new Error(
+      `contactSheet: could not read frame count from ${video} (got "${stdout.trim()}")`,
+    );
+  }
+  return Math.trunc(total);
+}
+
+/** Tile evenly-spaced frames of `video` into one PNG (the motion at a glance).
+ *
+ *  Probes the true frame count, samples every `floor(total / cells)` frames via
+ *  ffmpeg's `select`, scales each cell, and tiles them `cols×rows`. Returns the
+ *  cell→frame map so a flaw spotted in cell N maps back to an exact source
+ *  frame to re-inspect with `still`. */
+export async function contactSheet(
+  video: string,
+  outPath: string,
+  cols = 5,
+  rows = 5,
+): Promise<ContactSheet> {
+  if (!Number.isInteger(cols) || cols <= 0 || !Number.isInteger(rows) || rows <= 0) {
+    throw new Error(`contactSheet: cols/rows must be positive integers, got ${cols}×${rows}`);
+  }
+  const cells = cols * rows;
+  const total = await probeFrameCount(video);
+  const interval = Math.max(1, Math.floor(total / cells));
+
+  const cellW = Math.max(2, Math.round(SHEET_CELL_TARGET_W / cols / 2) * 2);
+  // Backslash-escape the comma inside mod() so ffmpeg's filtergraph parser
+  // doesn't read it as an argument separator.
+  const filter =
+    `select='not(mod(n\\,${interval}))',` +
+    `scale=${cellW}:-2,` +
+    `tile=${cols}x${rows}:margin=12:padding=12:color=${SHEET_BG}`;
+
+  await run("ffmpeg", [
+    "-y",
+    "-i",
+    video,
+    "-frames:v",
+    "1",
+    "-vf",
+    filter,
+    "-fps_mode",
+    "vfr",
+    outPath,
+  ]);
+
+  // The cell→frame map mirrors ffmpeg's `select` stride exactly: cell i samples
+  // source frame i*interval, until the stride runs off the end of the clip.
+  const cellFrames: number[] = [];
+  for (let i = 0; i < cells; i++) {
+    const f = i * interval;
+    if (f >= total) break;
+    cellFrames.push(f);
+  }
+
+  return { outPath, cols, rows, cellFrames };
+}

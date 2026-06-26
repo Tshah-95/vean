@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Shotcut-authored: a GAP via <blank> on a video track. Two color clips with a
+     literal <blank length="N"/> between them. Integer-frame in/out (Shotcut also
+     writes these when time_format isn't clock). Background producer at track 0,
+     named V1 track, shotcut:uuid per producer, the always-active mix +
+     cairoblend field transitions Shotcut stamps on every project. -->
+<mlt LC_NUMERIC="C" version="7.38.0" title="shotcut gap" producer="main_bin">
+  <profile description="HD 1080p 30 fps" width="1920" height="1080" progressive="1" sample_aspect_num="1" sample_aspect_den="1" display_aspect_num="16" display_aspect_den="9" frame_rate_num="30" frame_rate_den="1" colorspace="709"/>
+  <producer id="background" in="0" out="149">
+    <property name="length">150</property>
+    <property name="eof">pause</property>
+    <property name="resource">0</property>
+    <property name="aspect_ratio">1</property>
+    <property name="mlt_service">color</property>
+    <property name="mlt_image_format">rgba</property>
+    <property name="set.test_audio">0</property>
+  </producer>
+  <producer id="producer0" in="0" out="44">
+    <property name="length">45</property>
+    <property name="eof">pause</property>
+    <property name="resource">#ffc0392b</property>
+    <property name="mlt_service">color</property>
+    <property name="mlt_image_format">rgba</property>
+    <property name="shotcut:caption">red</property>
+    <property name="shotcut:uuid">{7c1a0e2a-0002-4abc-9d00-000000000010}</property>
+  </producer>
+  <producer id="producer1" in="0" out="74">
+    <property name="length">75</property>
+    <property name="eof">pause</property>
+    <property name="resource">#ff27ae60</property>
+    <property name="mlt_service">color</property>
+    <property name="mlt_image_format">rgba</property>
+    <property name="shotcut:caption">green</property>
+    <property name="shotcut:uuid">{7c1a0e2a-0002-4abc-9d00-000000000011}</property>
+  </producer>
+  <playlist id="background_playlist">
+    <entry producer="background" in="0" out="149"/>
+  </playlist>
+  <playlist id="playlist0">
+    <property name="shotcut:video">1</property>
+    <property name="shotcut:name">V1</property>
+    <entry producer="producer0" in="0" out="44"/>
+    <blank length="30"/>
+    <entry producer="producer1" in="0" out="74"/>
+  </playlist>
+  <tractor id="tractor0" title="shotcut gap" in="0" out="149" shotcut="1">
+    <property name="shotcut:projectAudioChannels">2</property>
+    <property name="shotcut:projectFolder">0</property>
+    <track producer="background"/>
+    <track producer="playlist0"/>
+    <transition id="transition0">
+      <property name="a_track">0</property>
+      <property name="b_track">1</property>
+      <property name="mlt_service">mix</property>
+      <property name="always_active">1</property>
+      <property name="sum">1</property>
+    </transition>
+    <transition id="transition1">
+      <property name="a_track">0</property>
+      <property name="b_track">1</property>
+      <property name="version">0.1</property>
+      <property name="mlt_service">frei0r.cairoblend</property>
+      <property name="threads">0</property>
+      <property name="disable">1</property>
+    </transition>
+  </tractor>
+</mlt>

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- studio assembly proof — hand-authored MLT XML, no third-party CLI.
+     BrandCard.mp4 (Remotion render) hard-cut into a gold tail clip, with a
+     brightness fade on the tail to prove single-track filters render.
+     Renders headless with `melt`; opens in Shotcut for human review. -->
+<mlt LC_NUMERIC="C" version="7.39.0" title="studio assembly proof">
+  <profile description="vertical-1080x1920-30"
+    width="1080" height="1920" progressive="1"
+    sample_aspect_num="1" sample_aspect_den="1"
+    display_aspect_num="9" display_aspect_den="16"
+    frame_rate_num="30" frame_rate_den="1" colorspace="709"/>
+
+  <producer id="brandcard" in="0" out="89">
+    <property name="resource">/Users/tejas/Github/studio/out/BrandCard.mp4</property>
+  </producer>
+
+  <producer id="tail" in="0" out="59">
+    <property name="resource">/Users/tejas/Github/studio/out/tail.mp4</property>
+    <!-- fade in (0→9), hold, fade out (50→59) — keyframes relative to the clip -->
+    <filter mlt_service="brightness">
+      <property name="level">0=0;9=1;50=1;59=0</property>
+    </filter>
+  </producer>
+
+  <playlist id="main">
+    <entry producer="brandcard" in="0" out="89"/>
+    <entry producer="tail" in="0" out="59"/>
+  </playlist>
+
+  <tractor id="timeline">
+    <track producer="main"/>
+  </tractor>
+</mlt>

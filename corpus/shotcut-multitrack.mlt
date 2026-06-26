@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Shotcut-authored: MULTI-TRACK with a cross-track field composite + a
+     keyframed filter. V1 = base (teal), V2 = overlay (white) composited over V1
+     by a qtblend on the MAIN tractor field with a KEYFRAMED rect ("0=…;-1=…"),
+     A1 = the tone at reduced gain. The overlay clip also carries a keyframed
+     brightness filter (a fade-in ramp authored as a Shotcut fadeInBrightness).
+     Track indices on the main tractor: 0=background, 1=V1, 2=V2, 3=A1. -->
+<mlt LC_NUMERIC="C" version="7.38.0" title="shotcut multitrack" producer="main_bin">
+  <profile description="HD 1080p 30 fps" width="1920" height="1080" progressive="1" sample_aspect_num="1" sample_aspect_den="1" display_aspect_num="16" display_aspect_den="9" frame_rate_num="30" frame_rate_den="1" colorspace="709"/>
+  <producer id="background" in="0" out="119">
+    <property name="length">120</property>
+    <property name="eof">pause</property>
+    <property name="resource">0</property>
+    <property name="aspect_ratio">1</property>
+    <property name="mlt_service">color</property>
+    <property name="mlt_image_format">rgba</property>
+    <property name="set.test_audio">0</property>
+  </producer>
+  <producer id="producer0" in="0" out="119">
+    <property name="length">120</property>
+    <property name="eof">pause</property>
+    <property name="resource">#ff168a8a</property>
+    <property name="mlt_service">color</property>
+    <property name="mlt_image_format">rgba</property>
+    <property name="shotcut:caption">teal base</property>
+    <property name="shotcut:uuid">{7c1a0e2a-0004-4abc-9d00-000000000030}</property>
+  </producer>
+  <producer id="producer1" in="0" out="89">
+    <property name="length">90</property>
+    <property name="eof">pause</property>
+    <property name="resource">#ffeeeeee</property>
+    <property name="mlt_service">color</property>
+    <property name="mlt_image_format">rgba</property>
+    <property name="shotcut:caption">white overlay</property>
+    <property name="shotcut:uuid">{7c1a0e2a-0004-4abc-9d00-000000000031}</property>
+    <filter id="filter0" out="89">
+      <property name="start">1</property>
+      <property name="level">0=0;14=1</property>
+      <property name="mlt_service">brightness</property>
+      <property name="shotcut:filter">fadeInBrightness</property>
+    </filter>
+  </producer>
+  <producer id="producer2" in="0" out="89">
+    <property name="length">00:00:03.000</property>
+    <property name="eof">pause</property>
+    <property name="resource">tone.wav</property>
+    <property name="mlt_service">avformat</property>
+    <property name="audio_index">0</property>
+    <property name="video_index">-1</property>
+    <property name="shotcut:caption">tone</property>
+    <property name="shotcut:uuid">{7c1a0e2a-0004-4abc-9d00-000000000032}</property>
+    <filter id="filter1">
+      <property name="window">75</property>
+      <property name="max_gain">20dB</property>
+      <property name="level">0=0.5</property>
+      <property name="mlt_service">volume</property>
+      <property name="shotcut:filter">volumeGain</property>
+    </filter>
+  </producer>
+  <playlist id="background_playlist">
+    <entry producer="background" in="0" out="119"/>
+  </playlist>
+  <playlist id="playlist0">
+    <property name="shotcut:video">1</property>
+    <property name="shotcut:name">V1</property>
+    <entry producer="producer0" in="0" out="119"/>
+  </playlist>
+  <playlist id="playlist1">
+    <property name="shotcut:video">1</property>
+    <property name="shotcut:name">V2</property>
+    <blank length="15"/>
+    <entry producer="producer1" in="0" out="89"/>
+  </playlist>
+  <playlist id="playlist2">
+    <property name="shotcut:audio">1</property>
+    <property name="shotcut:name">A1</property>
+    <entry producer="producer2" in="0" out="89"/>
+  </playlist>
+  <tractor id="tractor0" title="shotcut multitrack" in="0" out="119" shotcut="1">
+    <property name="shotcut:projectAudioChannels">2</property>
+    <property name="shotcut:projectFolder">0</property>
+    <track producer="background"/>
+    <track producer="playlist0"/>
+    <track producer="playlist1"/>
+    <track producer="playlist2" hide="video"/>
+    <transition id="transition0">
+      <property name="a_track">0</property>
+      <property name="b_track">1</property>
+      <property name="mlt_service">mix</property>
+      <property name="always_active">1</property>
+      <property name="sum">1</property>
+    </transition>
+    <transition id="transition1">
+      <property name="a_track">0</property>
+      <property name="b_track">1</property>
+      <property name="version">0.1</property>
+      <property name="mlt_service">frei0r.cairoblend</property>
+      <property name="threads">0</property>
+      <property name="disable">1</property>
+    </transition>
+    <transition id="transition2" in="00:00:00.500" out="00:00:03.967">
+      <property name="a_track">1</property>
+      <property name="b_track">2</property>
+      <property name="version">0.1</property>
+      <property name="mlt_service">qtblend</property>
+      <property name="rect">15=0% 0% 100% 100% 1;64~=25% 12.5% 50% 50% 1;119=0% 0% 100% 100% 1</property>
+      <property name="compositing">0</property>
+      <property name="distort">0</property>
+    </transition>
+    <transition id="transition3">
+      <property name="a_track">0</property>
+      <property name="b_track">3</property>
+      <property name="mlt_service">mix</property>
+      <property name="always_active">1</property>
+      <property name="sum">1</property>
+    </transition>
+  </tractor>
+</mlt>
