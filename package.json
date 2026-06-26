@@ -16,6 +16,7 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "roundtrip": "bun scripts/roundtrip.ts",
+    "lint:xml": "bun scripts/lint-xml.ts",
     "verify:corpus": "bun scripts/verify-corpus.ts"
   },
   "dependencies": {

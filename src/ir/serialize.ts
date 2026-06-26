@@ -27,7 +27,12 @@
 //     ordering of <entry>/<blank> in its playlist.
 //   • a same-track DISSOLVE is a nested <tractor> (track0 = outgoing tail,
 //     track1 = incoming head) carrying a luma (video) + mix (audio, sum=1)
-//     transition over [0, dur-1], tagged shotcut:transition="lumaMix".
+//     transition over [0, dur-1], tagged with a
+//     <property name="shotcut:transition">lumaMix</property> child.
+//   • Shotcut's `shotcut:*` logical names (the filter name, the lumaMix tag) are
+//     emitted as <property> CHILDREN, never as namespaced XML attributes — an
+//     undeclared `shotcut:` prefix makes a namespace-aware reader (Shotcut's own
+//     QXmlStreamReader, xmllint) reject the file (lint:xml guards this).
 //   • cross-track COMPOSITING is a <transition> on the MAIN tractor field,
 //     referencing a_track/b_track by integer index.
 //   • animated filter properties (value strings containing `=`) are emitted
@@ -269,8 +274,17 @@ function gainFilters(clip: Clip): Filter[] {
 
 // ─── Element emitters (indentation is fixed for byte-stability) ──────────────
 function filterLines(f: Filter, indent: string): string[] {
-  const attrs = f.shotcutName ? ` shotcut:filter="${esc(f.shotcutName)}"` : "";
-  const lines = [`${indent}<filter mlt_service="${esc(f.service)}"${attrs}>`];
+  const lines = [`${indent}<filter mlt_service="${esc(f.service)}">`];
+  // Shotcut's logical filter name is a `<property name="shotcut:filter">` CHILD —
+  // a plain string, NEVER a namespaced (`shotcut:filter=`) XML attribute. Genuine
+  // Shotcut writes it this way and a namespace-aware reader (Shotcut's
+  // QXmlStreamReader, xmllint) rejects the attribute form with an undeclared-prefix
+  // error. Emit it FIRST (a deterministic, stable slot the parser re-captures) so
+  // it precedes the filter's data properties — matching the shotcut:uuid/video/
+  // audio/name property convention already used elsewhere in this serializer.
+  if (f.shotcutName) {
+    lines.push(`${indent}  <property name="shotcut:filter">${esc(f.shotcutName)}</property>`);
+  }
   for (const [k, v] of Object.entries(f.properties)) {
     lines.push(`${indent}  <property name="${esc(k)}">${propValue(v)}</property>`);
   }
@@ -318,8 +332,14 @@ function wrapperXml(w: Wrapper): string {
 // track0 = outgoing tail under track1 = incoming head, with a luma video
 // cross-dissolve + a mix audio cross-fade (sum=1) over the whole overlap.
 function dissolveXml(d: Dissolve2): string {
+  // `shotcut:transition` is a `<property>` CHILD (a plain string), NEVER a
+  // namespaced (`shotcut:transition=`) XML attribute — genuine Shotcut writes it
+  // this way and a namespace-aware reader rejects the attribute form. Emit it FIRST
+  // inside the tractor (the slot Shotcut uses and the parser re-captures), before
+  // the tracks/transitions, mirroring the shotcut:uuid/name property convention.
   return [
-    `  <tractor id="${d.id}" shotcut:transition="lumaMix">`,
+    `  <tractor id="${d.id}">`,
+    `    <property name="shotcut:transition">lumaMix</property>`,
     `    <track producer="${d.a.id}" in="${d.a.in}" out="${d.a.out}"/>`,
     `    <track producer="${d.b.id}" in="${d.b.in}" out="${d.b.out}"/>`,
     `    <transition mlt_service="${esc(d.luma)}" in="0" out="${d.frames - 1}">`,

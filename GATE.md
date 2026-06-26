@@ -3,8 +3,8 @@
 **Status: GREEN pending one human spot-check.**
 
 The headless spine is real and verified — the document core round-trips
-losslessly, renders faithfully, and the build is green. Two rounds of adversarial
-verification ran:
+losslessly, renders faithfully, **opens in Shotcut**, and the build is green.
+Three rounds of adversarial verification ran:
 
 - **Round 1** found 3 correctness defects in the keyframe / round-trip engine —
   **all 3 fixed** (see "Original defects — fixed").
@@ -14,10 +14,20 @@ verification ran:
   5 *low/latent* contract gaps inside the keyframe engine that are **not on the
   document path** and cannot mis-render today — these are documented as open and
   scoped to Move 1 (see "Open — low / latent").
+- **Round 3 (Shotcut-openability)** found the one defect that broke *opening* in
+  Shotcut even though `melt` rendered fine: vean emitted `shotcut:filter` /
+  `shotcut:transition` as **namespaced XML attributes with no namespace
+  declaration**, which Shotcut's strict namespace-aware reader rejects. **Fixed**
+  — they are now `<property>` children — and a new **`lint:xml` gate** enforces
+  Shotcut-openability so it can never regress (see "Shotcut-openability — fixed").
+  A follow-up adversarial sweep on the new shape then found one *high* round-trip
+  defect (combined fadeIn+fadeOut on a windowed clip) — **fixed** in this session
+  (see "Combined-fade round-trip — fixed").
 
 Every gate box is green except the **human spot-check** in Shotcut (a manual
-review step an agent can't perform). Each agent result was re-run here before
-being recorded — not trusted from the report.
+review step an agent can't perform — Tejas is confirming the actual GUI open
+separately). Each agent result was re-run here before being recorded — not
+trusted from the report.
 
 ---
 
@@ -27,10 +37,20 @@ Ran in `/Users/tejas/Github/vean`; every stage exited 0.
 
 ### 1. Build — PASS
 - `bun run typecheck` (`tsc --noEmit`) → clean (exit 0).
-- `bun run lint` (`biome check .`) → "Checked 25 files. No fixes applied." (exit 0).
-- `bun run test` (vitest) → **175 tests / 10 files pass** (exit 0). The +14 over
-  round-1's 161 are the 3 original-defect flips, the 9 sibling-fix regressions,
-  and added structure/regression assertions.
+- `bun run lint` (`biome check .`) → "Checked 27 files. No fixes applied." (exit 0).
+- `bun run test` (vitest) → **185 tests / 11 files pass** (exit 0). The +10 over
+  round-2's 175 are the 7 namespace/Shotcut-openability tests
+  (`tests/xml-namespace.test.ts` + strengthened adversarial/serialize/parse cases)
+  and the 3 combined-fade round-trip regression tests.
+
+### 1b. Shotcut-openability (XML namespace validity) — PASS
+- `bun run lint:xml` → **OVERALL: PASS — 12/12 XML namespace-clean
+  (Shotcut-openable)** (exit 0). Runs `xmllint --noout --nsclean` over every
+  committed `corpus/*.mlt` (10) **and** the fresh serializer output of every
+  fixture in `corpus/vean-fixtures.ts` (2). ANY xmllint stderr (namespace OR
+  well-formedness) fails it. This is the gate that pins the namespaced-attribute
+  fix below. `verify:corpus` also folds it in as GATE 0
+  ("xml: PASS — 12/12 namespace-clean") before any melt render.
 
 ### 2. Round-trip golden — PASS
 `bun run roundtrip <file>` on the corpus; every file reaches a stable IR fixpoint
@@ -153,6 +173,67 @@ banner's "round-trips losslessly" claim holds universally, and the
 
 ---
 
+## Shotcut-openability — fixed (round 3)
+
+**The one defect that broke *opening* in Shotcut while `melt` rendered fine.**
+vean emitted Shotcut's logical filter/transition names as **namespaced XML
+attributes** — `<filter mlt_service="brightness" shotcut:filter="fadeInBrightness">`
+and `<tractor ... shotcut:transition="lumaMix">` — with **no `xmlns:shotcut`
+declaration**. `melt` is namespace-lenient (it rendered all along, so
+render-faithfulness was always SSIM 1.0000), but Shotcut's strict
+namespace-aware `QXmlStreamReader` rejects an undeclared prefix
+("Namespace prefix shotcut for filter on filter is not defined") and refuses to
+open the file. Reproduced exactly with `xmllint --noout --nsclean`.
+**Subtlety that shaped the gate:** `xmllint` **exits 0** on a namespace error,
+printing only to **stderr** — so `lint:xml` keys off stderr, not the exit code.
+
+**Fix:** the logical name is now emitted as a `<property name="shotcut:filter">`
+/ `<property name="shotcut:transition">` **child** (the form genuine Shotcut
+writes, and the namespace-safe form a strict reader accepts) — matching the
+existing `shotcut:uuid`/`video`/`audio`/`name` property convention. No element
+carries any namespaced attribute. `serialize.ts` emits it first (a deterministic
+stable slot); `parse.ts` reads it from the property child (primary) with the
+legacy attribute form tolerated as a fallback and normalized to property form on
+re-emit. Regenerated `corpus/vean-multitrack.mlt` (4 occurrences) and fixed
+hand-authored `corpus/shotcut-dissolve.mlt`; all 10 corpus files pass
+`xmllint --noout --nsclean`. Guarded by **`scripts/lint-xml.ts`** (the `lint:xml`
+gate + GATE 0 in `verify:corpus`) and **`tests/xml-namespace.test.ts`** (a
+hermetic structural scan asserting zero namespaced attributes in `toMlt()` of
+every fixture, with a negative test proving the scanner catches the bug, plus an
+authoritative `xmllint --nsclean` check).
+
+## Combined-fade round-trip — fixed (round 3 follow-up sweep)
+
+The adversarial sweep on the new property-form shape found one *high*-severity
+round-trip defect (well-formed and namespace-clean, but a real mis-render on
+re-save through Shotcut): **a clip with BOTH `fadeIn` AND `fadeOut` on a windowed
+file clip (`in > 0`) did not round-trip.** The serializer compiles both fades to
+ONE 4-keyframe `brightness`/`volume` filter named `fadeInOut{Brightness,Volume}`
+(`0=0;in-1=1;len-out=1;len-1=0`) placed on a **0-based wrapper tractor** so the
+keyframes anchor to the played window (melt mis-anchors keyframes on a windowed
+producer). But `parse.ts`'s `fadeFromKeyframes` only inverted **exactly-2-keyframe**
+(single-direction) fades, so the 4-keyframe combined fade survived as a raw
+`brightness` filter; on re-emit `resolveFades` saw no fade sentinels and emitted
+the filter **directly on the windowed producer** (no wrapper) — the 0-based
+keyframes then mis-anchored against a producer whose source domain starts at the
+clip's in-point. The existing roundtrip gate missed it (the parser didn't drop
+the filter outright, so it reached a stable fixpoint, and the golden vean fixtures
+use only single-direction fades on from-zero color clips).
+
+**Fix:** `fadeFromKeyframes` now also matches the 4-keyframe head-up/hold/tail-down
+shape and returns **BOTH** `vean.fadeIn` + `vean.fadeOut` sentinels (with frames
+recovered as `k1+1` and `playtime-k3`); both `classifyFilters` call sites spread
+the result. The wrapper is rebuilt on re-emit and the round-trip is byte-identical
+for video AND audio combined fades (verified for windowed in>0, plus gain-stacked).
+Single-direction and from-zero cases are unchanged. Regression-locked by 3 tests in
+`tests/adversarial.test.ts` ("combined fadeIn+fadeOut on a WINDOWED (in>0) file
+clip"): byte-identical re-emit for video + audio, and an assertion that the
+recovered IR carries both fade sentinels (not a raw `brightness` filter). This also
+fully closes round-2 open item #5 below for the document path — fade recovery no
+longer leaves a re-emittable mis-render — though that item's note about keying on
+the `shotcut:filter` name (vs keyframe shape) remains the more robust long-term
+discriminator for Move 1.
+
 ## Open — low / latent (not gating; scoped to Move 1)
 
 The same hunt found 5 *low-severity* contract gaps **inside the keyframe engine**
@@ -218,7 +299,12 @@ path), so it opens and plays without any external media.
 
 What to confirm visually: the dissolve and fades read smoothly, the V2 overlay
 composites over V1, the audio track is present and gained, and Shotcut opens it
-**without a normalization/repair prompt** (i.e. it accepts vean's XML as-is).
+**without a normalization/repair prompt** (i.e. it accepts vean's XML as-is). The
+namespaced-attribute defect that previously made Shotcut **refuse to open** vean
+files is fixed and machine-gated (`lint:xml`); this manual step now confirms the
+*visual* result and that the real GUI accepts it cleanly — a check an agent can't
+perform. **Tejas is confirming this separately; the box stays UNCHECKED until he
+reports the actual GUI open.**
 
 If it looks right, check the "Human spot-check" box in `ROADMAP.md`. With that box
 checked, Move 0 is fully GREEN and Move 1 is unblocked.

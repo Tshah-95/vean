@@ -14,7 +14,8 @@
     <property name="mlt_service">color</property>
     <property name="resource">#FF000000</property>
     <property name="shotcut:uuid">{vean-producer0}</property>
-    <filter mlt_service="brightness" shotcut:filter="fadeInBrightness">
+    <filter mlt_service="brightness">
+      <property name="shotcut:filter">fadeInBrightness</property>
       <property name="level">0=0;11=1</property>
     </filter>
   </producer>
@@ -35,7 +36,8 @@
     <property name="mlt_service">color</property>
     <property name="resource">#FFFFD700</property>
     <property name="shotcut:uuid">{vean-producer3}</property>
-    <filter mlt_service="brightness" shotcut:filter="fadeOutBrightness">
+    <filter mlt_service="brightness">
+      <property name="shotcut:filter">fadeOutBrightness</property>
       <property name="level">25=1;39=0</property>
     </filter>
   </producer>
@@ -48,11 +50,13 @@
   <producer id="producer5" in="0" out="89">
     <property name="resource">/Users/tejas/Github/vean/corpus/tone.wav</property>
     <property name="shotcut:uuid">{vean-producer5}</property>
-    <filter mlt_service="volume" shotcut:filter="volume">
+    <filter mlt_service="volume">
+      <property name="shotcut:filter">volume</property>
       <property name="gain">0.8</property>
     </filter>
   </producer>
-  <tractor id="tractor0" shotcut:transition="lumaMix">
+  <tractor id="tractor0">
+    <property name="shotcut:transition">lumaMix</property>
     <track producer="producer1" in="25" out="44"/>
     <track producer="producer2" in="0" out="19"/>
     <transition mlt_service="luma" in="0" out="19">

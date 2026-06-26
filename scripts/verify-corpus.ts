@@ -24,6 +24,7 @@ import { fromMlt } from "../src/ir/parse";
 import { fpsRatio } from "../src/ir/profile";
 import { toMlt } from "../src/ir/serialize";
 import type { Timeline } from "../src/ir/types";
+import { lintAll } from "./lint-xml";
 import { roundtripXml } from "./roundtrip";
 
 /** Structural similarity (0..1) between two PNGs via ffmpeg's `ssim` filter — the
@@ -190,6 +191,24 @@ async function main(): Promise<void> {
     process.exit(2);
   }
   mkdirSync(OUT, { recursive: true });
+
+  // GATE 0 — strict XML validity (Shotcut-openability). A namespace error (e.g. an
+  // undeclared `shotcut:` prefix) opens fine in melt but Shotcut REFUSES the file,
+  // so the corpus gate enforces it FIRST — before spending any melt render proving
+  // pixels for a document Shotcut can't even open. Covers both the committed corpus
+  // and the live serializer output (see scripts/lint-xml.ts).
+  const lint = lintAll();
+  const lintFailed = lint.filter((r) => !r.ok);
+  if (lintFailed.length > 0) {
+    for (const r of lintFailed) console.log(`FAIL  xml  ${r.label.padEnd(28)} ${r.detail}`);
+    console.log("");
+    console.log(
+      `OVERALL: FAIL — ${lintFailed.length}/${lint.length} XML namespace/validity errors ` +
+        `(Shotcut would refuse these): ${lintFailed.map((f) => f.label).join(", ")}`,
+    );
+    process.exit(1);
+  }
+  console.log(`xml: PASS — ${lint.length}/${lint.length} namespace-clean (Shotcut-openable)\n`);
 
   const results: FileResult[] = [];
   for (const name of files) {

@@ -12,8 +12,9 @@
 //     is the Shotcut background (a stretched `color` producer) and is dropped;
 //   • read `<blank length>` as gaps, preserving their document order vs entries
 //     (`preserveOrder` keeps the interleaving a grouped parse would destroy);
-//   • recover same-track dissolves from nested `shotcut:transition="lumaMix"`
-//     tractors, stitching the tail/head windows back onto their neighbour clips;
+//   • recover same-track dissolves from nested tractors tagged with a
+//     `<property name="shotcut:transition">lumaMix</property>` child, stitching the
+//     tail/head windows back onto their neighbour clips;
 //   • recover the seed's fade wrapper (a 0-based single-track tractor carrying a
 //     brightness/volume keyframe filter) back onto the wrapped clip;
 //   • recover field transitions from MAIN-tractor `<transition>` elements
@@ -170,10 +171,12 @@ function readFilters(node: Node): Filter[] {
     const props = readProperties(f);
     const service = attr(f, "mlt_service") ?? props.mlt_service;
     if (!service) continue;
-    // Shotcut tags a filter's logical name either as an attribute
-    // (`<filter shotcut:filter="fadeInBrightness">`, the writer's form) or, in
-    // some hand-written docs, as a property — accept both.
-    const shotcutName = attr(f, "shotcut:filter") ?? props["shotcut:filter"];
+    // Shotcut tags a filter's logical name as a `<property name="shotcut:filter">`
+    // CHILD (a plain string) — that is what genuine Shotcut and vean both write, and
+    // the only form a namespace-aware reader accepts. We ALSO tolerate the legacy
+    // namespaced-attribute form (`<filter shotcut:filter="…">`) on read so any older
+    // hand-authored doc still parses; on re-emit it normalizes to the property form.
+    const shotcutName = props["shotcut:filter"] ?? attr(f, "shotcut:filter");
     const properties: Record<string, PropertyValue> = {};
     for (const [k, v] of Object.entries(props)) {
       // `mlt_service`/`shotcut:filter` are carried structurally, not as data
@@ -250,19 +253,20 @@ function classifyFilters(raw: Filter[], playtime: number): { filters: Filter[]; 
           continue;
         }
       }
-      // An ANIMATED volume = a fade-out (to silence) or fade-in (from silence).
-      const fade = fadeFromKeyframes(asStr, playtime);
-      if (fade) {
-        filters.push(fade);
+      // An ANIMATED volume = a fade-out (to silence) or fade-in (from silence),
+      // or BOTH (a single 4-keyframe `fadeInOutVolume` filter — see below).
+      const fades = fadeFromKeyframes(asStr, playtime);
+      if (fades.length > 0) {
+        filters.push(...fades);
         continue;
       }
     }
     if (FADE_BRIGHTNESS_SERVICES.has(f.service)) {
       const level = f.properties.level;
       const asStr = level == null ? "" : String(level);
-      const fade = fadeFromKeyframes(asStr, playtime);
-      if (fade) {
-        filters.push(fade);
+      const fades = fadeFromKeyframes(asStr, playtime);
+      if (fades.length > 0) {
+        filters.push(...fades);
         continue;
       }
     }
@@ -271,12 +275,21 @@ function classifyFilters(raw: Filter[], playtime: number): { filters: Filter[]; 
   return gain == null ? { filters } : { filters, gain };
 }
 
-/** Recover a fade sentinel from a brightness/volume keyframe string. The seed
- *  emits fadeIn as `0=0;{n-1}=1` and fadeOut as `{len-n}=1;{len-1}=0`, both
- *  0-based over the played window of `playtime` frames. We detect those exact
- *  shapes and rebuild the sentinel; anything else stays a literal filter. */
-function fadeFromKeyframes(level: string, playtime: number): Filter | undefined {
-  if (!level.includes("=")) return undefined;
+/** Recover fade sentinel(s) from a brightness/volume keyframe string. The
+ *  serializer (src/ir/serialize.ts resolveFades) emits:
+ *    • fadeIn-only  → `0=0;{n-1}=1`                      (2 keyframes)
+ *    • fadeOut-only → `{len-n}=1;{len-1}=0`              (2 keyframes)
+ *    • BOTH         → `0=0;{in-1}=1;{len-out}=1;{len-1}=0` (4 keyframes, ONE
+ *      filter named `fadeInOut{Brightness,Volume}`)
+ *  all 0-based over the played window of `playtime` frames. We invert each exact
+ *  shape back into the IR sentinels. The combined case MUST yield BOTH sentinels:
+ *  if it were dropped here it would survive as a raw brightness/volume filter and
+ *  on re-emit land directly on the windowed producer (no 0-based wrapper tractor),
+ *  mis-anchoring the keyframes — the exact mis-render the wrapper exists to
+ *  prevent. Returns 0 (not a fade), 1 (single-direction), or 2 (combined) filters;
+ *  anything not matching a known shape stays a literal filter (empty array). */
+function fadeFromKeyframes(level: string, playtime: number): Filter[] {
+  if (!level.includes("=")) return [];
   const kfs = level
     .split(";")
     .map((s) => s.trim())
@@ -287,19 +300,42 @@ function fadeFromKeyframes(level: string, playtime: number): Filter | undefined 
       const v = Number(dotDecimal(s.slice(eq + 1)));
       return { t, v };
     });
-  if (kfs.length !== 2) return undefined;
+  // Combined fadeIn+fadeOut: a 4-keyframe head-up / hold / tail-down shape
+  // (0=0 ; in-1=1 ; len-out=1 ; len-1=0). Recover BOTH sentinels.
+  if (kfs.length === 4) {
+    const [a, b, c, d] = kfs;
+    if (
+      a != null &&
+      b != null &&
+      c != null &&
+      d != null &&
+      a.t === 0 &&
+      a.v === 0 &&
+      b.v === 1 &&
+      c.v === 1 &&
+      d.v === 0 &&
+      d.t === playtime - 1
+    ) {
+      return [
+        { service: FADE_IN_SERVICE, properties: { frames: b.t + 1 } },
+        { service: FADE_OUT_SERVICE, properties: { frames: playtime - c.t } },
+      ];
+    }
+    return [];
+  }
+  if (kfs.length !== 2) return [];
   const a = kfs[0];
   const b = kfs[1];
-  if (a == null || b == null) return undefined;
+  if (a == null || b == null) return [];
   // fadeIn: 0=0 → frames-1=1
   if (a.t === 0 && a.v === 0 && b.v === 1) {
-    return { service: FADE_IN_SERVICE, properties: { frames: b.t + 1 } };
+    return [{ service: FADE_IN_SERVICE, properties: { frames: b.t + 1 } }];
   }
   // fadeOut: (len-frames)=1 → (len-1)=0
   if (a.v === 1 && b.v === 0 && b.t === playtime - 1) {
-    return { service: FADE_OUT_SERVICE, properties: { frames: playtime - a.t } };
+    return [{ service: FADE_OUT_SERVICE, properties: { frames: playtime - a.t } }];
   }
-  return undefined;
+  return [];
 }
 
 // ─── Producer registry ─────────────────────────────────────────────────────
@@ -347,9 +383,9 @@ function trackKindFor(trackNode: Node, playlist: Node | undefined): "video" | "a
 
 // ─── Nested-tractor (lumaMix dissolve) detection ───────────────────────────
 /** A nested tractor is a same-track dissolve iff it has exactly two `<track>`
- *  children and a `luma`/`mix` transition on its field (Shotcut tags it
- *  `shotcut:transition="lumaMix"`). Returns the windows + frame count to stitch
- *  back onto the neighbour clips. */
+ *  children and a `luma`/`mix` transition on its field (Shotcut tags it with a
+ *  `<property name="shotcut:transition">lumaMix</property>` child). Returns the
+ *  windows + frame count to stitch back onto the neighbour clips. */
 type DissolveTractor = {
   frames: number;
   /** outgoing tail (track 0): producer id + window. */
@@ -367,7 +403,12 @@ function asDissolveTractor(node: Node, fps: [number, number]): DissolveTractor |
     const svc = attr(t, "mlt_service") ?? readProperties(t).mlt_service;
     return svc != null && svc !== "mix";
   });
-  const shotcutTag = attr(node, "shotcut:transition");
+  // Shotcut tags the nested dissolve tractor with a `shotcut:transition` CHILD
+  // PROPERTY (`<property name="shotcut:transition">lumaMix</property>`) — that is
+  // what genuine Shotcut and vean both write. The legacy namespaced-attribute form
+  // is tolerated on read for older hand-authored docs; either resolves the tag.
+  const props = readProperties(node);
+  const shotcutTag = props["shotcut:transition"] ?? attr(node, "shotcut:transition");
   if (!hasLuma && shotcutTag !== "lumaMix") return undefined;
   const lumaSvc =
     transitions

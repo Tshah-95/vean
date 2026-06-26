@@ -49,6 +49,26 @@ exactly as we want" gate; everything stacks on it.
       hashes/SSIM match rendering the original XML (within tolerance). <!-- verify:corpus
       OVERALL PASS — 10/10; SSIM 1.0000 on EVERY sampled frame of all 10 files
       (the round-1 0.9997 on shotcut-dissolve is gone — now pixel-identical). -->
+- [x] Shotcut-openability (XML namespace validity): every corpus file AND every
+      fresh serializer emission is namespace-clean under a strict reader.
+      <!-- ENFORCED by the new `bun run lint:xml` gate (scripts/lint-xml.ts):
+           `xmllint --noout --nsclean` over all 10 corpus/*.mlt + the 2 fresh
+           vean-fixtures emissions → OVERALL PASS 12/12; also folded into
+           verify:corpus as GATE 0 ("xml: PASS — 12/12 namespace-clean") before
+           any melt render. ROOT-CAUSE FIX: vean used to emit shotcut:filter /
+           shotcut:transition as NAMESPACED XML ATTRIBUTES with no xmlns
+           declaration — melt rendered fine (namespace-lenient) but Shotcut's
+           strict QXmlStreamReader REFUSED TO OPEN the file ("Namespace prefix
+           shotcut … is not defined"). Now emitted as <property> children (the
+           form genuine Shotcut writes); no element carries a namespaced
+           attribute. Guarded by tests/xml-namespace.test.ts (structural scan +
+           negative test + authoritative xmllint check). A follow-up adversarial
+           sweep then found + FIXED one high round-trip defect on the new shape:
+           a COMBINED fadeIn+fadeOut on a windowed (in>0) clip used to lose its
+           0-based wrapper tractor on re-emit (parser only inverted 2-keyframe
+           single-direction fades); fadeFromKeyframes now recovers the 4-keyframe
+           combined shape into BOTH sentinels — byte-identical round-trip, 3
+           regression tests in adversarial.test.ts. See GATE.md. -->
 - [x] Keyframe round-trip: parse → typed model → serialize is identical (golden).
       <!-- the 3 original adversarial defects are FIXED and their KNOWN DEFECT
            tests flipped: (1) comma-decimal inside an animation string is migrated
@@ -65,11 +85,17 @@ exactly as we want" gate; everything stacks on it.
            — parseAnim/serializeAnim are NOT yet on the document path (it passes
            anim strings verbatim), so they cannot mis-render today; they get fixed
            when Move 1's edit algebra becomes their first consumer. -->
-- [x] `bun run test` green; `bun run typecheck` clean. <!-- 175 tests / 10 files
-      pass (+14 over round-1: 3 original-defect flips + 9 sibling regressions +
-      others); tsc --noEmit clean; biome check clean (25 files). -->
+- [x] `bun run test` green; `bun run typecheck` clean. <!-- 185 tests / 11 files
+      pass (+10 over round-2's 175: 7 namespace/Shotcut-openability tests in
+      tests/xml-namespace.test.ts + strengthened adversarial/serialize/parse
+      cases, and 3 combined-fade round-trip regressions); tsc --noEmit clean;
+      biome check clean (27 files). Plus the Shotcut-openability gate:
+      `bun run lint:xml` → PASS 12/12. -->
 - [ ] Human spot-check: open a re-emitted `.mlt` in Shotcut, confirm it looks right.
-      <!-- awaiting Tejas: open corpus/vean-multitrack.mlt in Shotcut (see GATE.md). -->
+      <!-- awaiting Tejas: open corpus/vean-multitrack.mlt in Shotcut (see GATE.md).
+           The namespaced-attribute defect that made Shotcut REFUSE TO OPEN vean
+           files is now fixed and machine-gated (lint:xml); this box stays
+           UNCHECKED until Tejas confirms the actual GUI open separately. -->
 
 ---
 

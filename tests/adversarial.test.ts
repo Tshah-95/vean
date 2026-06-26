@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { roundtripXml } from "../scripts/roundtrip";
 import {
   VERTICAL,
+  audioTrack,
+  clip,
   colorClip,
   dissolve,
   fromMlt,
@@ -268,10 +270,12 @@ describe("round-trip: keyframe-bearing escape-hatch filters in a full Shotcut do
 });
 
 describe("round-trip: full shotcut: namespace producer fidelity", () => {
-  it("the xmlns:shotcut declaration and shotcut:filter on a filter are handled", () => {
-    // A doc that DECLARES the namespace (real Shotcut uses the prefix undeclared).
-    // vean drops the xmlns declaration but keeps the prefixed filter tag — Shotcut
-    // re-reads it fine. This must still reach a fixpoint.
+  it("the xmlns:shotcut declaration and a legacy shotcut:filter ATTRIBUTE are handled", () => {
+    // A doc that DECLARES the namespace and uses the legacy `shotcut:filter`
+    // ATTRIBUTE form. vean tolerates that on READ but NORMALIZES it: it drops the
+    // xmlns declaration and re-emits the logical name as a `<property>` CHILD (the
+    // namespace-safe form Shotcut's strict reader accepts). This must still reach a
+    // fixpoint, and the re-emission must be attribute-free.
     const doc = `<?xml version="1.0" encoding="utf-8"?>
 <mlt xmlns:shotcut="http://www.meltytech.com/schemas/shotcut/1.0" LC_NUMERIC="C" version="7.38.0" title="ns" producer="main_bin">
   <profile description="HD" width="1920" height="1080" progressive="1" sample_aspect_num="1" sample_aspect_den="1" display_aspect_num="16" display_aspect_den="9" frame_rate_num="30" frame_rate_den="1" colorspace="709"/>
@@ -286,7 +290,12 @@ describe("round-trip: full shotcut: namespace producer fidelity", () => {
   <playlist id="playlist0"><property name="shotcut:video">1</property><property name="shotcut:name">V1</property><entry producer="producer0" in="0" out="59"/></playlist>
   <tractor id="tractor0" title="ns" shotcut="1"><track producer="producer0"/><track producer="playlist0"/></tractor>
 </mlt>`;
-    expect(roundtripXml(doc).pass).toBe(true);
+    const r = roundtripXml(doc);
+    expect(r.pass).toBe(true);
+    // The legacy attribute is NORMALIZED to the namespace-safe property child …
+    expect(r.emitted).toContain('<property name="shotcut:filter">fadeInBrightness</property>');
+    // … and the re-emission carries NO namespaced (`shotcut:…=`) XML attribute.
+    expect(r.emitted).not.toMatch(/shotcut:[a-z]+="/i);
   });
 
   it("producer-level shotcut:caption / eof / aspect_ratio are PRESERVED on round-trip", () => {
@@ -327,6 +336,79 @@ describe("round-trip: full shotcut: namespace producer fidelity", () => {
     expect(count('<property name="resource">')).toBe(1);
     expect(count('<property name="length">')).toBe(1);
     expect(count('<property name="shotcut:uuid">')).toBe(1);
+  });
+});
+
+describe("round-trip: combined fadeIn+fadeOut on a WINDOWED (in>0) file clip", () => {
+  // A clip with BOTH fades compiles to ONE 4-keyframe brightness/volume filter
+  // (0=0;in-1=1;len-out=1;len-1=0). On a windowed file clip (in>0) that filter
+  // MUST sit on a 0-based wrapper tractor so the 0-based keyframes anchor to the
+  // played window (melt mis-anchors keyframes on a windowed producer). The parser
+  // used to recover only EXACTLY-2-keyframe (single-direction) fades, so the
+  // 4-keyframe combined fade survived as a raw filter and on re-emit landed
+  // DIRECTLY on the windowed producer (no wrapper) — mis-anchoring the fade.
+  // The parser now inverts the 4-keyframe shape into BOTH sentinels, so the
+  // wrapper is rebuilt and the round-trip is byte-identical (loss-free).
+
+  it("VIDEO windowed combined fade round-trips byte-identically (wrapper preserved)", () => {
+    resetIds();
+    const x = toMlt(
+      timeline(VERTICAL, {
+        video: [
+          videoTrack(clip("/abs/footage.mp4", { in: 100, dur: 90, fadeIn: 12, fadeOut: 15 })),
+        ],
+      }),
+    );
+    // the 4-keyframe combined fade sits on a wrapper tractor over the windowed producer
+    expect(x).toContain('<property name="shotcut:filter">fadeInOutBrightness</property>');
+    expect(x).toContain('<property name="level">0=0;11=1;75=1;89=0</property>');
+    expect(x).toMatch(
+      /<tractor id="tractor0">\s*<track producer="producer0" in="100" out="189"\/>/,
+    );
+    resetIds();
+    // the defect: re-emit used to strip the wrapper and put the filter on the
+    // windowed producer. Byte-identity proves the wrapper survives.
+    expect(toMlt(fromMlt(x))).toBe(x);
+  });
+
+  it("AUDIO windowed combined fade round-trips byte-identically", () => {
+    resetIds();
+    const x = toMlt(
+      timeline(VERTICAL, {
+        audio: [audioTrack(clip("/abs/a.mp4", { in: 50, dur: 80, fadeIn: 10, fadeOut: 8 }))],
+      }),
+    );
+    expect(x).toContain('<property name="shotcut:filter">fadeInOutVolume</property>');
+    resetIds();
+    expect(toMlt(fromMlt(x))).toBe(x);
+  });
+
+  it("the recovered IR carries BOTH fade sentinels (not a raw 4-kf brightness filter)", () => {
+    resetIds();
+    const x = toMlt(
+      timeline(VERTICAL, {
+        video: [
+          videoTrack(clip("/abs/footage.mp4", { in: 100, dur: 90, fadeIn: 12, fadeOut: 15 })),
+        ],
+      }),
+    );
+    const clipBack = must(fromMlt(x).tracks.video[0]?.items[0], "recovered clip");
+    if (clipBack.kind !== "clip") throw new Error("expected a clip item");
+    const services = clipBack.filters.map((f) => f.service);
+    expect(services).toContain("vean.fadeIn");
+    expect(services).toContain("vean.fadeOut");
+    // the literal 4-keyframe brightness filter must NOT survive as a raw filter
+    expect(services).not.toContain("brightness");
+    const fin = must(
+      clipBack.filters.find((f) => f.service === "vean.fadeIn"),
+      "fadeIn sentinel",
+    );
+    const fout = must(
+      clipBack.filters.find((f) => f.service === "vean.fadeOut"),
+      "fadeOut sentinel",
+    );
+    expect(fin.properties.frames).toBe(12);
+    expect(fout.properties.frames).toBe(15);
   });
 });
 

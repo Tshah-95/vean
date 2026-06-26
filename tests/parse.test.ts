@@ -255,6 +255,47 @@ describe("same-track dissolve (nested lumaMix tractor)", () => {
       expect(b.length).toBe(60);
     }
   });
+
+  it("PROPERTY-form shotcut:transition (genuine Shotcut shape) is recognized as a dissolve", () => {
+    // Shotcut (and vean now) tag the nested dissolve tractor with a
+    // `<property name="shotcut:transition">lumaMix</property>` CHILD — never a
+    // namespaced attribute. The parser must key the dissolve off that property, so a
+    // genuine Shotcut-style file round-trips. (Mirrors the FILE-clips case above,
+    // but the lumaMix tag is a property, not the legacy attribute.)
+    const tl = fromMlt(
+      doc(
+        '  <producer id="A" in="100" out="179"><property name="resource">/a.mp4</property></producer>',
+        '  <producer id="Atail" in="180" out="199"><property name="resource">/a.mp4</property></producer>',
+        '  <producer id="Bhead" in="0" out="19"><property name="resource">/b.mp4</property></producer>',
+        '  <producer id="B" in="20" out="89"><property name="resource">/b.mp4</property></producer>',
+        '  <tractor id="transition0">',
+        '    <property name="shotcut:transition">lumaMix</property>',
+        '    <track producer="Atail" in="180" out="199"/>',
+        '    <track producer="Bhead" in="0" out="19"/>',
+        '    <transition mlt_service="luma" in="0" out="19"><property name="a_track">0</property><property name="b_track">1</property></transition>',
+        '    <transition mlt_service="mix" in="0" out="19"><property name="a_track">0</property><property name="b_track">1</property><property name="sum">1</property></transition>',
+        "  </tractor>",
+        '  <playlist id="playlist0">',
+        '    <entry producer="A" in="100" out="179"/>',
+        '    <entry producer="transition0" in="0" out="19"/>',
+        '    <entry producer="B" in="20" out="89"/>',
+        "  </playlist>",
+        '  <tractor id="tractor0"><track producer="playlist0"/></tractor>',
+      ),
+    );
+    const items = must(tl.tracks.video[0], "video track 0").items;
+    expect(items.map((i) => i.kind)).toEqual(["clip", "dissolve", "clip"]);
+    const d = must(items[1], "item 1");
+    if (d.kind === "dissolve") {
+      expect(d.frames).toBe(20);
+      expect(d.luma).toBe("luma");
+    }
+    // The full clips are restored across the dissolve (tail/head stitched back).
+    const a = must(items[0], "item 0");
+    const b = must(items[2], "item 2");
+    if (a.kind === "clip") expect(a.out).toBe(199);
+    if (b.kind === "clip") expect(b.in).toBe(0);
+  });
 });
 
 describe("multi-track + audio + gain + field transition", () => {

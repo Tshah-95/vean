@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Shotcut-authored: a SAME-TRACK cross-dissolve. The dissolve is a NESTED
-     <tractor shotcut:transition="lumaMix"> spliced into the playlist between the
-     two solo clips: its track0 = the outgoing clip's tail cut, track1 = the
+     <tractor> tagged with a <property name="shotcut:transition">lumaMix</property>
+     child, spliced into the playlist between the two solo clips: its track0 = the
+     outgoing clip's tail cut, track1 = the
      incoming clip's head cut, carrying a luma (video) + mix (audio, sum=1)
      transition over [0, dur-1]. This is exactly the shape Shotcut writes for a
      fade-between (lumaMix) and the seed serializer round-trips.
@@ -53,7 +54,8 @@
     <property name="shotcut:caption">purple B (solo tail)</property>
     <property name="shotcut:uuid">{7c1a0e2a-0003-4abc-9d00-000000000023}</property>
   </producer>
-  <tractor id="tractor0" shotcut:transition="lumaMix">
+  <tractor id="tractor0">
+    <property name="shotcut:transition">lumaMix</property>
     <track producer="producer1" in="55" out="74"/>
     <track producer="producer2" in="0" out="19"/>
     <transition mlt_service="luma" in="0" out="19">

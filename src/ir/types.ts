@@ -124,7 +124,8 @@ export type Blank = z.infer<typeof blankSchema>;
 // A cross-fade BETWEEN two clips on the SAME track, `frames` long. The
 // serializer compiles it into the Shotcut-native nested transition-tractor
 // (a `luma` video dissolve + a `mix` audio cross-fade over the overlap, tagged
-// `shotcut:transition="lumaMix"`). It must sit between two clips on its track.
+// with a `<property name="shotcut:transition">lumaMix</property>` child). It must
+// sit between two clips on its track.
 // Cross-TRACK compositing is a field `Transition` (below), not a Dissolve.
 export const dissolveSchema = z.object({
   kind: z.literal("dissolve"),

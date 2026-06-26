@@ -65,7 +65,8 @@ const GOLDEN = `<?xml version="1.0" encoding="utf-8"?>
     <property name="mlt_service">color</property>
     <property name="resource">#FF000000</property>
     <property name="shotcut:uuid">{vean-producer0}</property>
-    <filter mlt_service="brightness" shotcut:filter="fadeInBrightness">
+    <filter mlt_service="brightness">
+      <property name="shotcut:filter">fadeInBrightness</property>
       <property name="level">0=0;11=1</property>
     </filter>
   </producer>
@@ -94,7 +95,8 @@ const GOLDEN = `<?xml version="1.0" encoding="utf-8"?>
   <producer id="producer5" in="0" out="124">
     <property name="resource">/abs/vo.wav</property>
     <property name="shotcut:uuid">{vean-producer5}</property>
-    <filter mlt_service="volume" shotcut:filter="volume">
+    <filter mlt_service="volume">
+      <property name="shotcut:filter">volume</property>
       <property name="gain">0.8</property>
     </filter>
     <filter mlt_service="brightness">
@@ -103,11 +105,13 @@ const GOLDEN = `<?xml version="1.0" encoding="utf-8"?>
   </producer>
   <tractor id="tractor1">
     <track producer="producer4" in="20" out="79"/>
-    <filter mlt_service="brightness" shotcut:filter="fadeOutBrightness">
+    <filter mlt_service="brightness">
+      <property name="shotcut:filter">fadeOutBrightness</property>
       <property name="level">45=1;59=0</property>
     </filter>
   </tractor>
-  <tractor id="tractor0" shotcut:transition="lumaMix">
+  <tractor id="tractor0">
+    <property name="shotcut:transition">lumaMix</property>
     <track producer="producer1" in="25" out="44"/>
     <track producer="producer2" in="0" out="19"/>
     <transition mlt_service="luma" in="0" out="19">
@@ -230,7 +234,10 @@ describe("toMlt — the MLT facts", () => {
 
   it("a same-track dissolve is a nested lumaMix tractor (luma + mix sum=1 over [0,dur-1])", () => {
     const xml = toMlt(fixture());
-    expect(xml).toContain('<tractor id="tractor0" shotcut:transition="lumaMix">');
+    // The lumaMix tag is a <property> CHILD (a plain string), NOT a namespaced
+    // attribute — Shotcut's namespace-aware reader rejects the attribute form.
+    expect(xml).toContain('<tractor id="tractor0">');
+    expect(xml).toContain('<property name="shotcut:transition">lumaMix</property>');
     expect(xml).toContain('<transition mlt_service="luma" in="0" out="19">');
     expect(xml).toContain('<transition mlt_service="mix" in="0" out="19">');
     expect(xml).toContain('<property name="sum">1</property>');
@@ -285,7 +292,8 @@ describe("toMlt — fades anchor to the 0-based played window", () => {
     const xml = toMlt(fixture());
     // 12-frame fadeIn on a 45f clip → brightness level 0=0;11=1 ON the producer.
     const p0 = xml.slice(xml.indexOf('<producer id="producer0"'));
-    expect(p0).toContain('mlt_service="brightness" shotcut:filter="fadeInBrightness"');
+    expect(p0).toContain('<filter mlt_service="brightness">');
+    expect(p0).toContain('<property name="shotcut:filter">fadeInBrightness</property>');
     expect(p0).toContain('<property name="level">0=0;11=1</property>');
   });
 
@@ -296,7 +304,8 @@ describe("toMlt — fades anchor to the 0-based played window", () => {
     // 45=1;59=0 (ramp over the LAST 15 of 60 frames, 0-based).
     const wrap = xml.slice(xml.indexOf('<tractor id="tractor1">'));
     expect(wrap).toContain('<track producer="producer4" in="20" out="79"/>');
-    expect(wrap).toContain('mlt_service="brightness" shotcut:filter="fadeOutBrightness"');
+    expect(wrap).toContain('<filter mlt_service="brightness">');
+    expect(wrap).toContain('<property name="shotcut:filter">fadeOutBrightness</property>');
     expect(wrap).toContain('<property name="level">45=1;59=0</property>');
     // The entry references the WRAPPER, 0-based.
     expect(xml).toContain('<entry producer="tractor1" in="0" out="59"/>');
@@ -332,7 +341,8 @@ describe("toMlt — audio gain + verbatim animation strings", () => {
   it("clip gain (≠1) compiles to a static volume filter (no = → not animated)", () => {
     const xml = toMlt(fixture());
     const p5 = xml.slice(xml.indexOf('<producer id="producer5"'));
-    expect(p5).toContain('<filter mlt_service="volume" shotcut:filter="volume">');
+    expect(p5).toContain('<filter mlt_service="volume">');
+    expect(p5).toContain('<property name="shotcut:filter">volume</property>');
     expect(p5).toContain('<property name="gain">0.8</property>');
   });
 
