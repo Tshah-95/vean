@@ -1,0 +1,22 @@
+# deps
+node_modules/
+bun.lockb
+
+# build / render outputs
+dist/
+out/
+
+# rendered artifacts (corpus keeps .mlt sources, never renders)
+*.mp4
+*.mov
+*.png.tmp
+
+# env / secrets (tract is stateless, but never commit these if they appear)
+.env
+.env.*
+
+# os / editor
+.DS_Store
+*.log
+coverage/
+.vitest/

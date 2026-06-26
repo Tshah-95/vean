@@ -1,0 +1,27 @@
+{
+  "name": "vean",
+  "version": "0.0.0",
+  "description": "The agent-native video editing core — a typed document, edit algebra, and diagnostics layer (a language server for video) on top of MLT.",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "module": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  },
+  "dependencies": {
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
