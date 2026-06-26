@@ -95,6 +95,11 @@ describe.runIf(hasFfmpeg())("ssimPng (ffmpeg)", () => {
       `color=c=${color}:s=64x64:d=1`,
       "-frames:v",
       "1",
+      // -update 1: write a single image to a fixed filename without the image2
+      // muxer's "does not contain an image sequence pattern" warning (matches the
+      // hardening on the production still path in src/driver/melt.ts).
+      "-update",
+      "1",
       out,
     ]);
   gen(red, "red");

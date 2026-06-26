@@ -10,7 +10,13 @@ import {
   toMlt,
   videoTrack,
 } from "../src/index";
-import { parseAnim, serializeAnim } from "../src/ir/keyframes";
+import {
+  type NumberValue,
+  type RectValue,
+  normalizeAnimDecimals,
+  parseAnim,
+  serializeAnim,
+} from "../src/ir/keyframes";
 
 // Adversarial edge-case fixtures — deliberately constructed to BREAK the
 // keyframe engine and the .mlt round-trip. Each case states what was thrown at
@@ -22,6 +28,13 @@ import { parseAnim, serializeAnim } from "../src/ir/keyframes";
 /** Parse→serialize an animation string and report byte-identity. */
 function kfRound(s: string, opts?: { fps?: [number, number] }): string {
   return serializeAnim(parseAnim(s, opts), opts);
+}
+
+/** Assert-non-null access — fails the test loudly (not silently undefined) when a
+ *  parse drops something it shouldn't, without a forbidden `!` assertion. */
+function must<T>(v: T | undefined | null, what: string): T {
+  if (v == null) throw new Error(`expected ${what} to be present`);
+  return v;
 }
 
 /** A minimal single-color-clip Shotcut doc carrying one extra producer property
@@ -137,20 +150,47 @@ describe("keyframes: rect and color values", () => {
 });
 
 describe("keyframes: LC_NUMERIC comma-decimal input (foreign locale)", () => {
-  // The keyframe engine is C-locale only: a comma-decimal in an animation value
-  // is NOT a number it accepts. This is the root of the round-trip defect below.
-  it("REJECTS a comma-decimal scalar inside an animation string", () => {
-    expect(() => parseAnim("0=1,5")).toThrow(/malformed numeric value/);
-    expect(() => parseAnim("0=0 0 100 100 0,5")).toThrow(/malformed numeric value/);
+  // The keyframe engine ACCEPTS a comma OR a dot decimal separator on parse (a
+  // comma-decimal arrives from a foreign-locale .mlt) and ALWAYS serializes a dot
+  // (LC_NUMERIC=C). This is what closes the round-trip mis-render below.
+  it("accepts a comma-decimal scalar inside an animation string and emits a dot", () => {
+    const m = parseAnim("0=1,5");
+    expect((m.keyframes[0]?.value as NumberValue).value).toBe(1.5);
+    expect(serializeAnim(m)).toBe("0=1.5");
+    // dot input is unchanged (idempotent — both forms canonicalize to the dot).
+    expect(serializeAnim(parseAnim("0=1.5"))).toBe("0=1.5");
+  });
+
+  it("accepts a comma-decimal in a rect component (opacity and coords)", () => {
+    const m = parseAnim("0=0 0 100 100 0,5");
+    const r = m.keyframes[0]?.value as RectValue;
+    expect(r.opacity).toBe(0.5);
+    expect(serializeAnim(m)).toBe("0=0 0 100 100 0.5");
+    // a coordinate slot accepts a comma decimal too.
+    expect(serializeAnim(parseAnim("0=10,5 0 100 100 1"))).toBe("0=10.5 0 100 100 1");
+  });
+
+  it("normalizeAnimDecimals migrates only decimal commas, leaving structure intact", () => {
+    // markers, ';', '=', color hex, and spacing are all preserved byte-for-byte.
+    expect(normalizeAnimDecimals("0=0,2;59=0,8")).toBe("0=0.2;59=0.8");
+    expect(normalizeAnimDecimals("0~=0,5;30|=1,25")).toBe("0~=0.5;30|=1.25");
+    expect(normalizeAnimDecimals("0=#ff0000;30=#0000ff")).toBe("0=#ff0000;30=#0000ff");
+    // an already-dot string is returned unchanged (idempotent).
+    expect(normalizeAnimDecimals("0=0.2;59=0.8")).toBe("0=0.2;59=0.8");
   });
 });
 
 describe("keyframes: degenerate strings", () => {
-  it("KNOWN DEFECT: an empty property string fabricates a '0' value", () => {
+  it("an empty property string round-trips to empty (no fabricated value)", () => {
     // An empty MLT property (`<property name="x"></property>`) is legal and means
-    // empty. parseAnim treats it as static and serializes a fabricated "0".
-    // EXPECTED: round-trip empty as empty. ACTUAL: "" → "0".
-    expect(serializeAnim(parseAnim(""))).toBe("0");
+    // empty. It must round-trip as empty — parsing "" yields a static model with
+    // NO keyframes (no value invented), and serialize re-emits "".
+    expect(serializeAnim(parseAnim(""))).toBe("");
+    // whitespace-only is likewise an empty value, not a fabricated "0".
+    expect(serializeAnim(parseAnim("   "))).toBe("");
+    // the parsed model carries no keyframe (nothing was authored).
+    expect(parseAnim("").keyframes).toHaveLength(0);
+    expect(parseAnim("").static).toBe(true);
   });
 });
 
@@ -249,12 +289,11 @@ describe("round-trip: full shotcut: namespace producer fidelity", () => {
     expect(roundtripXml(doc).pass).toBe(true);
   });
 
-  it("KNOWN DEFECT: producer-level shotcut:caption / eof / aspect_ratio are DROPPED", () => {
-    // The parser's resolveProducer reads only mlt_service, resource, length —
-    // every other producer property is discarded. A real Shotcut file loses its
-    // captions, eof=pause, aspect_ratio, proxy hints, etc. The serializer banner
-    // ("round-trips losslessly") is FALSE for any producer carrying these.
-    // EXPECTED: these survive. ACTUAL: dropped.
+  it("producer-level shotcut:caption / eof / aspect_ratio are PRESERVED on round-trip", () => {
+    // resolveProducer now captures every non-structural producer property
+    // (caption, eof, aspect_ratio, proxy hints, …) into the IR clip's extraProps,
+    // and the serializer re-emits them — so a real Shotcut file keeps its metadata.
+    // The serializer banner's "round-trips losslessly" is now true for these.
     const doc = shotcutDoc({
       producerProps: [
         '    <property name="shotcut:caption">my caption</property>',
@@ -263,10 +302,183 @@ describe("round-trip: full shotcut: namespace producer fidelity", () => {
         "",
       ].join("\n"),
     });
+    const r = roundtripXml(doc);
+    expect(r.pass).toBe(true); // still a fixpoint, now genuinely lossless
+    expect(r.emitted).toContain('<property name="shotcut:caption">my caption</property>');
+    expect(r.emitted).toContain('<property name="eof">pause</property>');
+    expect(r.emitted).toContain('<property name="aspect_ratio">1</property>');
+  });
+
+  it("structural producer props are NOT duplicated as extras (no double-emit)", () => {
+    // A producer carrying ONLY the structural properties (mlt_service, resource,
+    // length, shotcut:uuid) must re-emit each exactly once WITHIN its own producer
+    // block — the extras capture skips them so they don't fight their dedicated
+    // field. (Scope to the clip producer; the background producer is a separate
+    // block with its own structural props.)
+    const doc = shotcutDoc({});
     const emitted = roundtripXml(doc).emitted;
-    expect(emitted).not.toContain("my caption"); // DROPPED (the defect)
-    expect(emitted).not.toContain("pause"); // DROPPED
-    expect(emitted).not.toContain("aspect_ratio"); // DROPPED
+    const block = /<producer[^>]*>(?:(?!<\/producer>)[\s\S])*?#ff2a6f97[\s\S]*?<\/producer>/.exec(
+      emitted,
+    );
+    expect(block).not.toBeNull();
+    const clipProducer = block?.[0] ?? "";
+    const count = (needle: string) => clipProducer.split(needle).length - 1;
+    expect(count('<property name="mlt_service">')).toBe(1);
+    expect(count('<property name="resource">')).toBe(1);
+    expect(count('<property name="length">')).toBe(1);
+    expect(count('<property name="shotcut:uuid">')).toBe(1);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// .mlt ROUND-TRIP — non-structural property preservation at EVERY element level
+// (generalizing defect #2's producer-level fix to playlists + the main tractor)
+// ════════════════════════════════════════════════════════════════════════════
+
+describe("round-trip: playlist-level non-structural properties are PRESERVED", () => {
+  // A real Shotcut playlist carries shotcut:video/shotcut:audio/shotcut:name
+  // (modeled structurally) but may ALSO carry shotcut:lock or custom namespaces.
+  // These used to be silently dropped (walkPlaylist read only shotcut:name); the
+  // parser now captures them into Track.extraProps and the serializer re-emits
+  // them after the structural hints — so the round-trip is genuinely lossless.
+  const doc = `<?xml version="1.0" encoding="utf-8"?>
+<mlt LC_NUMERIC="C" version="7.38.0" root="" title="t">
+  <profile description="HD" width="1920" height="1080" progressive="1" sample_aspect_num="1" sample_aspect_den="1" display_aspect_num="16" display_aspect_den="9" frame_rate_num="30" frame_rate_den="1" colorspace="709"/>
+  <producer id="producer0" in="0" out="99"><property name="length">100</property><property name="mlt_service">color</property><property name="resource">#ff0000</property></producer>
+  <playlist id="playlist0">
+    <property name="shotcut:video">1</property>
+    <property name="shotcut:audio">0</property>
+    <property name="shotcut:name">MyVideoTrack</property>
+    <property name="shotcut:lock">true</property>
+    <property name="custom:foo">bar</property>
+    <entry producer="producer0" in="0" out="99"/>
+  </playlist>
+  <tractor id="tractor0" shotcut="1" title="t"><track producer="playlist0"/></tractor>
+</mlt>`;
+
+  it("captures shotcut:lock and custom:foo into the IR track's extraProps", () => {
+    const tl = fromMlt(doc);
+    const track = must(tl.tracks.video[0], "video track 0");
+    expect(track.name).toBe("MyVideoTrack"); // structural name still modeled
+    expect(track.extraProps).toMatchObject({ "shotcut:lock": "true", "custom:foo": "bar" });
+    // the structural hints are NOT duplicated into extraProps.
+    expect(track.extraProps).not.toHaveProperty("shotcut:video");
+    expect(track.extraProps).not.toHaveProperty("shotcut:audio");
+    expect(track.extraProps).not.toHaveProperty("shotcut:name");
+  });
+
+  it("re-emits both extra playlist properties and reaches a fixpoint", () => {
+    const r = roundtripXml(doc);
+    expect(r.pass).toBe(true); // still a fixpoint, now genuinely lossless
+    expect(r.emitted).toContain('<property name="shotcut:lock">true</property>');
+    expect(r.emitted).toContain('<property name="custom:foo">bar</property>');
+  });
+
+  it("a playlist with ONLY structural hints emits no extras (byte-stable, no fabrication)", () => {
+    // shotcutDoc() carries the bare shotcut:video/shotcut:name → no extraProps on
+    // the track, so the playlist block carries exactly the three structural hints.
+    const tl = fromMlt(shotcutDoc({}));
+    expect(must(tl.tracks.video[0], "video track 0").extraProps).toBeUndefined();
+  });
+});
+
+describe("round-trip: main-tractor-level non-structural properties are PRESERVED", () => {
+  // Shotcut writes project metadata as <property> children on the main tractor
+  // (shotcut:projectAudioChannels, shotcut:scaleFactor, …). These used to be
+  // dropped (the parser read only <track>/<transition> children); they are now
+  // captured into Timeline.tractorProps and re-emitted on the main tractor.
+  const doc = `<?xml version="1.0" encoding="utf-8"?>
+<mlt LC_NUMERIC="C" version="7.38.0" root="" title="t">
+  <profile description="HD" width="1920" height="1080" progressive="1" sample_aspect_num="1" sample_aspect_den="1" display_aspect_num="16" display_aspect_den="9" frame_rate_num="30" frame_rate_den="1" colorspace="709"/>
+  <producer id="producer0" in="0" out="99"><property name="length">100</property><property name="mlt_service">color</property><property name="resource">#ff0000</property></producer>
+  <playlist id="playlist0"><property name="shotcut:video">1</property><property name="shotcut:audio">0</property><property name="shotcut:name">V1</property><entry producer="producer0" in="0" out="99"/></playlist>
+  <tractor id="tractor0" shotcut="1" title="t">
+    <property name="shotcut:projectAudioChannels">2</property>
+    <property name="shotcut:scaleFactor">0.5</property>
+    <track producer="playlist0"/>
+  </tractor>
+</mlt>`;
+
+  it("captures the main tractor's project metadata into Timeline.tractorProps", () => {
+    const tl = fromMlt(doc);
+    // 2 coerces to a number; 0.5 stays a number — both via propValue.
+    expect(tl.tractorProps).toMatchObject({
+      "shotcut:projectAudioChannels": 2,
+      "shotcut:scaleFactor": 0.5,
+    });
+  });
+
+  it("re-emits both tractor properties and reaches a fixpoint", () => {
+    const r = roundtripXml(doc);
+    expect(r.pass).toBe(true);
+    expect(r.emitted).toContain('<property name="shotcut:projectAudioChannels">2</property>');
+    expect(r.emitted).toContain('<property name="shotcut:scaleFactor">0.5</property>');
+  });
+
+  it("a timeline with no main-tractor properties leaves tractorProps absent (byte-stable)", () => {
+    const tl = fromMlt(shotcutDoc({}));
+    expect(tl.tractorProps).toBeUndefined();
+  });
+});
+
+describe("round-trip: field transition with in/out as <property> (no duplicated state)", () => {
+  // Shotcut may write a field transition's window as <property name="in">/<out>
+  // children instead of in=/out= attributes. The window is the structural
+  // Transition.in/out — it must be modeled ONCE and re-emitted ONCE (as the
+  // attributes vean canonicalizes to), never ALSO copied into the properties map
+  // (which would emit divergent attr + property state melt sees both of).
+  const doc = `<?xml version="1.0" encoding="utf-8"?>
+<mlt LC_NUMERIC="C" version="7.38.0" root="" title="t">
+  <profile description="HD" width="1920" height="1080" progressive="1" sample_aspect_num="1" sample_aspect_den="1" display_aspect_num="16" display_aspect_den="9" frame_rate_num="30" frame_rate_den="1" colorspace="709"/>
+  <producer id="producer0" in="0" out="99"><property name="length">100</property><property name="mlt_service">color</property><property name="resource">#ff0000</property></producer>
+  <producer id="producer1" in="0" out="99"><property name="length">100</property><property name="mlt_service">color</property><property name="resource">#00ff00</property></producer>
+  <playlist id="playlist0"><property name="shotcut:video">1</property><property name="shotcut:audio">0</property><property name="shotcut:name">V1</property><entry producer="producer0" in="0" out="99"/></playlist>
+  <playlist id="playlist1"><property name="shotcut:video">1</property><property name="shotcut:audio">0</property><property name="shotcut:name">V2</property><entry producer="producer1" in="0" out="99"/></playlist>
+  <tractor id="tractor0" shotcut="1" title="t">
+    <track producer="producer2"/>
+    <track producer="playlist0"/>
+    <track producer="playlist1"/>
+    <transition id="transition0" mlt_service="qtblend">
+      <property name="a_track">1</property>
+      <property name="b_track">2</property>
+      <property name="in">0</property>
+      <property name="out">99</property>
+    </transition>
+  </tractor>
+</mlt>`;
+
+  it("models in/out ONLY as the structural window, never in the properties map", () => {
+    const tl = fromMlt(doc);
+    const t = must(tl.transitions[0], "transition 0");
+    expect(t.in).toBe(0);
+    expect(t.out).toBe(99);
+    // the window must NOT leak into the property map (the defect was {in,out} here).
+    expect(t.properties).not.toHaveProperty("in");
+    expect(t.properties).not.toHaveProperty("out");
+  });
+
+  it('re-emits in/out ONCE as attributes — no <property name="in"/"out"> children', () => {
+    const r = roundtripXml(doc);
+    expect(r.pass).toBe(true);
+    const tline = r.emitted.split("\n").find((l) => l.includes("<transition")) ?? "";
+    expect(tline).toContain('in="0"');
+    expect(tline).toContain('out="99"');
+    // the divergent duplicate property form is gone.
+    expect(r.emitted).not.toContain('<property name="in">');
+    expect(r.emitted).not.toContain('<property name="out">');
+  });
+
+  it("the attribute-form transition (already canonical) stays clean too", () => {
+    const attrDoc = doc.replace(
+      '<transition id="transition0" mlt_service="qtblend">\n      <property name="a_track">1</property>\n      <property name="b_track">2</property>\n      <property name="in">0</property>\n      <property name="out">99</property>\n    </transition>',
+      '<transition id="transition0" mlt_service="qtblend" in="0" out="99">\n      <property name="a_track">1</property>\n      <property name="b_track">2</property>\n    </transition>',
+    );
+    const tl = fromMlt(attrDoc);
+    const t = must(tl.transitions[0], "transition 0");
+    expect(t.in).toBe(0);
+    expect(t.out).toBe(99);
+    expect(t.properties).toStrictEqual({});
+    expect(roundtripXml(attrDoc).pass).toBe(true);
   });
 });
 
@@ -280,17 +492,12 @@ describe("round-trip: LC_NUMERIC comma-decimal input (the locale adversary)", ()
     expect(emitted).not.toContain("0,8");
   });
 
-  it("KNOWN DEFECT: a comma-decimal INSIDE an animation string survives uncorrected", () => {
+  it("a comma-decimal INSIDE an animation string is normalized to dot-decimal", () => {
     // The doc declares a comma-decimal locale; the keyframe value 0,2 means 0.2.
-    // The parser's dotDecimal explicitly SKIPS any string containing '=' (so it
-    // never touches an animation string), and the keyframe engine can't parse a
-    // comma-decimal — so vean passes "0=0,2;59=0,8" through VERBATIM while
-    // re-declaring LC_NUMERIC="C". Under the C locale, melt's atof("0,2") == 0,
-    // SILENTLY mis-animating brightness 0→0→1 instead of 0.2→0.8→1.
-    // The doc claims "round-trips losslessly" — it does for BYTES, but the
-    // re-emitted file no longer renders what the source intended.
-    // EXPECTED: comma-decimals in animation strings are normalized to dots (or the
-    // round-trip refuses). ACTUAL: passed through verbatim under a C-locale header.
+    // The parser now migrates comma-decimals inside an animation string to dots
+    // (normalizeAnimDecimals), so under the C-locale header vean re-emits, melt's
+    // atof reads 0.2 / 0.8 and animates brightness 0.2→0.8 as authored — closing
+    // the silent mis-render where atof("0,2") == 0 gave 0→0→1.
     const doc = `<?xml version="1.0"?>
 <mlt LC_NUMERIC="fr_FR" version="7.38.0">
   <profile description="HD" width="1920" height="1080" progressive="1" sample_aspect_num="1" sample_aspect_den="1" display_aspect_num="16" display_aspect_den="9" frame_rate_num="30" frame_rate_den="1" colorspace="709"/>
@@ -299,8 +506,10 @@ describe("round-trip: LC_NUMERIC comma-decimal input (the locale adversary)", ()
   <playlist id="playlist0"><property name="shotcut:video">1</property><property name="shotcut:name">V1</property><entry producer="producer0" in="0" out="59"/></playlist>
   <tractor id="tractor0" shotcut="1"><track producer="producer0"/><track producer="playlist0"/></tractor>
 </mlt>`;
-    const emitted = roundtripXml(doc).emitted;
-    expect(emitted).toContain('LC_NUMERIC="C"'); // header says C-locale (dot-decimal)
-    expect(emitted).toContain("0=0,2;59=0,8"); // …but the comma-decimal survives → mis-animation
+    const r = roundtripXml(doc);
+    expect(r.pass).toBe(true); // and it's a fixpoint (idempotent)
+    expect(r.emitted).toContain('LC_NUMERIC="C"'); // header says C-locale (dot-decimal)
+    expect(r.emitted).toContain("0=0.2;59=0.8"); // comma → dot: renders as authored
+    expect(r.emitted).not.toContain("0=0,2;59=0,8"); // the buggy verbatim form is gone
   });
 });

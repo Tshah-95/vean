@@ -26,6 +26,7 @@
 // fails loudly here rather than feeding a half-formed IR downstream.
 import { XMLParser } from "fast-xml-parser";
 import { FADE_IN_SERVICE, FADE_OUT_SERVICE } from "./builder";
+import { isAnimated, normalizeAnimDecimals } from "./keyframes";
 import {
   type Clip,
   type Dissolve,
@@ -90,14 +91,15 @@ function textOf(node: Node): string {
 }
 
 // ─── Normalization (the `MltXmlChecker` quirks) ────────────────────────────
-/** Locale-normalize a numeric STRING to a dot decimal. Real Shotcut files saved
- *  under a comma-locale carry `1,5`; MLT's own writer is C-locale (dot). We only
- *  swap a comma that is acting as a decimal point (a single comma between
- *  digits) — never a comma inside an animation/rect string (those are
- *  space/semicolon separated, never comma, so this is safe). */
+/** Locale-normalize a single SCALAR numeric string to a dot decimal. Real Shotcut
+ *  files saved under a comma-locale carry `1,5`; MLT's own writer is C-locale
+ *  (dot). This handles BARE scalars only — a value that is a list (`;`), an
+ *  animation (`=`), or space-separated bails out untouched; comma-decimals INSIDE
+ *  an animation string are migrated by `normalizeAnimDecimals` (in `propValue`),
+ *  not here. */
 function dotDecimal(s: string): string {
   // A lone decimal comma: digits , digits, with no other comma. Leave anything
-  // that already contains a dot or looks like a list alone.
+  // that already contains a dot or looks like a list/animation alone.
   if (s.includes(".") || s.includes(";") || s.includes("=") || s.includes(" ")) return s;
   const m = /^(-?\d+),(\d+)$/.exec(s);
   return m ? `${m[1]}.${m[2]}` : s;
@@ -145,8 +147,15 @@ function readProperties(node: Node): Record<string, string> {
 
 /** Coerce a property string to the IR `PropertyValue`: a finite number stays a
  *  number (locale-normalized), everything else (paths, colors, animation
- *  strings) stays a string. */
+ *  strings) stays a string. An ANIMATION string (contains `=`) has its
+ *  comma-decimal numeric tokens migrated to dots (LC_NUMERIC `.`-decimal): a file
+ *  authored under a comma locale carries `0=0,2;59=0,8`, which under the C-locale
+ *  header vean re-emits would make melt's `atof("0,2") == 0` — a silent
+ *  mis-render. `normalizeAnimDecimals` only touches a comma strictly between
+ *  digits, leaving the `;`/`=`/marker structure and non-numeric content (colors,
+ *  paths) byte-identical, so a clean dot string is returned unchanged. */
 function propValue(raw: string): PropertyValue {
+  if (isAnimated(raw)) return normalizeAnimDecimals(raw);
   const s = dotDecimal(raw);
   if (s.trim() !== "" && !/[=; ]/.test(s)) {
     const n = Number(s);
@@ -187,7 +196,37 @@ type ResolvedProducer = {
   length?: number;
   gain?: number;
   filters: Filter[];
+  /** Arbitrary producer-level properties not modeled structurally (caption, eof,
+   *  aspect_ratio, proxy hints, …), in document order — preserved for a lossless
+   *  round-trip. */
+  extraProps?: Record<string, PropertyValue>;
 };
+
+/** Producer `<property>` names the serializer carries STRUCTURALLY (modeled by a
+ *  dedicated field or regenerated on emit). They must NOT be captured as
+ *  extra-properties, or they would double-emit / fight their structural field. */
+const STRUCTURAL_PRODUCER_PROPS = new Set(["mlt_service", "resource", "length", "shotcut:uuid"]);
+
+/** Playlist `<property>` names the serializer carries STRUCTURALLY (the Shotcut
+ *  track kind + display name, regenerated on emit). Everything else (shotcut:lock,
+ *  custom namespaces, …) is preserved verbatim via `Track.extraProps`. */
+const STRUCTURAL_PLAYLIST_PROPS = new Set(["shotcut:video", "shotcut:audio", "shotcut:name"]);
+
+/** Capture every non-structural `<property>` of a node (playlist or main tractor)
+ *  into an ordered extra-props map, skipping the given structural names. Returns
+ *  `undefined` when nothing non-structural remains, so the field stays absent (and
+ *  byte-identical) on vean's own emissions. */
+function captureExtraProps(
+  props: Record<string, string>,
+  structural: Set<string>,
+): Record<string, PropertyValue> | undefined {
+  const out: Record<string, PropertyValue> = {};
+  for (const [k, v] of Object.entries(props)) {
+    if (structural.has(k)) continue;
+    out[k] = propValue(v);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
 
 const FADE_BRIGHTNESS_SERVICES = new Set(["brightness", "fadeInBrightness", "fadeOutBrightness"]);
 const FADE_VOLUME_SERVICES = new Set(["volume", "fadeInVolume", "fadeOutVolume"]);
@@ -276,6 +315,14 @@ function resolveProducer(node: Node): ResolvedProducer {
     const n = Number(dotDecimal(lengthRaw));
     if (Number.isFinite(n)) out.length = Math.round(n);
   }
+  // Preserve every non-structural producer property (caption, eof, aspect_ratio,
+  // proxy hints, …) in document order, so the round-trip is genuinely lossless.
+  const extraProps: Record<string, PropertyValue> = {};
+  for (const [k, v] of Object.entries(props)) {
+    if (STRUCTURAL_PRODUCER_PROPS.has(k)) continue;
+    extraProps[k] = propValue(v);
+  }
+  if (Object.keys(extraProps).length > 0) out.extraProps = extraProps;
   return out;
 }
 
@@ -359,6 +406,7 @@ function buildClip(
     filters,
   };
   if (prod.service != null && prod.service !== "") clip.service = prod.service;
+  if (prod.extraProps != null) clip.extraProps = prod.extraProps;
   // A color producer's authored window is always 0-based; its `length` is the
   // played count (the serializer regenerates it). Keep an explicit `length` when
   // present and meaningful (it's required for color in the IR? — optional there,
@@ -514,6 +562,10 @@ export function fromMlt(xml: string): Timeline {
     const items = walkPlaylist(playlist, producers, tractors, fps);
     const track: Track = { kind, id: prodRef, items };
     if (name != null) track.name = name;
+    // Preserve every non-structural playlist property (shotcut:lock, custom:*, …)
+    // in document order, so the round-trip is genuinely lossless.
+    const plExtra = captureExtraProps(plProps, STRUCTURAL_PLAYLIST_PROPS);
+    if (plExtra != null) track.extraProps = plExtra;
     if (kind === "audio") track.hidden = true;
     if (kind === "video") track.hidden = false;
     if (kind === "video") videoTracks.push(track);
@@ -531,15 +583,27 @@ export function fromMlt(xml: string): Timeline {
     const props = readProperties(tn);
     const aTrack = Math.round(Number(dotDecimal(props.a_track ?? "0")));
     const bTrack = Math.round(Number(dotDecimal(props.b_track ?? "0")));
-    const inn = toFrames(attr(tn, "in") ?? "0", fps);
+    // The [in, out] window is the structural Transition.in/out — Shotcut may write
+    // it as in=/out= ATTRIBUTES (vean's canonical form) or as <property> children.
+    // Honor the property fallback for BOTH so a property-form transition reads its
+    // real window, and exclude `in`/`out` from the property map below so the window
+    // is modeled ONCE — never duplicated as both an attribute and a stale property.
+    const inn = toFrames(attr(tn, "in") ?? props.in ?? "0", fps);
     const out = toFrames(attr(tn, "out") ?? props.out ?? "0", fps);
     const properties: Record<string, PropertyValue> = {};
     for (const [k, v] of Object.entries(props)) {
       if (k === "a_track" || k === "b_track" || k === "mlt_service") continue;
+      if (k === "in" || k === "out") continue; // window is structural (Transition.in/out)
       properties[k] = propValue(v);
     }
     transitions.push({ service, aTrack, bTrack, in: inn, out, properties });
   }
+
+  // 6. The main tractor's own `<property>` children: Shotcut writes project
+  //    metadata here (shotcut:projectAudioChannels, shotcut:scaleFactor, …). vean
+  //    emits none of its own (shotcut="1"/title are attributes), so every property
+  //    here is non-structural and preserved verbatim for a lossless round-trip.
+  const tractorProps = captureExtraProps(readProperties(mainTractor), new Set());
 
   const result: Timeline = {
     profile,
@@ -547,6 +611,7 @@ export function fromMlt(xml: string): Timeline {
     transitions,
     title,
   };
+  if (tractorProps != null) result.tractorProps = tractorProps;
   return timelineSchema.parse(result);
 }
 

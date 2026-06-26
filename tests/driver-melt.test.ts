@@ -120,6 +120,8 @@ describe("still", () => {
 
     // GOLDEN: in==out==frame ⇒ playtime 1; vcodec=png forces a true PNG (melt's
     // avformat consumer defaults to mjpeg and would write a JPEG into .png).
+    // update=1 is forwarded to the image2 muxer so a single fixed-name PNG write is
+    // warning-free and overwrite-correct (no stale-frame compare).
     expect(argvOf(spawn)).toEqual([
       "melt",
       "/in.mlt",
@@ -129,6 +131,7 @@ describe("still", () => {
       "avformat:/out.png",
       "vcodec=png",
       "frames=1",
+      "update=1",
     ]);
     expect(res.outPath).toBe("/out.png");
     expect(res.code).toBe(0);

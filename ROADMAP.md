@@ -24,13 +24,14 @@ exactly as we want" gate; everything stacks on it.
 - [x] Extend the IR: multiple video + audio tracks (`tractor` of `playlist`s);
       explicit audio clips + gain + A/V link; first-class filters & transitions
       (not just dissolve); a real keyframe model.
-- [ ] Keyframe model + animation-string parser/serializer — round-trips MLT's
+- [x] Keyframe model + animation-string parser/serializer — round-trips MLT's
       `"0=100;50~=0"` strings byte-faithfully (full marker table: `|` hold, `~`
       smooth, `$`/`-` natural/tight, Penner easings; `%`÷100; negative/relative
       frames; rect/color component-wise; re-base to `in`; `LC_NUMERIC` `.`-decimal).
       <!-- markers, %, negative/relative frames, rect/color all round-trip
-           (tests/adversarial); BUT a comma-decimal INSIDE an animation string is
-           NOT migrated to dot (LC_NUMERIC defect) → leave unchecked. See GATE.md. -->
+           (tests/adversarial); a comma-decimal INSIDE an animation string is now
+           migrated to dot on parse (normalizeAnimDecimals), closing the
+           LC_NUMERIC defect. See GATE.md. -->
 - [x] Serializer: deterministic IR → `.mlt` (two-pass defs-before-refs, inclusive
       0-based in/out, `<blank length>` gaps, `a_track`/`b_track` integer indices,
       nested-tractor dissolve, `LC_NUMERIC`). Same IR → byte-identical XML.
@@ -46,15 +47,27 @@ exactly as we want" gate; everything stacks on it.
       vean emissions byte-identical (corpus-golden.test.ts). -->
 - [x] Render-faithfulness: `melt` renders the re-emitted XML; still-frame
       hashes/SSIM match rendering the original XML (within tolerance). <!-- verify:corpus
-      OVERALL PASS — 10/10; min SSIM 0.9997 (shotcut-dissolve), all others 1.0000. -->
-- [ ] Keyframe round-trip: parse → typed model → serialize is identical (golden).
-      <!-- mostly faithful, but adversarial verification found 3 real defects:
-           (1) comma-decimal inside an animation string survives uncorrected →
-           SILENT mis-render; (2) producer-level shotcut:caption/eof/aspect_ratio
-           DROPPED; (3) empty animation property fabricates "0". Not lossless →
-           unchecked. Pinned as KNOWN DEFECT tests; see GATE.md. -->
-- [x] `bun run test` green; `bun run typecheck` clean. <!-- 161 tests / 10 files
-      pass; tsc --noEmit clean; biome clean (auto-fixable lint nits resolved). -->
+      OVERALL PASS — 10/10; SSIM 1.0000 on EVERY sampled frame of all 10 files
+      (the round-1 0.9997 on shotcut-dissolve is gone — now pixel-identical). -->
+- [x] Keyframe round-trip: parse → typed model → serialize is identical (golden).
+      <!-- the 3 original adversarial defects are FIXED and their KNOWN DEFECT
+           tests flipped: (1) comma-decimal inside an animation string is migrated
+           to dot on parse (normalizeAnimDecimals), so melt renders 0.2→0.8 not
+           0→0; (2) producer-level shotcut:caption/eof/aspect_ratio preserved via
+           clip.extraProps; (3) an empty animation property round-trips to empty
+           (no fabricated "0"). A follow-up completeness hunt then found + fixed 3
+           SIBLING lossy round-trips of the SAME class at other levels: playlist
+           props (Track.extraProps), main-tractor props (Timeline.tractorProps),
+           and a transition in/out attr+property double-emit (in/out now excluded
+           from the property map). Round-trip is lossless at every level. See
+           GATE.md. NOTE: 5 LOW/latent keyframes.ts contract gaps remain open
+           (timecode :FF spelling, empty-value "0=", quoted-value throw, ms drift)
+           — parseAnim/serializeAnim are NOT yet on the document path (it passes
+           anim strings verbatim), so they cannot mis-render today; they get fixed
+           when Move 1's edit algebra becomes their first consumer. -->
+- [x] `bun run test` green; `bun run typecheck` clean. <!-- 175 tests / 10 files
+      pass (+14 over round-1: 3 original-defect flips + 9 sibling regressions +
+      others); tsc --noEmit clean; biome check clean (25 files). -->
 - [ ] Human spot-check: open a re-emitted `.mlt` in Shotcut, confirm it looks right.
       <!-- awaiting Tejas: open corpus/vean-multitrack.mlt in Shotcut (see GATE.md). -->
 

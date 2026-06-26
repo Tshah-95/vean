@@ -118,6 +118,10 @@ type Prod = {
   /** Source duration. Required for `color` producers; carried for files too. */
   length?: number;
   filters: Filter[];
+  /** Arbitrary producer-level properties (caption, eof, aspect_ratio, proxy hints,
+   *  …) preserved from parse, in document order — re-emitted verbatim so the
+   *  round-trip is lossless. Empty/absent for vean's own emissions. */
+  extraProps?: Record<string, PropertyValue>;
   /** Emit the Shotcut identity/audio hints (true for real timeline producers;
    *  false would be a bare melt producer — we always emit a doc, so always true
    *  except the background, which sets its own). */
@@ -149,6 +153,10 @@ type Playlist = {
   name: string;
   entries: string[];
   length: number;
+  /** Arbitrary non-structural playlist properties (shotcut:lock, custom:*, …)
+   *  preserved from parse, in document order — re-emitted verbatim so the
+   *  round-trip is lossless. Empty/absent for vean's own emissions. */
+  extraProps?: Record<string, PropertyValue>;
 };
 
 // ─── Validation (deterministic, up front) ───────────────────────────────────
@@ -282,6 +290,15 @@ function prodXml(p: Prod): string {
   if (p.shotcut) {
     lines.push(`    <property name="shotcut:uuid">${esc(shotcutUuid(p.id))}</property>`);
   }
+  // Non-structural producer metadata (caption, eof, aspect_ratio, proxy hints, …),
+  // preserved from parse in document order for a lossless round-trip. Emitted
+  // after the structural props + uuid, before the filters — a stable position the
+  // parser re-captures in the same order (so the round-trip is a fixpoint).
+  if (p.extraProps) {
+    for (const [k, v] of Object.entries(p.extraProps)) {
+      lines.push(`    <property name="${esc(k)}">${propValue(v)}</property>`);
+    }
+  }
   for (const f of p.filters) lines.push(...filterLines(f, "    "));
   lines.push("  </producer>");
   return lines.join("\n");
@@ -326,6 +343,15 @@ function playlistXml(p: Playlist): string {
   lines.push(`    <property name="shotcut:video">${p.kind === "video" ? 1 : 0}</property>`);
   lines.push(`    <property name="shotcut:audio">${p.kind === "audio" ? 1 : 0}</property>`);
   lines.push(`    <property name="shotcut:name">${esc(p.name)}</property>`);
+  // Non-structural playlist metadata (shotcut:lock, custom:*, …) preserved from
+  // parse, in document order — emitted after the structural hints, before the
+  // entries: a stable position the parser re-captures in the same order (so the
+  // round-trip is a fixpoint).
+  if (p.extraProps) {
+    for (const [k, v] of Object.entries(p.extraProps)) {
+      lines.push(`    <property name="${esc(k)}">${propValue(v)}</property>`);
+    }
+  }
   lines.push(...p.entries);
   lines.push("  </playlist>");
   return lines.join("\n");
@@ -374,7 +400,7 @@ function makeProd(
   length: number | undefined,
   filters: Filter[],
 ): Prod {
-  return {
+  const prod: Prod = {
     id,
     resource: c.resource,
     service: c.service,
@@ -384,6 +410,11 @@ function makeProd(
     filters,
     shotcut: true,
   };
+  // Carry the clip's preserved producer-level metadata (caption, eof, …) onto
+  // EVERY producer minted from it (solo, dissolve tail/head) so it survives the
+  // round-trip regardless of which window the clip emits through.
+  if (c.extraProps && Object.keys(c.extraProps).length > 0) prod.extraProps = c.extraProps;
+  return prod;
 }
 
 // ─── Per-track walk ──────────────────────────────────────────────────────────
@@ -519,25 +550,29 @@ export function toMlt(timeline: Timeline): string {
   for (const t of tl.tracks.video) {
     const { entries, length } = walkTrack(t, "video", emit);
     const pid = `playlist${ids.playlist++}`;
-    playlists.push({
+    const pl: Playlist = {
       id: pid,
       kind: "video",
       name: t.name ?? `V${++videoN}`,
       entries,
       length,
-    });
+    };
+    if (t.extraProps && Object.keys(t.extraProps).length > 0) pl.extraProps = t.extraProps;
+    playlists.push(pl);
     if (length > maxLength) maxLength = length;
   }
   for (const t of tl.tracks.audio) {
     const { entries, length } = walkTrack(t, "audio", emit);
     const pid = `playlist${ids.playlist++}`;
-    playlists.push({
+    const pl: Playlist = {
       id: pid,
       kind: "audio",
       name: t.name ?? `A${++audioN}`,
       entries,
       length,
-    });
+    };
+    if (t.extraProps && Object.keys(t.extraProps).length > 0) pl.extraProps = t.extraProps;
+    playlists.push(pl);
     if (length > maxLength) maxLength = length;
   }
 
@@ -563,6 +598,16 @@ export function toMlt(timeline: Timeline): string {
   // audio order — the indexing a Transition's aTrack/bTrack assumes.
   const mainId = `tractor${ids.tractor++}`;
   const mainLines: string[] = [`  <tractor id="${mainId}" shotcut="1" title="${esc(tl.title)}">`];
+  // Non-structural main-tractor metadata (shotcut:projectAudioChannels,
+  // shotcut:scaleFactor, …) preserved from parse, in document order — emitted
+  // first (before the tracks/transitions), the position Shotcut writes them and a
+  // stable slot the parser re-captures in the same order (so the round-trip is a
+  // fixpoint). Absent on vean's own emissions, so they stay byte-identical.
+  if (tl.tractorProps) {
+    for (const [k, v] of Object.entries(tl.tractorProps)) {
+      mainLines.push(`    <property name="${esc(k)}">${propValue(v)}</property>`);
+    }
+  }
   mainLines.push(`    <track producer="${bgId}"/>`);
   for (const p of playlists) {
     const hide = p.kind === "audio" ? ' hide="video"' : "";

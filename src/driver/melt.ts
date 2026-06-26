@@ -118,7 +118,16 @@ export async function render(
  *  frame. `vcodec=png` is REQUIRED, not optional: melt's avformat consumer
  *  ignores the `.png` extension and defaults to the mjpeg encoder, silently
  *  writing a (lossy) JPEG into a `.png` file — pinning the codec makes the
- *  artifact a true, lossless PNG for agent inspection. */
+ *  artifact a true, lossless PNG for agent inspection.
+ *
+ *  `update=1` is forwarded to ffmpeg's image2 muxer (which melt's avformat
+ *  consumer uses): writing a single PNG to a fixed (non-`%d`-patterned) filename
+ *  otherwise prints "does not contain an image sequence pattern … use the -update
+ *  option" on every grab. That warning is not benign noise: a frame-grab that
+ *  trips it can leave a STALE PNG on disk (the muxer declines the overwrite),
+ *  which a downstream SSIM compare would silently read as if it were fresh.
+ *  `update=1` makes the single-frame write explicit, warning-free, and
+ *  overwrite-correct. */
 export async function still(
   mltPath: string,
   frame: number,
@@ -135,6 +144,7 @@ export async function still(
     `avformat:${outPath}`,
     "vcodec=png",
     "frames=1",
+    "update=1",
   ];
   const { stderr } = await run("melt", args);
   return { outPath, code: 0, stderr };

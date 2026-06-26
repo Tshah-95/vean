@@ -96,6 +96,15 @@ export const clipSchema = z.object({
   gain: z.number().nonnegative().optional(),
   /** MLT filters on this clip (fades, color, the animation-string escape hatch). */
   filters: z.array(filterSchema).default([]),
+  /** Arbitrary producer-level `<property>` children carried verbatim for a lossless
+   *  round-trip — `shotcut:caption`, `eof`, `aspect_ratio`, proxy hints, and any
+   *  other non-essential metadata the parser doesn't model structurally. An ORDERED
+   *  map (insertion = document order) so serialization is deterministic. The
+   *  structural producer properties (`mlt_service`, `resource`, `length`,
+   *  `shotcut:uuid`) are NEVER stored here — they're modeled by their own fields and
+   *  would otherwise double-emit. Absent on vean's own emissions, so they stay
+   *  byte-identical. */
+  extraProps: z.record(z.string(), propertyValue).optional(),
   /** Optional human label, for legibility when the .mlt is read/diffed. */
   label: z.string().optional(),
 });
@@ -145,6 +154,14 @@ export const trackSchema = z.object({
   items: z.array(itemSchema).default([]),
   /** Audio tracks are hidden video (`hide=1`); set by the builder per kind. */
   hidden: z.boolean().optional(),
+  /** Arbitrary playlist-level `<property>` children carried verbatim for a lossless
+   *  round-trip — `shotcut:lock`, custom namespaces, and any other non-essential
+   *  metadata the parser doesn't model structurally. An ORDERED map (insertion =
+   *  document order) so serialization is deterministic. The structural playlist
+   *  hints (`shotcut:video`, `shotcut:audio`, `shotcut:name`) are NEVER stored here —
+   *  they're modeled by their own fields/derivation and would otherwise double-emit.
+   *  Absent on vean's own emissions, so they stay byte-identical. */
+  extraProps: z.record(z.string(), propertyValue).optional(),
 });
 export type Track = z.infer<typeof trackSchema>;
 
@@ -184,6 +201,13 @@ export const timelineSchema = z.object({
   tracks: tracksSchema,
   /** Field-level (cross-track) transitions on the main tractor. */
   transitions: z.array(transitionSchema).default([]),
+  /** Arbitrary main-tractor-level `<property>` children carried verbatim for a
+   *  lossless round-trip — Shotcut writes project metadata here
+   *  (`shotcut:projectAudioChannels`, `shotcut:scaleFactor`, …). An ORDERED map
+   *  (insertion = document order) so serialization is deterministic. The structural
+   *  main-tractor attributes (`shotcut="1"`, `title`) are modeled separately, never
+   *  stored here. Absent on vean's own emissions, so they stay byte-identical. */
+  tractorProps: z.record(z.string(), propertyValue).optional(),
   title: z.string().default("vean timeline"),
 });
 export type Timeline = z.infer<typeof timelineSchema>;

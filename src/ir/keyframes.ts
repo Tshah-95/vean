@@ -137,6 +137,21 @@ export function isAnimated(s: string): boolean {
   return s.includes("=");
 }
 
+/** Migrate every comma-decimal numeric token in an animation string to a dot
+ *  decimal, leaving the `;`/`=`/marker/space structure and every non-numeric
+ *  token (colors, paths) byte-identical. The parser calls this on an animation
+ *  property value before storing it, so a foreign-locale (`LC_NUMERIC=fr_FR`)
+ *  file's `0=0,2;59=0,8` becomes `0=0.2;59=0.8` and renders correctly under the
+ *  `C`-locale header vean re-emits — closing the silent mis-render where melt's
+ *  `atof("0,2") == 0`. A comma is never structural inside an MLT animation value
+ *  (items split on `;`, lhs/value on `=`, rect on spaces, colors are hex), so a
+ *  comma strictly between two digits is unambiguously a decimal separator; an
+ *  already-dot string is returned unchanged (idempotent), preserving byte
+ *  round-trip for vean's own emissions. */
+export function normalizeAnimDecimals(s: string): string {
+  return s.replace(/(\d),(\d)/g, "$1.$2");
+}
+
 // ─── Marker ⇄ interp mapping ────────────────────────────────────────────────
 // The marker is the single NON-DIGIT char immediately before `=`. The fixed
 // punctuation markers map to a named interp; an alphabetic char is a Penner
@@ -254,6 +269,15 @@ function fmtNum(n: number): string {
   return String(n);
 }
 
+// ─── Decimal-separator migration (LC_NUMERIC: comma → dot) ────────────────────
+/** Parse a numeric body accepting EITHER a dot OR a comma decimal separator. The
+ *  comma form arrives from a foreign-locale `.mlt` (see `normalizeAnimDecimals`);
+ *  we normalize it to a dot before `Number()` (which only accepts the dot form).
+ *  Returns a finite number or `NaN` (the caller decides whether that's malformed). */
+function numAcceptingComma(body: string): number {
+  return Number(normalizeAnimDecimals(body));
+}
+
 // ─── Value parsing/formatting ────────────────────────────────────────────────
 const COLOR6 = /^#([0-9a-fA-F]{6})$/;
 const COLOR8 = /^#([0-9a-fA-F]{8})$/;
@@ -302,11 +326,11 @@ function formatColor(c: ColorValue): string {
 function parseScalar(raw: string): { value: number; percent: boolean } {
   if (raw.endsWith("%")) {
     const body = raw.slice(0, -1);
-    const n = Number(body);
+    const n = numAcceptingComma(body);
     if (!Number.isFinite(n)) throw new Error(`vean: malformed percent value "${raw}"`);
     return { value: n / 100, percent: true };
   }
-  const n = Number(raw);
+  const n = numAcceptingComma(raw);
   if (!Number.isFinite(n)) throw new Error(`vean: malformed numeric value "${raw}"`);
   return { value: n, percent: false };
 }
@@ -328,7 +352,7 @@ function parseValue(raw: string): KeyframeValue {
     const [xs, ys, ws, hs, os] = parts as [string, string, string, string, string];
     const op = parseScalar(os);
     const num = (p: string) => {
-      const v = Number(p);
+      const v = numAcceptingComma(p);
       if (!Number.isFinite(v)) throw new Error(`vean: malformed rect component "${p}"`);
       return v;
     };
@@ -413,6 +437,13 @@ function unquote(v: string): string {
  *  grammar above (markers, timecodes, negative frames, percent, rect, color).
  *  A non-animated string yields `{ static: true, keyframes: [<one kf@0>] }`. */
 export function parseAnim(s: string, opts: ParseOpts = {}): Keyframes {
+  // Empty (or whitespace-only) is a LEGAL, empty MLT property value — it carries
+  // no keyframe and no value. Model it as a static-with-NO-keyframes so serialize
+  // re-emits "" faithfully (parsing "" as a value would fabricate a `0` that was
+  // never authored — a silent value invention on a blank property).
+  if (s.trim() === "") {
+    return { valueType: "number", static: true, keyframes: [] };
+  }
   // Static: no `=` ⇒ a single keyframe at frame 0, flagged `static` so serialize
   // re-emits the bare value (not `0=value`).
   if (!isAnimated(s)) {
