@@ -7,9 +7,11 @@ synthesize), with a human gate-check between phases. Check boxes as they land.
 
 The shape of the whole thing: **Moves 0–2 are the headless spine** (well-specified,
 mostly agent-buildable — the answer key is Shotcut's source + the MLT clone).
-**Move 3 is the taste-driven viz layer** (unblocked the moment Move 0 lands,
-since it only needs to *read* the IR). **Move 4** unifies Remotion. **Move 5+** is
-the parallelizable breadth.
+**Move 3 is the product runtime spine**: one typed action registry, a complete
+Commander CLI, project/media ergonomics, and shared permission/effect metadata
+that all surfaces consume. **Move 4 is the local Mac app**: Tauri, bundled media
+sidecars, project UI, and the same action runtime behind every button. **Move 5**
+unifies Remotion as a producer. **Move 6+** is the parallelizable breadth.
 
 ---
 
@@ -287,26 +289,239 @@ bridge wire, with the Move-1 op-invariants gate re-verified green (221/221).
 
 ---
 
-## Move 3 — the visualization shell (the Conductor-for-video)
+## Move 3 — action runtime + project ergonomics
 
-The taste-driven UI. Unblocked the moment Move 0 lands — it only needs to *read*
-the IR + render outputs. Comes up simple, deepens as the core deepens.
+This is the product-runtime spine. Move 2 proved the individual surfaces work;
+Move 3 makes them scale without drift: define an action once, validate it once,
+run policy once, and expose it through Commander CLI, MCP, deterministic LSP code
+actions, and the future Tauri app.
 
-- [ ] Web app (Vite/React): project list; timeline drawn from the IR; preview
-      surface (rendered MP4 + still inspection day-zero); agent sessions/diffs panel.
-- [ ] Git-worktree-per-exploration model wired into the project view.
-- [ ] Later: `@remotion/player` slaved to a master clock; direct-manipulation
-      that emits Move-1 ops.
+This is also where vean becomes comfortable as a daily local tool. Project setup,
+media routing, active timeline selection, render/still outputs, transcripts,
+labels, and job state should stop being repeated shell ceremony. The system
+should expose the whole local media world to agents in structured form while
+keeping canonical edit state in `.mlt` files.
+
+### 3A. Canonical action registry
+
+- [ ] Add `src/actions/` as the single typed runtime above `src/ops`,
+      `src/diagnostics`, `src/query`, `src/driver`, and `src/state`.
+      `src/ops` remains the pure edit algebra; actions are product behaviors
+      such as `timeline.applyOp`, `render.still`, `project.init`, and
+      `media.scan`.
+- [ ] Define `ActionDefinition<I, O>` with stable id, title, description, Zod
+      input/output schemas, required scopes, effect metadata, surface metadata,
+      and an `execute(ctx, input)` handler. Zod remains canonical; JSON Schema is
+      emitted for MCP/docs/UI tooling.
+- [ ] Define `ActionContext` as dependency injection, not ambient globals:
+      project resolver, document store, local state DB, media catalog, driver,
+      logger, clock, id factory, cancellation signal, surface name, and policy
+      decision.
+- [ ] Add `executeAction(id, input, ctx)` that validates input, resolves project
+      context, applies permission/confirmation policy, opens DB connections
+      briefly, executes the handler, validates output, and returns a typed
+      success/error envelope.
+- [ ] Move existing tool cores behind actions without changing behavior:
+      `apply-op`, `preview-op`, `undo`, `diagnose`, `resolve-value-at-frame`,
+      `find-references`, `render`, `still`, `state init/status`, `project init`,
+      and `jobs list/enqueue/claim/complete/fail`.
+- [ ] Preserve the Move-2 tool-output contract: mutating timeline actions return
+      consequences, inverse, touched URIs, and only newly introduced blocking
+      alerts; the full diagnostic set belongs to ambient LSP or explicit
+      `diagnose`.
+
+### 3B. Permission, effect, and audit metadata
+
+- [ ] Add native vean metadata, then project it down to host-specific concepts.
+      MCP annotations and app hints are not the source of truth.
+- [ ] Scopes: `timeline:read`, `timeline:write`, `media:read`,
+      `media:write`, `render:execute`, `state:read`, `state:write`,
+      `jobs:read`, `jobs:write`, `fs:read`, `fs:write`, `process:execute`,
+      `external:open`.
+- [ ] Effects: `kind` (`read`, `compute`, `preview`, `create`, `update`,
+      `delete`, `render`, `execute`), mutated resources, `openWorld`,
+      `destructive`, `idempotency` (`pure`, `idempotent`, `non-idempotent`),
+      `reversibility` (`none-needed`, `inverse-op`, `snapshot`, `manual`,
+      `irreversible`), `dryRun` (`none`, `supported`, `required`),
+      `approval` (`auto`, `ask`, `ask-strong`, `deny`), audit level, and job
+      metadata (`inline`/`queued`, cancellable, retry-safe).
+- [ ] Default policy: auto-allow closed-world reads, compute, and previews; ask
+      for timeline/state writes, render/process execution, and queued jobs;
+      ask-strong for outside-project filesystem writes, irreversible deletes,
+      bulk destructive actions, or open-world effects; deny network effects in
+      core actions by default.
+- [ ] Projection rules:
+      - MCP gets `readOnlyHint`, `destructiveHint`, `idempotentHint`, and
+        `openWorldHint` derived from the native effect.
+      - LSP gets only deterministic, closed-world document edits with no
+        subprocess, filesystem, or project-wide side effects.
+      - Tauri capabilities are generated from action scopes + window targets.
+      - CLI gets consistent `--json`, `--dry-run`, `--yes`/`--confirm`, and
+        refusal messages from the same policy layer.
+
+### 3C. Complete Commander CLI
+
+- [ ] Keep Commander as the CLI framework. No hand-rolled argument parsing.
+- [ ] Expose every registered action through the escape hatch:
+      `vean action list`, `vean action describe <id>`, and
+      `vean action run <id> --input-json ...`.
+- [ ] Give high-frequency actions ergonomic Commander commands that still call
+      `executeAction`: `doctor`, `project`, `timeline`, `media`, `render`,
+      `jobs`, `setup`, and `config`.
+- [ ] Define global options consistently: `--project <id-or-path>`,
+      `--timeline <id-or-path>`, `--repo <path>` where needed, `--json`,
+      `--dry-run`, `--yes`, `--confirm <token>`, `--cwd <path>`, and
+      `--no-color`.
+- [ ] Standardize output modes: human-readable by default, stable JSON under
+      `--json`, newline-delimited JSON only for watch/streaming commands, and
+      nonzero exit codes for typed failures.
+- [ ] Add CLI contract tests that assert every action is either exposed by a
+      first-class command or intentionally hidden from CLI, and that every CLI
+      command maps to a registered action.
+
+### 3D. Project selection and routing
+
+- [ ] Implement a project resolver used by all surfaces. Resolution order:
+      explicit `--project`, `VEAN_PROJECT`, nearest ancestor containing
+      `.vean/vean.db`, then the user's active project pointer if present. The
+      resolver must print/return the chosen project in JSON output so agents do
+      not guess.
+- [ ] Add project commands:
+      `vean project init [path]`, `vean project use <path-or-id>`,
+      `vean project list`, `vean project current`, `vean project status`,
+      `vean project doctor`, and `vean project open`.
+- [ ] Store durable project-local configuration in `.vean/vean.db`: title,
+      root path, active timeline, folder roles, media roots, render/output
+      roots, setup choices, and user-approved import policies. Keep this
+      gitignored and reproducible; never make it the canonical timeline.
+- [ ] If a persistent cross-shell active project pointer is needed, store only a
+      pointer/index in OS user config (macOS Application Support / XDG config),
+      not canonical project data. This is a UX locator, not source of truth.
+- [ ] Add route resolution helpers so commands can address project resources by
+      role instead of long paths: `timeline:main`, `media:raw`, `media:proxy`,
+      `renders:review`, `stills:latest`, `transcripts:source`, etc.
+- [ ] Make every path-bearing action report resolved paths and touched URIs.
+      Agents should never have to infer where a render, still, transcript, proxy,
+      or imported asset landed.
+
+### 3E. Media catalog and local asset ergonomics
+
+- [ ] Add project-local media roots with policies: link, copy, proxy, ignore,
+      transcribe, label, and watch. Start Mac-only.
+- [ ] Add media commands:
+      `vean media root add/list/remove`, `vean media scan`, `vean media add`,
+      `vean media list`, `vean media find`, `vean media probe`,
+      `vean media label`, and `vean media transcribe` (stub or job-backed until
+      transcription lands).
+- [ ] Track media catalog rows in `.vean/vean.db`: stable media id, path,
+      content hash or fingerprint when available, size/mtime, duration, fps,
+      resolution, audio streams, labels, transcript status, proxy status, and
+      last probe result. This is cache/coordination state; the files remain the
+      source.
+- [ ] Use jobs for slow work: probing large folders, proxy generation,
+      transcription, waveform analysis, render/export, and agent sessions. Job
+      claims stay short transactions; subprocess work happens outside DB locks.
+- [ ] Keep the catalog useful to agents: expose structured search/filter results
+      and summaries over CLI/MCP/UI, not just file paths. The goal is to make
+      local media, labels, transcripts, and project folders addressable in
+      prompts and automations.
+
+### 3F. Surface adapters
+
+- [ ] Generate MCP tool registration from the registry first, with explicit
+      opt-in/opt-out per action. MCP remains a domain-action adapter, not the
+      policy source and not the ambient diagnostics source.
+- [ ] Generate Tauri invoke-command descriptors/capability inputs from action
+      metadata for the Move-4 app. The app may add presentation-specific code,
+      but not duplicate domain logic.
+- [ ] Keep LSP code actions diagnostic-first and narrow. They may call the
+      action runtime only when the full edit is deterministic from the diagnostic
+      and current document.
+- [ ] Add docs output: `vean action docs --format markdown|json` so the website,
+      README, and future app can list supported actions without drift.
+
+### 3G. Homebrew and developer distribution
+
+- [ ] Add a Homebrew formula/tap path for the CLI-first Mac install. The formula
+      installs the pure TypeScript/Bun-facing package and declares `mlt` and
+      `ffmpeg` as system dependencies; it does not bundle codec/media binaries.
+- [ ] `vean doctor --surface cli-lsp` must pass after a Homebrew install on a
+      clean Mac with `mlt`/`ffmpeg` installed by the formula dependency graph.
+- [ ] Preserve source checkout parity: every command available from Homebrew is
+      available from `bun src/cli.ts` / `bun run ...` in a clone, and both call
+      the same action runtime.
+- [ ] Document environment overrides (`VEAN_MELT`, `VEAN_FFMPEG`,
+      `VEAN_FFPROBE`) for nonstandard installs and for the future Mac app
+      sidecar resolver.
 
 **Gate:**
-- [ ] Smoke test: app boots, reads a fixture IR, draws the timeline + shows
-      render/stills without error.
-- [ ] Real gate (subjective, concrete): Tejas opens a project, asks an agent for
-      a change, sees before/after — and prefers it to Shotcut for the loop.
+- [ ] Registry parity: every Move-2 tool/CLI behavior is now action-backed; tests
+      prove old entrypoints and action entrypoints produce the same output.
+- [ ] CLI parity: every registered public action is available through either an
+      ergonomic Commander command or `vean action run`; hidden actions have an
+      explicit reason in metadata.
+- [ ] Policy projection: at least one read, preview, timeline write, render,
+      state write, job, and destructive-denied fixture has correct CLI behavior,
+      MCP annotations, and Tauri capability metadata snapshot.
+- [ ] Project ergonomics eval: from a fresh checkout, run
+      `vean project init`, `vean project use`, add/scan a media root, create or
+      select a timeline, render a still, and inspect all touched paths without
+      passing absolute paths after selection.
+- [ ] Concurrency eval: two workers claim jobs against the same `.vean/vean.db`
+      without double-claiming; render/probe/transcribe jobs never hold long DB
+      transactions.
+- [ ] Agent eval: a fresh agent can ask "use the main project, find the talking
+      head clip, duck the music, render a review still" and route through project
+      context + media catalog + action registry without bespoke instructions.
+- [ ] Distribution eval: Homebrew install and source checkout both pass
+      `doctor`, can initialize a project, and can render a still through the same
+      action id.
 
 ---
 
-## Move 4 — Remotion as a first-class producer
+## Move 4 — local Mac app (the Conductor-for-video)
+
+The product UI is a local Mac app, not a web app. The website exists to download
+the app and host docs. The app uses the same action runtime, local state, and
+renderer sidecars as the CLI; it does not become a second implementation.
+
+- [ ] Tauri Mac app shell: project picker, current project dashboard, timeline
+      read view, media browser, render/still preview, jobs/activity panel, and
+      agent session panel.
+- [ ] Bundle pinned sidecars for the Mac app: `vean`, `vean-lsp`, `vean-mcp` if
+      useful, `melt`, MLT modules/profiles, `ffmpeg`, and `ffprobe`. Keep them
+      subprocess-only; never link GPL codec/media libraries.
+- [ ] Add license/provenance packaging: sidecar versions, build source/offers,
+      notices, and a reproducible manifest. The source/CLI/Homebrew artifact
+      remains pure TypeScript with system deps.
+- [ ] App setup flow: detect system state, ask before user-level changes,
+      initialize/select project, configure folder roles/media roots, verify with
+      `doctor`, and show exact remaining manual host steps for Claude/Codex.
+- [ ] UI calls registered actions via local IPC. Every button/menu either maps
+      to an action id or is view-only. The app may render richer controls from
+      metadata, but domain behavior stays in `src/actions`.
+- [ ] Git-worktree-per-exploration model wired into project view and agent
+      sessions, with diffs/renders/stills easy to compare.
+- [ ] Later: direct-manipulation timeline gestures emit Move-1 ops through the
+      action runtime; no UI-only edit path.
+
+**Gate:**
+- [ ] App boots on macOS, opens a fixture project, reads `.vean/vean.db`, draws
+      the timeline, lists media, and shows render/still artifacts.
+- [ ] Bundled sidecar gate: on a clean Mac without Homebrew `melt`/`ffmpeg` on
+      PATH, the app renders a fixture via bundled sidecars; the CLI/Homebrew path
+      still uses system deps.
+- [ ] Action parity gate: app-triggered render/still/apply-op produces the same
+      typed output and touched URIs as CLI/MCP action execution.
+- [ ] Setup gate: app can initialize a fresh clone/project, run doctor, and
+      produce a clear pass/fail report without silently modifying Claude/Codex
+      trust or user PATH.
+- [ ] Real gate (subjective, concrete): Tejas opens a project, asks an agent for
+      a change, sees before/after, and prefers the loop to Shotcut for that task.
+
+---
+
+## Move 5 — Remotion as a first-class producer
 
 One timeline, footage + graphics.
 
@@ -323,7 +538,7 @@ One timeline, footage + graphics.
 
 ---
 
-## Move 5+ — breadth
+## Move 6+ — breadth
 
 The parallelizable tail; no architectural gate. Each item lands with a schema
 entry + a render/still golden, independently verifiable.

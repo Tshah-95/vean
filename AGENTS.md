@@ -8,13 +8,14 @@ frame-exact, rationally-timed model of a timeline that an agent (or a UI, or a
 human) mutates through a closed set of operations, each of which reports its
 consequences **before a single frame renders**.
 
-vean is **not only an app.** Its core is the headless editing engine an app sits
-on: files in, files out, no network, no secrets. Product surfaces (CLI, LSP, MCP,
-and the future Tauri UI) share local coordination state in a gitignored
-`.vean/vean.db` SQLite database. The render is delegated to `melt` (MLT/FFmpeg)
-as a separate process; the motion-graphics are delegated to Remotion as a
-producer. vean owns the part nobody else does: a *typed, validated, diagnosable,
-agent-authorable* representation of an edit.
+vean is **not only an app.** Its core is the headless editing engine the app
+sits on: files in, files out, no network, no secrets. Product surfaces (the
+Commander CLI, LSP, MCP, and the future local Tauri Mac app) share local
+coordination state in a gitignored `.vean/vean.db` SQLite database. The render is
+delegated to `melt` (MLT/FFmpeg) as a separate process; the Mac app may bundle
+pinned renderer sidecars, while the source/CLI/Homebrew artifact treats them as
+system dependencies. vean owns the part nobody else does: a *typed, validated,
+diagnosable, agent-authorable* representation of an edit.
 
 This file is the **resolver** — it doesn't hold the knowledge, it routes to it.
 It is the single canonical brain; `CLAUDE.md` is a one-line `@AGENTS.md` shim so
@@ -29,7 +30,8 @@ Claude and Codex read the same bytes.
   `melt` and `ffmpeg`; a local product-state substrate for projects, setup
   choices, jobs, and future UI/agent coordination.
 - **ISN'T:** a renderer (MLT/FFmpeg do that), a motion-graphics engine (Remotion
-  does that), or a GUI (the visualization layer does that).
+  does that), or a UI implementation inside the core (the local Mac app does
+  that through the action runtime).
 
 ## The seam: depend / mine / build
 
@@ -42,18 +44,22 @@ the typed/diagnosable layer nobody else has.
 |---|---|---|
 | **Depend on** (reuse as-is) | MLT + `melt` + FFmpeg; Remotion's renderer + `@remotion/player` | Solved problems — engine semantics, codecs, the React-in-Chrome render. Never reimplement. Driven at arm's length (see Hard boundaries #1). |
 | **Mine** (source as spec, don't run) | Shotcut `src/commands/` (edit algebra + undo mechanics); `src/qml/filters/*/meta.qml` (dial schemas); the nested-tractor-dissolve + blanks-as-gaps XML shapes | Debugged knowledge, but Qt-coupled. Lift the semantics, drop the framework. |
-| **Build** (own, greenfield) | the typed IR; serialize + parse; the keyframe model; the dials schema (from `melt -query` + overrides); the edit algebra as pure ops; the diagnostics LSP; the agent bridge + skills; the reference viz app | This is the project. The LSP especially is net-new — no NLE exposes consequences. |
+| **Build** (own, greenfield) | the typed IR; serialize + parse; the keyframe model; the dials schema (from `melt -query` + overrides); the edit algebra as pure ops; the diagnostics LSP; the action registry; the Commander CLI; the agent bridge + skills; the local Mac app | This is the project. The LSP especially is net-new — no NLE exposes consequences. |
 
 ## The layer model
 
-Three layers. The agent-vs-UI ownership split falls out of them cleanly.
+Four layers. The agent-vs-UI ownership split falls out of them cleanly.
 
 1. **The core (this repo's heart, headless, no UI).** The typed video *document*
    and everything that reasons over it: IR, serialize+parse, keyframe model,
    dials schema, edit algebra, diagnostics, the `melt`/ffmpeg driver. The video
    equivalent of a language server + the engine driver. ~Agent-buildable,
    because it's well-specified (the spec is Shotcut's source).
-2. **The agent bridge.** Two coordinated surfaces over the same core:
+2. **The action runtime.** A typed registry defines product behaviors once, then
+   projects them to Commander CLI, MCP tools, narrow LSP code actions, and Tauri
+   invoke commands. This is where project/media ergonomics, policy, permissions,
+   output envelopes, and job semantics stay consistent across surfaces.
+3. **The agent bridge.** Two coordinated surfaces over the same core:
    **`vean-lsp`** for ambient feedback (push diagnostics, code actions,
    definitions/references/hover over the timeline document) and **MCP/CLI tools**
    for domain actions (`apply-op`, `preview-op`, `undo`, `render`, `still`).
@@ -61,11 +67,10 @@ Three layers. The agent-vs-UI ownership split falls out of them cleanly.
    agent loop. Agents should see adverse effects the same way they do in code:
    edit/change happens, diagnostics are pushed without a separate "remember to
    call diagnose" step.
-3. **The visualization layer.** A Conductor-style web app: project list,
-   timeline drawn from the IR, the preview surface (`@remotion/player` slaved to
-   a master clock + footage video), and the agent-orchestration UI (sessions,
-   diffs, git worktrees for exploration). This is **taste**, and it is mostly
-   *read + light nudge* at first.
+4. **The local product layer.** The local Mac app is the primary GUI: project
+   list, media catalog, timeline drawn from the IR, render/still preview, and
+   agent-orchestration UI (sessions, diffs, git worktrees for exploration). The
+   website is only for download/docs, not a web editor.
 
 ## Local state contract
 
@@ -86,8 +91,34 @@ The timeline core stays file-in/file-out. Product coordination state lives in
   short status update.
 
 CLI is the canonical command surface for this state. LSP remains ambient and
-independent. MCP is an optional adapter backed by the same core/actions, not the
-source of truth.
+independent. MCP and the future app are adapters backed by the same action
+runtime, not the source of truth.
+
+## Action runtime contract
+
+Define a product behavior once in `src/actions/`, then expose it through the
+surfaces that make sense. `src/ops` remains the pure edit algebra; actions wrap
+real workflows such as `timeline.applyOp`, `render.still`, `project.init`,
+`media.scan`, and `jobs.claim`.
+
+- **Commander CLI is first-class and complete.** No hand-rolled CLI parsing.
+  Every public action is available either as an ergonomic Commander command or
+  through the escape hatch: `vean action list`, `vean action describe <id>`,
+  `vean action run <id> --input-json ...`.
+- **MCP is generated from the registry where possible.** MCP annotations are
+  hints projected from vean's native effect metadata, not the authorization
+  source of truth.
+- **LSP stays narrow.** It owns ambient diagnostics, navigation, and
+  deterministic code actions only. Structural edits needing choices belong to
+  CLI/MCP/app actions.
+- **Tauri calls actions.** The Mac app may add richer presentation and
+  interaction, but every mutating button/menu routes through a registered action
+  rather than duplicating domain behavior.
+- **Effect metadata is load-bearing.** Actions declare scopes, mutated
+  resources, idempotency, destructive/open-world status, dry-run support,
+  reversibility, approval level, audit level, and job behavior. Policy is
+  enforced before execution and projected to CLI confirmations, MCP hints, and
+  Tauri capabilities.
 
 The payoff of the split: **human gestures and agent actions become the same
 operations** — both call the edit algebra, both get undo, and both update the
@@ -179,8 +210,11 @@ stripped (colors become plain hex/named — vean is standalone).
    via the public `.mlt` file format + CLI — arm's-length per the FSF GPL FAQ —
    so vean stays AGPL-by-choice, not GPL-by-force (see [LICENSING.md](LICENSING.md)).
    Never statically or dynamically link `libmlt` or `libavcodec` into vean.
-2. **Never bundle codecs or the `melt`/`ffmpeg` binaries.** They are system deps
-   the user installs. vean's distributed artifact is pure TypeScript.
+2. **Never link GPL/media libraries; bundle sidecars only in the app.** The
+   source/CLI/Homebrew artifact is pure TypeScript and treats `melt`/`ffmpeg` as
+   system deps. A signed Mac app may bundle pinned `melt`, MLT modules/profiles,
+   `ffmpeg`, and `ffprobe` as subprocess sidecars with license/provenance
+   manifests. Never statically or dynamically link `libmlt` or `libavcodec`.
 3. **Core stateless, product state local.** `src/ir`, `src/ops`,
    `src/diagnostics`, and `src/driver` remain deterministic/file-based. Shared
    product state is allowed only in gitignored `.vean/vean.db` via `src/state/`.
@@ -232,7 +266,9 @@ parallel session safety rules above, never reverts unrelated work, and never use
 | initialize repo-local product state | `setup` (`.agents/skills/setup/SKILL.md`) | `.vean/vean.db`, Drizzle migrations, `src/state/`, `drizzle/` |
 | edit a timeline as an agent (apply an op, fix a diagnostic, tighten a cut) | `editing` (`.agents/skills/editing/SKILL.md`) | a `.mlt` doc via the bridge tools (`apply-op`/`preview-op`/`undo`/`render`/`still`) |
 | parallelize research, review, implementation, or verification | _(none — PM thread delegates directly)_ | fresh agent threads; disjoint code scopes; PM integrates + verifies |
-| build the viz layer | _(none yet — Move 3)_ | `app/` (TBD) |
+| add or expose a product action | _(none yet — Move 3)_ | `src/actions/`, CLI/MCP/LSP/Tauri adapters, tests |
+| improve project/media ergonomics | _(none yet — Move 3)_ | `src/actions/`, `src/state/`, Commander CLI, media catalog migrations |
+| build the local Mac app | _(none yet — Move 4)_ | `app/` (Tauri), action IPC, bundled renderer sidecars |
 
 ### Keeping the resolver healthy
 
@@ -250,6 +286,7 @@ src/
   ir/          ← the typed document: IR types, serialize, parse, keyframes (Move 0)
   ops/         ← the edit algebra: pure op(state) → {state', consequences, inverse} (Move 1)
   diagnostics/ ← the LSP: static checks, resolve-value-at-frame, find-references (Move 1)
+  actions/     ← typed product actions + metadata projected to CLI/MCP/LSP/Tauri (Move 3)
   bridge/      ← the agent surface: CLI / MCP verbs (Move 2)
   state/       ← repo-local product state: SQLite/Drizzle, projects, jobs, setup choices
   driver/      ← the melt/ffmpeg subprocess driver + inspect (render, still, contact)
@@ -262,7 +299,7 @@ drizzle/       ← committed local-state SQL migrations for `.vean/vean.db`
 skills/        ← Claude Code plugin skill shims (symlink back to .agents where shared)
 .lsp.json      ← Claude Code plugin LSP registration for .mlt / vean-lsp
 .mcp.json      ← Claude Code plugin MCP registration for vean-mcp
-app/           ← the reference visualization layer (Move 3, TBD)
+app/           ← the local Tauri Mac app (Move 4, TBD)
 ROADMAP.md     ← the phases + their verification gates (the plan of record)
 BUILD-MONITOR.md ← 15-minute checkpoint/review protocol for active agent builds
 LICENSING.md   ← why AGPL-3.0 + CLA, and the no-linking nuance

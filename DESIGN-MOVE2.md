@@ -252,8 +252,8 @@ cleanliness + the trim-undo persist round-trip).
   generic references: the `vean-lsp` bin / `bun run lsp`, the `vean-mcp` bin /
   `bun run mcp`, the canonical `.agents/skills/editing/SKILL.md`, and the AGENTS
   resolver row that points Codex at that skill.
-- **The reference viz layer** (Move 3) — it only needs to *read* the IR + render
-  outputs and is unblocked already.
+- **The local app layer** (now Move 4) — it reads the IR + render outputs and
+  calls the Move-3 action runtime; unblocked already.
 - **Canonical timeline state in a DB** — the "document" is still a file on disk
   addressed by a URI; the MCP server reads it, applies the op, writes it back.
   The shared file is what keeps the edit and the ambient LSP in lock-step.

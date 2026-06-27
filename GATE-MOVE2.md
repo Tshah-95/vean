@@ -241,7 +241,8 @@ persisted-undo path.
   the `vean-lsp`/`vean-mcp` bins, the `bun run lsp`/`bun run mcp` scripts, the
   canonical `.agents/skills/editing/SKILL.md`, and the AGENTS resolver row Codex
   can follow.
-- **The viz layer** (Move 3) — only reads the IR + render outputs; unblocked.
+- **The local app layer** (now Move 4) — reads the IR + render outputs and calls
+  the Move-3 action runtime; unblocked.
 - **The I/O-injected perceptual diagnostics** (dangling FILE ref, upscaling,
   colorspace) carried over from Move 1b as finalized-signature stubs — they land
   additively at the zero-false-positive bar; the bridge already surfaces whatever

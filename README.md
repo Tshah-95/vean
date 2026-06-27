@@ -31,12 +31,16 @@ each of which **reports its consequences before a single frame renders**:
   param's value at a frame, through clip → track → tractor → transition) and
   *find-references* (what uses this source, what ripples if I move this).
 
-vean is **not** a renderer, a motion-graphics engine, or a GUI. It delegates:
+vean's core is **not** a renderer, a motion-graphics engine, or a GUI. It
+delegates:
 
-- **Render** → `melt` (MLT/FFmpeg), driven as a separate process.
+- **Render** → `melt` (MLT/FFmpeg), driven as a separate process. The CLI/source
+  install uses system deps; the future Mac app may bundle pinned renderer
+  sidecars.
 - **Motion graphics** → [Remotion](https://www.remotion.dev/), as a *producer*
   (pre-rendered alpha clips for export; `@remotion/player` for live preview).
-- **UI** → a reference visualization layer built on this core (planned).
+- **UI** → a local Tauri Mac app built on this core (planned). The website is for
+  download/docs, not a web editor.
 
 The timeline core is **stateless**: files in, files out. Product coordination
 state is local-only: CLI/LSP/MCP/future UI metadata lives in gitignored
@@ -44,17 +48,23 @@ state is local-only: CLI/LSP/MCP/future UI metadata lives in gitignored
 
 ## Architecture
 
-Three layers:
+Four layers:
 
 1. **Core** (headless) — the typed document + serialize/parse + keyframes +
    edit algebra + diagnostics + the `melt`/ffmpeg driver.
-2. **Agent bridge** — `vean-lsp` for ambient diagnostics/navigation/code
+2. **Action runtime** — one typed registry for product behaviors, projected to
+   Commander CLI, MCP tools, deterministic LSP code actions, and the future
+   Tauri app. Every public action is available through ergonomic commands or
+   `vean action run <id> --input-json ...`.
+3. **Agent bridge** — `vean-lsp` for ambient diagnostics/navigation/code
    actions, plus CLI/MCP tools for domain actions (`apply-op`, `preview-op`,
    `undo`, `render`, `still`, `resolve-value-at-frame`, `find-references`) +
    skills. `diagnose` remains a debug/CI command, not the normal agent safety
    loop.
-3. **Visualization layer** — a Conductor-style web app (project list, timeline,
-   live preview, agent orchestration with git-worktree exploration).
+4. **Local Mac app** — a Tauri app for project selection, media catalog,
+   timeline/preview, render/still review, jobs, and agent orchestration with
+   git-worktree exploration. It uses the same action runtime and local state as
+   the CLI.
 
 Human gestures and agent actions are the *same* operations — both update the
 same document, both get undo, and `vean-lsp` pushes diagnostics as ambient
@@ -74,7 +84,8 @@ feedback the way coding agents expect from TypeScript/Pyright/rust-analyzer.
 
 Building in phases, each behind a gate — see [ROADMAP.md](ROADMAP.md). Move 0 is
 the document core (round-trip + render-faithfulness); the spine reaches a usable
-agent-editing loop by Move 2, and a UI you'd choose over Shotcut by Move 3.
+agent-editing loop by Move 2; Move 3 hardens the action registry, Commander CLI,
+and project/media ergonomics; Move 4 is the local Mac app.
 
 ## Requirements
 

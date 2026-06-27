@@ -1,9 +1,10 @@
 # vean build monitor
 
 This is the checkpoint protocol for supervising Claude/agent implementation work
-on the LSP + bridge build. It is intentionally high-fidelity and low-noise:
-capture enough state to challenge bad direction, but do not rerun expensive
-render gates unless the touched files justify it.
+on the bridge, action runtime, CLI/project ergonomics, and local app path. It is
+intentionally high-fidelity and low-noise: capture enough state to challenge bad
+direction, but do not rerun expensive render gates unless the touched files
+justify it.
 
 ## Cadence
 
@@ -48,6 +49,18 @@ Challenge the work against this contract, in order:
 7. **Local state hygiene.** Does any new product state go through `src/state/`
    and Drizzle migrations, with `.vean/` gitignored, WAL enabled, and short
    transactions? No long render/agent work inside a DB transaction.
+8. **Action registry ownership.** Is product behavior defined once in
+   `src/actions/`, with CLI/MCP/LSP/Tauri as adapters, or did a surface grow its
+   own domain logic?
+9. **Commander parity.** Are CLI commands Commander-backed and action-backed,
+   with every public action exposed by an ergonomic command or
+   `vean action run`?
+10. **Project context honesty.** Do commands resolve and report the active
+    project/timeline/media routes deterministically, rather than relying on
+    hidden cwd/path guesses?
+11. **Permission projection.** Are scopes/effects/approval metadata native to
+    vean and projected to MCP hints, CLI confirmations, and Tauri capabilities,
+    rather than trusting one host's annotation model as authorization?
 
 ## Escalation triggers
 
@@ -62,10 +75,18 @@ Pause and challenge the agent if any of these appear:
 - Tests pass only by narrowing fixtures instead of preserving the contract.
 - Long-running work happens while holding a SQLite transaction or file lock.
 - `.vean/` contents are staged or treated as canonical timeline data.
+- A CLI/MCP/Tauri command bypasses `executeAction` for product behavior that
+  should be registry-owned.
+- A first-class CLI command exists without an action id, or a public action lacks
+  either an ergonomic command or an explicit hidden reason.
+- A command mutates outside the selected project without `ask-strong` policy.
+- A path-bearing action omits resolved project/timeline/resource paths or
+  touched URIs from machine-readable output.
 
 ## Completion criteria
 
-The build is complete only when the Move 2 gates in `ROADMAP.md` pass:
+For Move 2 work, the build is complete only when the Move 2 gates in
+`ROADMAP.md` pass:
 
 - `vean-lsp` pushes a known defect into Claude context without manual
   `diagnose`.
@@ -76,3 +97,13 @@ The build is complete only when the Move 2 gates in `ROADMAP.md` pass:
   render/still review.
 - `.vean/vean.db` initializes through `bun run project:init`, doctor reports
   state clean, and job lease smoke tests pass.
+
+For Move 3 work, the build is complete only when the Move 3 gates in
+`ROADMAP.md` pass:
+
+- Every Move-2 tool/CLI behavior is action-backed with parity tests.
+- Every public action is reachable through Commander or `vean action run`.
+- Policy metadata projects correctly to CLI, MCP, LSP, and Tauri snapshots.
+- A fresh project can be initialized, selected, routed through media roots, and
+  used to render a still without repeating absolute paths after selection.
+- Concurrent job claims do not double-claim and long work never holds DB locks.
