@@ -175,6 +175,7 @@ each Move lands, not guessed ahead. Until a skill exists, the method is in
 | add/verify an edit operation | _(none yet — Move 1)_ | `src/ops/`, `tests/` |
 | add a diagnostic / lint | _(none yet — Move 1)_ | `src/diagnostics/` |
 | wire the agent bridge / a skill | _(none yet — Move 2; monitor with `BUILD-MONITOR.md`)_ | `src/lsp/`, `src/bridge/`, `.claude/skills/` |
+| edit a timeline as an agent (apply an op, fix a diagnostic, tighten a cut) | `editing` | a `.mlt` doc via the bridge tools (`apply-op`/`preview-op`/`undo`/`render`/`still`) |
 | build the viz layer | _(none yet — Move 3)_ | `app/` (TBD) |
 
 ### Keeping the resolver healthy
