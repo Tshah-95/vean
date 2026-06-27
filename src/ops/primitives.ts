@@ -435,9 +435,29 @@ export function splitEntryAt(
   // dissolve would emit `length=<original>` but re-parse to `length=<window>`,
   // breaking the round-trip fixpoint. Track each color half's `length` to its own
   // window so every emission path is round-trip-faithful.
+  //
+  // AND re-base each color half's WINDOW to 0-based (`[0, playtime-1]`). A color
+  // generator is content-identical at every frame and positionless, so its `in`/
+  // `out` are arbitrary — the canonical (and serialized) form is 0-based. The
+  // tail half otherwise inherits `in = it.in + localFrame` (e.g. 30) while its
+  // re-based `length` is its played count (e.g. 30), so `out (59) ≥ length (30)`
+  // and the diagnostics engine's in-out-beyond-source rule fires on a perfectly
+  // valid edit — a cross-surface inconsistency between the split op and the
+  // diagnostics engine. Re-basing to 0-based makes `out < length` hold by
+  // construction (the rule's stated invariant for a generator) while staying
+  // byte-identical on round-trip and pixel-identical on render (verified). A
+  // color clip carries no source-windowed filters, so no keyframe re-base is
+  // needed alongside this.
   if (it.service === "color") {
-    leftClip.length = playtime(leftClip);
-    rightClip.length = playtime(rightClip);
+    // Capture each half's played length BEFORE re-basing (playtime reads in/out).
+    const leftPlay = playtime(leftClip);
+    const rightPlay = playtime(rightClip);
+    leftClip.in = 0;
+    leftClip.out = leftPlay - 1;
+    leftClip.length = leftPlay;
+    rightClip.in = 0;
+    rightClip.out = rightPlay - 1;
+    rightClip.length = rightPlay;
   }
   out.splice(itemIndex, 1, leftClip, rightClip);
   return { items: out, leftUuid: leftClip.id, rightUuid: rightClip.id };

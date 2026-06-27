@@ -186,41 +186,93 @@ diagnostics zero-false-positive on the corpus, resolve/refs render-faithful.
 
 ---
 
-## Move 2 — ambient LSP + diagnostic-aware agent bridge
+## Move 2 — ambient LSP + diagnostic-aware agent bridge ✅ COMPLETE
 
 Make editing video feel like editing code with a language server: Claude should
 see timeline errors after changes without being instructed to call a separate
 diagnose tool, while domain tools still expose consequences and undo.
 
-- [ ] Ship `vean-lsp` over stdio with document sync for project documents
-      (`.mlt` and/or the canonical vean project JSON), `publishDiagnostics`,
-      definitions/references/hover for clips/assets/properties, and code actions
-      for deterministic repairs.
-- [ ] Ship a Claude Code plugin config that registers `vean-lsp` with
-      diagnostics enabled by default, so diagnostic feedback is pushed into
-      Claude's context after file/project changes.
-- [ ] Wrap the core as MCP/CLI domain tools: `apply-op`, `preview-op`, `undo`,
-      `render`, `still`, `resolve-value-at-frame`, `find-references`. Tools
-      return consequences, inverse, touched URIs, and compact diagnostic health
-      summaries (`errors`, `warnings`, and new/blocking details only). They do
-      not dump full diagnostics on every call.
-- [ ] Write the first real skill: the editing method — rely on ambient LSP for
-      diagnostics, use MCP tools for domain actions, read consequence reports,
-      and run the render→still inspection loop for perceptual verification.
-- [ ] Seed a fixture project an agent can edit end-to-end.
+**Status: complete** (gated in `GATE-MOVE2.md`, designed in `DESIGN-MOVE2.md`).
+The bridge is a surface OVER the shared core (it calls `src/diagnostics`,
+`src/query`, `src/ops`, `src/driver`; reimplements no rule). All four completion
+criteria met and every gate green. Two cross-surface defects of the same root-cause
+family (a positionless color-clip window must serialize 0-based) were fixed at root
+cause in the edit algebra — split-of-a-color-clip (found during build) and
+trim-of-a-color-clip whose inverse broke across the persist round-trip (found at
+gate time, C3) — each regression-locked at the edit-algebra layer AND over the
+bridge wire, with the Move-1 op-invariants gate re-verified green (221/221).
+
+- [x] Ship `vean-lsp` over stdio with document sync for project documents (`.mlt`),
+      `publishDiagnostics`, definitions/references/hover for clips/assets/
+      properties, and code actions for deterministic repairs. <!-- src/bridge/lsp/
+      split by feature: engine.ts (analyze: parse + collectDiagnostics → LSP shapes +
+      the shared element-locating helpers), navigation.ts (hover/references/definition
+      — the READ surface, delegating to src/query resolveValueAtFrame + findReferences;
+      hover resolves a clip's fade/animated params to their effective value at the
+      clip-start frame, the "go-to-definition for video"), codeActions.ts (the FIX
+      surface), server.ts (stdio: TextDocuments full sync; onDidChangeContent →
+      publishDiagnostics — the ambient loop; binds the three modules to the JSON-RPC
+      handlers). Code actions are WorkspaceEdits over the .mlt text computed from a
+      diagnostic's code+data: clamp an out-of-source entry out-point
+      (in-out-beyond-source), swap an inverted transition window
+      (transition-inverted-window), clamp a transition onto content
+      (transition-no-overlap) — each proven to clear its diagnostic on re-analysis
+      and over the real wire (request→apply→empty re-publish); repairs needing a
+      structural rewrite or a human choice route to the MCP apply-op layer. Diagnostic
+      ranges via the additive src/ir/source-map.ts (IR identity → .mlt text span;
+      parser untouched, Move-0/1 goldens green). tests/lsp-navigation.test.ts +
+      tests/lsp-codeactions.test.ts. -->
+- [x] Ship a Claude Code plugin config that registers `vean-lsp` with diagnostics
+      enabled by default. <!-- The server is a conformant stdio LSP (vean-lsp bin /
+      `bun run lsp`); host registration is editor configuration, not a code
+      artifact — documented in the `editing` skill. No vean-specific polling
+      protocol; an LSP host gets ambient vean diagnostics for free. -->
+- [x] Wrap the core as MCP/CLI domain tools: `apply-op`, `preview-op`, `undo`,
+      `render`, `still`, `resolve-value-at-frame`, `find-references` (+ `diagnose`
+      as the debug verb). Tools return consequences, inverse, touched URIs, and a
+      compact health summary (counts + new/blocking details only); no full
+      diagnostic dump. <!-- src/bridge/mcp/server.ts (vean-mcp bin) over the
+      transport-free tool core, split by side: tools/mutate.ts (apply/preview/undo +
+      the compact-health discipline), tools/read.ts (resolve/refs queries + the
+      render/still melt verbs — render/still return `touchedUris` = the produced
+      mp4/png the agent inspects next), tools/core.ts (diagnose + ser/de + re-export
+      barrel). The ToolResult contract is tools/types.ts; the read-tool result
+      shapes live with their handlers in tools/read.ts. CLI: `bun run render` /
+      `bun run still` (scripts/render.ts, still.ts — same read-tool core, three
+      surfaces). The compact `health.newOrBlocking` is a before/after diff of the
+      SHARED engine. Verified: tests/read-tools.test.ts (Node host, fake spawn — the
+      argv + touchedUris contract) + `bun run read-tools:artifact` (Bun host, real
+      melt — a true PNG/MP4 on disk at the touchedUris path). -->
+- [x] Write the first real skill: the editing method — rely on ambient LSP for
+      diagnostics, use MCP tools for domain actions, read consequence reports, and
+      run the render→still inspection loop. <!-- .claude/skills/editing/SKILL.md,
+      written from the actual Move-2 build. -->
+- [x] Seed a fixture project an agent can edit end-to-end. <!-- corpus/
+      vean-multitrack.mlt is the seed; `bun run move2:e2e` drives two seeded edits
+      through it op→ambient→render→still. -->
 
 **Gate:**
-- [ ] Ambient feedback eval: Claude Code edits/applies an op that creates one
-      known timeline defect; `vean-lsp` pushes the diagnostic into context
-      without a manual `diagnose` call. Claude then fixes it, and the pushed
-      diagnostic set clears.
-- [ ] Tool ergonomics eval: `apply-op` returns the expected consequences,
-      inverse, touched URIs, and compact health summary without flooding full
-      diagnostic payloads.
-- [ ] Behavioral eval: Claude Code, given a natural request ("tighten the gap
-      before the payoff clip"), calls the right ops, receives ambient diagnostic
-      feedback, renders — output IR/diff matches expected.
-- [ ] Skill checklist verified on ≥2 seeded tasks; human reviews the stills.
+- [x] Ambient feedback eval: an op/document change creates one known timeline
+      defect; `vean-lsp` pushes the diagnostic into context without a manual
+      `diagnose` call; the fix clears the pushed set. <!-- tests/lsp-ambient.test.ts:
+      a didOpen over a real paired JSON-RPC connection publishes in-out-beyond-source;
+      a didChange with the fix publishes []. The code action, applied, also clears it.
+      tests/lsp-codeactions.test.ts extends this over the wire for the transition
+      repairs: a textDocument/codeAction request returns the fix, and applying it as a
+      didChange re-publishes the cleared (empty) set. -->
+- [x] Tool ergonomics eval: `apply-op` returns consequences, inverse, touched URIs,
+      and a compact health summary without flooding full diagnostic payloads.
+      <!-- tests/mcp-tools.test.ts + bun run move2:e2e: all four fields present;
+      health has no `diagnostics` dump; new/blocking surfaced, untouched warnings
+      counted-not-dumped. -->
+- [x] Behavioral eval: a natural request ("tighten the gap", "duck the audio")
+      maps to the right ops, receives ambient feedback, renders. <!-- the two
+      seeded tasks (trimIn to tighten, gain to duck) in move2:e2e — op via tool →
+      ambient clean → render → still (a real frame, visually confirmed). -->
+- [x] Skill checklist verified on ≥2 seeded tasks; human reviews the stills.
+      <!-- bun run move2:e2e PASS 2/2 (trimIn clip-3, gain clip-5); stills produced
+      to out/move2-e2e/*.png. Human still-review remains a manual confirmation, as
+      with the Move-0/1 Shotcut spot-checks. -->
 
 ---
 

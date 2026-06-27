@@ -97,8 +97,37 @@ function doTrim(
     return identityTrim(state, loc, side, args);
   }
 
+  // A color generator is POSITIONLESS: it has no external source, every frame is
+  // content-identical, and the serializer ALWAYS emits it 0-based (in=0,
+  // out=len-1, length=len — `serialize.ts walkTrack`, the same invariant the
+  // split-color fix enforces in `splitEntryAt`). So its `in`/`out` carry no
+  // source meaning — only the PLAYTIME (frame count) is real. Trim therefore
+  // validates + resizes a color clip by playtime and re-bases the window to
+  // 0-based, keeping the IR byte-identical to what the serializer emits. Without
+  // this the in-memory window (e.g. in=10,out=49) diverges from the serialized
+  // form (in=0,out=39), and the scalar inverse — computed against the
+  // pre-rebase `in` — underflows after a serialize→reparse persist round-trip
+  // (the C3 / persisted-undo defect). `length` is intrinsic to a color
+  // generator (its own played count), never an external ceiling.
+  const positionless = clip.service === "color";
+
   // ── Validate (mirror trimClipInValid / trimClipOutValid) ──
-  if (side === "in") {
+  const newLenCheck = len - delta; // playtime after the trim
+  if (positionless) {
+    // A color clip can be any length (no source ceiling); the only hard limit is
+    // that the trim must leave at least one frame. Extension into a neighbour is
+    // governed later by `neighbourBlankTrim` (non-ripple) like a file clip.
+    if (newLenCheck < 1) {
+      return editError({
+        kind: "frame-out-of-range",
+        frame: newLenCheck,
+        bound: 1,
+        detail:
+          `${side === "in" ? "trimIn" : "trimOut"}: trimming by ${delta} would leave ` +
+          `${newLenCheck} frames (< 1) — would empty color clip "${args.uuid}"`,
+      });
+    }
+  } else if (side === "in") {
     const newIn = clip.in + delta;
     if (newIn < 0) {
       return editError({
@@ -144,7 +173,19 @@ function doTrim(
 
   // ── Resize the clip window ──
   const newLen = len - delta; // playtime after the trim (both sides shrink with +δ)
-  if (side === "in") {
+  if (positionless) {
+    // Re-base the positionless color window to canonical 0-based by playtime, the
+    // exact form the serializer emits (so the IR is byte-identical to the
+    // round-trip and the scalar inverse survives serialize→reparse). The trim
+    // side has already chosen which neighbour blank absorbs the change; the
+    // window itself is just `[0, newLen-1]` with `length = newLen`. A color clip
+    // carries no source-windowed keyframe filters (a fade is a frame-count
+    // sentinel the serializer re-anchors), so no `shiftClipAnimWindows` is
+    // needed — matching the split-color path.
+    target.in = 0;
+    target.out = newLen - 1;
+    target.length = newLen;
+  } else if (side === "in") {
     target.in = clip.in + delta;
     // trimIn moves the clip's local origin by +delta, so an animated filter's
     // keyframes re-base by −delta (a keyframe at old-local f is now at f−delta).
@@ -362,6 +403,25 @@ export const samplesTrimIn: OpSample<TrimArgs>[] = [
     args: { uuid: "tin3", delta: 12, rippleAllTracks: false },
   },
   {
+    // A COLOR (positionless) clip: the trim must re-base the window to 0-based by
+    // playtime (the form the serializer emits), so the scalar inverse survives a
+    // serialize→reparse persist. Without the color branch the in-memory window
+    // (in=10) diverges from the persisted form (in=0) and the inverse underflows
+    // (the C3 / persisted-undo defect). This sample exercises the in-memory
+    // inverse law + the serialize round-trip; a dedicated persist test in
+    // tests/ops-trim-move.test.ts covers serialize→reparse→undo end-to-end.
+    name: "trimIn a COLOR clip — window re-bases 0-based by playtime",
+    state: (): Timeline => {
+      resetIds();
+      return timeline(VERTICAL, {
+        video: [videoTrack(blank(20), colorClip(50, "blue", { id: "tinC" }))],
+      });
+    },
+    // delta +10: playtime 50→40, window re-based to in=0,out=39,length=40, left
+    // blank 20→30. Inverse trimIn −10 re-grows playtime to 50 (in=0,out=49).
+    args: { uuid: "tinC", delta: 10, rippleAllTracks: false },
+  },
+  {
     name: "trimIn ripple — other tracks pull left by delta (over trailing emptiness)",
     // The trimmed clip starts at frame 30 (a leading blank holds it there), so the
     // ripple seam is at frame 30; the overlay track ends at frame 15 (before the
@@ -451,5 +511,20 @@ export const samplesTrimOut: OpSample<TrimArgs>[] = [
     },
     // delta +30: out 99→69; the right blank (40) grows to 70.
     args: { uuid: "toutF", delta: 30, rippleAllTracks: false },
+  },
+  {
+    // The trimOut twin of the color trimIn sample: a positionless color clip's
+    // window re-bases 0-based by playtime so the scalar inverse survives a
+    // serialize→reparse persist. The right neighbour blank absorbs the change.
+    name: "trimOut a COLOR clip — window re-bases 0-based by playtime",
+    state: (): Timeline => {
+      resetIds();
+      return timeline(VERTICAL, {
+        video: [videoTrack(colorClip(50, "blue", { id: "toutC" }), blank(25))],
+      });
+    },
+    // delta +10: playtime 50→40, window re-based to in=0,out=39,length=40, right
+    // blank 25→35. Inverse trimOut −10 re-grows playtime to 50 (in=0,out=49).
+    args: { uuid: "toutC", delta: 10, rippleAllTracks: false },
   },
 ];

@@ -9,6 +9,10 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "bin": {
+    "vean-lsp": "src/bridge/lsp/server.ts",
+    "vean-mcp": "src/bridge/mcp/server.ts"
+  },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
@@ -17,15 +21,27 @@
     "format": "biome format --write .",
     "roundtrip": "bun scripts/roundtrip.ts",
     "edit": "bun scripts/edit.ts",
+    "preview-op": "bun scripts/preview-op.ts",
     "undo": "bun scripts/undo.ts",
+    "undo-op": "bun scripts/undo-op.ts",
     "diagnose": "bun scripts/diagnose.ts",
     "resolve": "bun scripts/resolve.ts",
     "refs": "bun scripts/refs.ts",
+    "render": "bun scripts/render.ts",
+    "still": "bun scripts/still.ts",
+    "read-tools:artifact": "bun scripts/read-tools-artifact.ts",
     "lint:xml": "bun scripts/lint-xml.ts",
-    "verify:corpus": "bun scripts/verify-corpus.ts"
+    "verify:corpus": "bun scripts/verify-corpus.ts",
+    "lsp": "bun src/bridge/lsp/server.ts",
+    "mcp": "bun src/bridge/mcp/server.ts",
+    "move2:e2e": "bun scripts/move2-e2e.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "fast-xml-parser": "^5.9.3",
+    "vscode-jsonrpc": "^9.0.0",
+    "vscode-languageserver": "^10.0.1",
+    "vscode-languageserver-textdocument": "^1.0.12",
     "zod": "^3.23.0"
   },
   "devDependencies": {

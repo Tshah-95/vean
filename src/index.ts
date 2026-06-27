@@ -51,3 +51,12 @@ export * as diagnostics from "./diagnostics";
 
 // ─── The render/inspect driver (Move 0) ────────────────────────────────────
 export * from "./driver/melt";
+
+// ─── The agent bridge (Move 2) ─────────────────────────────────────────────
+// Two coordinated surfaces over the SAME shared core: `vean-lsp` (ambient
+// publishDiagnostics + navigation + code actions) and the MCP/CLI domain tools
+// (apply-op/preview-op/undo/render/still/resolve/refs, returning the compact
+// ToolResult). Neither reimplements a rule — the LSP engine calls
+// `collectDiagnostics` + the queries + the source map; the tools call the edit
+// algebra + diagnostics + driver. Namespaced so the bridge's verbs don't collide.
+export * as bridge from "./bridge";

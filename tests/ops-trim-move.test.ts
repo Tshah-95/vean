@@ -21,6 +21,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { collectDiagnostics } from "../src/diagnostics";
 import {
   FADE_IN_SERVICE,
   FADE_OUT_SERVICE,
@@ -32,6 +33,7 @@ import {
   timeline,
   videoTrack,
 } from "../src/ir/builder";
+import { fromMlt } from "../src/ir/parse";
 import { VERTICAL } from "../src/ir/profile";
 import { toMlt } from "../src/ir/serialize";
 import type { Blank, Clip, Item, Timeline } from "../src/ir/types";
@@ -389,6 +391,129 @@ describe("split — escape-hatch keyframe re-base across the cut", () => {
     const back = apply(r.inverse, r.state);
     if (isEditError(back)) throw new Error("undo errored");
     expect(back.state).toEqual(s);
+  });
+});
+
+describe("split — a COLOR half re-bases its window to 0-based (positionless generator)", () => {
+  // REGRESSION: a color clip is content-identical at every frame and positionless,
+  // so a split half's window must be 0-based (`[0, playtime-1]`) — the canonical,
+  // serialized form. The tail used to inherit `in = in + localFrame` (e.g. 30)
+  // while its re-based `length` was its played count (e.g. 30), so `out (59) ≥
+  // length (30)` tripped the diagnostics engine's in-out-beyond-source rule on a
+  // valid edit. This pins the 0-based re-base + the diagnostic silence + the
+  // byte-stable round-trip.
+  function start(): Timeline {
+    resetIds();
+    return timeline(VERTICAL, {
+      video: [videoTrack(colorClip(60, "black", { id: "a" }), colorClip(60, "gold", { id: "b" }))],
+    });
+  }
+
+  it("both halves are 0-based with length == their played count", () => {
+    const r = ok(split(start(), { uuid: "a", frame: 30 }));
+    const head = asClip(vItems(r.state)[0]);
+    const tail = asClip(vItems(r.state)[1]);
+    expect({ in: head.in, out: head.out, length: head.length }).toEqual({
+      in: 0,
+      out: 29,
+      length: 30,
+    });
+    expect({ in: tail.in, out: tail.out, length: tail.length }).toEqual({
+      in: 0,
+      out: 29,
+      length: 30,
+    });
+  });
+
+  it("the split state is diagnostic-clean (no in-out-beyond-source)", () => {
+    const r = ok(split(start(), { uuid: "a", frame: 30 }));
+    const codes = collectDiagnostics(r.state).map((d) => d.code);
+    expect(codes).not.toContain("in-out-beyond-source");
+    expect(codes).toEqual([]);
+  });
+
+  it("round-trips byte-identically (the fixpoint is preserved)", () => {
+    const r = ok(split(start(), { uuid: "a", frame: 30 }));
+    const xml = toMlt(r.state);
+    expect(toMlt(fromMlt(xml))).toBe(xml);
+  });
+
+  it("the inverse restores the original color clip exactly (undo)", () => {
+    const s = start();
+    const r = ok(split(s, { uuid: "a", frame: 30 }));
+    const back = apply(r.inverse, r.state);
+    if (isEditError(back)) throw new Error("undo errored");
+    expect(back.state).toEqual(s);
+  });
+});
+
+describe("trim — a COLOR clip re-bases its window to 0-based, and the inverse survives PERSIST", () => {
+  // REGRESSION (the Move-2 bridge surfaced this): a trim on a positionless color
+  // generator produced an in-memory window (e.g. trimIn +10 → in=10,out=49) that
+  // the serializer ALWAYS re-bases to 0-based (in=0,out=39, the only form it
+  // emits for a color clip). After a serialize→reparse persist — the actual path
+  // the MCP apply-op → write .mlt → undo tool takes — the scalar inverse
+  // (trimIn −10) computed `newIn = 0 − 10 = −10 < 0` and FAILED with
+  // frame-out-of-range. The in-memory-only undo tests (and the op-invariant
+  // harness, which applies the inverse to the in-memory post-edit state) never
+  // exercised the persisted path, so the suite missed it. Same root-cause family
+  // as the split-color fix above; fixed at the edit-algebra layer (trim re-bases
+  // the color window 0-based by playtime). These pin: the 0-based window, the
+  // in-memory undo, AND the serialize→reparse→undo restore to the ORIGINAL doc.
+  function start(): Timeline {
+    resetIds();
+    // A left blank (for trimIn) and a right blank (for trimOut) so each trim has a
+    // neighbour to absorb the playtime change non-ripple.
+    return timeline(VERTICAL, {
+      video: [videoTrack(blank(20), colorClip(50, "blue", { id: "c3" }), blank(25))],
+    });
+  }
+
+  for (const [verb, fn] of [
+    ["trimIn", trimIn],
+    ["trimOut", trimOut],
+  ] as const) {
+    it(`${verb} re-bases the color window 0-based by playtime`, () => {
+      const r = ok(fn(start(), { uuid: "c3", delta: 10, rippleAllTracks: false }));
+      const c = findClipIn(r.state, "c3");
+      expect({ in: c.in, out: c.out, length: c.length }).toEqual({ in: 0, out: 39, length: 40 });
+    });
+
+    it(`${verb} leaves the state diagnostic-clean (no in-out-beyond-source)`, () => {
+      const r = ok(fn(start(), { uuid: "c3", delta: 10, rippleAllTracks: false }));
+      expect(collectDiagnostics(r.state).map((d) => d.code)).not.toContain("in-out-beyond-source");
+    });
+
+    it(`${verb} inverse restores the original IN-MEMORY (deep-equal undo)`, () => {
+      const s = start();
+      const r = ok(fn(s, { uuid: "c3", delta: 10, rippleAllTracks: false }));
+      const back = apply(r.inverse, r.state);
+      if (isEditError(back)) throw new Error(`${verb} in-memory undo errored`);
+      expect(back.state).toEqual(s);
+    });
+
+    it(`${verb} inverse survives serialize→reparse and restores the original BYTE-EXACTLY (the persist path)`, () => {
+      const s = start();
+      const origXml = toMlt(s);
+      const r = ok(fn(s, { uuid: "c3", delta: 10, rippleAllTracks: false }));
+
+      // Persist: serialize the edit, then re-parse — exactly what the MCP server
+      // does between apply-op and the undo tool (write .mlt → read .mlt).
+      const reparsed = fromMlt(toMlt(r.state));
+
+      // The inverse returned by the forward op must apply cleanly to the PERSISTED
+      // state, not just the in-memory one — and restore the original document.
+      const back = apply(r.inverse, reparsed);
+      if (isEditError(back))
+        throw new Error(`${verb} PERSISTED undo errored: ${JSON.stringify(back)}`);
+      expect(toMlt(back.state)).toBe(origXml);
+    });
+  }
+
+  it("the trimmed color state round-trips byte-identically (serializer fixpoint)", () => {
+    const r = ok(trimIn(start(), { uuid: "c3", delta: 10, rippleAllTracks: false }));
+    const xml = toMlt(r.state);
+    expect(toMlt(fromMlt(xml))).toBe(xml);
   });
 });
 
