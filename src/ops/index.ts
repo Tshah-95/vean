@@ -1,0 +1,200 @@
+// The op REGISTRY + the `apply` dispatcher. This is the single entry point to the
+// edit algebra: a `name → { fn, args schema }` map of every op, the dispatcher
+// that validates args (a malformed call is a typed `invalid-args` EditError, not
+// a thrown ZodError) and runs the op, and the `samples` collection the
+// registry-driven invariant harness consumes.
+//
+// Undo is `apply(result.inverse, result.state)` — the inverse is itself a
+// registry invocation, so the dispatcher handles it uniformly. Internal restore
+// ops (`_dropAppended`, `_unsplit`, …) are registered too (prefixed `_`) so an
+// inverse that carries captured content dispatches like any other op.
+import type { z } from "zod";
+import type { Timeline } from "../ir/types";
+// Op functions + their samples come from the per-op files; the args SCHEMAS are
+// the canonical ones in `./types` (imported below), so an op file never has to
+// re-export its schema.
+import { append, samples as appendSamples, dropAppended, dropAppendedArgs } from "./append";
+import {
+  dissolve,
+  samples as dissolveSamples,
+  removeDissolve,
+  removeDissolveArgs,
+} from "./dissolve";
+import { fadeIn, fadeOut, samplesFadeIn, samplesFadeOut } from "./fade";
+import { addFilter, removeFilter, samplesAddFilter, samplesRemoveFilter } from "./filter";
+import { gain, samples as gainSamples, setGain, setGainArgs } from "./gain";
+import { insert, samples as insertSamples, uninsert, uninsertArgs } from "./insert";
+import { lift, samples as liftSamples, unlift, unliftArgs } from "./lift";
+import { move, samples as moveSamples } from "./move";
+import {
+  overwrite,
+  samples as overwriteSamples,
+  restoreRegion,
+  restoreRegionArgs,
+} from "./overwrite";
+import { reinsert, reinsertArgs, remove, samples as removeSamples } from "./remove";
+import { replace, samples as replaceSamples } from "./replace";
+import { split, samples as splitSamples, unsplit, unsplitArgs } from "./split";
+import {
+  addTrack,
+  removeTrack,
+  restoreTrack,
+  restoreTrackArgs,
+  samplesAddTrack,
+  samplesRemoveTrack,
+} from "./track";
+import { samplesTrimIn, samplesTrimOut, trimIn, trimOut } from "./trim";
+import {
+  type EditError,
+  type Op,
+  type OpEntry,
+  type OpInvocation,
+  type OpResult,
+  type OpSample,
+  addFilterArgs,
+  addTrackArgs,
+  appendArgs,
+  dissolveArgs,
+  fadeArgs,
+  gainArgs,
+  insertArgs,
+  isEditError,
+  liftArgs,
+  moveArgs,
+  overwriteArgs,
+  removeArgs,
+  removeFilterArgs,
+  removeTrackArgs,
+  replaceArgs,
+  splitArgs,
+  trimArgs,
+} from "./types";
+
+// ─── The registry ────────────────────────────────────────────────────────────
+// Each entry pairs the op fn with its args Zod schema. The `_`-prefixed ops are
+// the internal inverse/restore forms (a fully-specified inverse carrying captured
+// content) — public ops never call them directly; only an `inverse` invocation
+// names them.
+// A heterogeneous registry of differently-typed ops. Each op's args schema may
+// carry `.default()` fields (so its Zod INPUT type ≠ its OUTPUT type); the op fn
+// is written against the OUTPUT type. `reg` pairs them by the schema's OUTPUT
+// (`z.output<S>`), which is exactly what `safeParse(...).data` yields and what the
+// op fn consumes — so dispatch is type-correct end to end.
+// biome-ignore lint/suspicious/noExplicitAny: the registry is intentionally heterogeneous; per-entry typing is recovered at the call sites via each op's own signature, and `apply` validates args through the paired schema before dispatch.
+const reg = <S extends z.ZodTypeAny>(fn: Op<z.output<S>>, args: S): OpEntry<any> => ({
+  // biome-ignore lint/suspicious/noExplicitAny: erased to the heterogeneous registry entry type; the paired schema guarantees args shape at dispatch.
+  fn: fn as Op<any>,
+  // biome-ignore lint/suspicious/noExplicitAny: erased alongside fn; safeParse re-establishes the concrete type.
+  args: args as any,
+});
+
+export const REGISTRY: Record<string, OpEntry<unknown>> = {
+  // Reference ops (implemented).
+  append: reg(append, appendArgs),
+  split: reg(split, splitArgs),
+  // Stubs (finalized signatures; bodies land in Move 1b).
+  insert: reg(insert, insertArgs),
+  overwrite: reg(overwrite, overwriteArgs),
+  lift: reg(lift, liftArgs),
+  remove: reg(remove, removeArgs),
+  replace: reg(replace, replaceArgs),
+  trimIn: reg(trimIn, trimArgs),
+  trimOut: reg(trimOut, trimArgs),
+  move: reg(move, moveArgs),
+  dissolve: reg(dissolve, dissolveArgs),
+  fadeIn: reg(fadeIn, fadeArgs),
+  fadeOut: reg(fadeOut, fadeArgs),
+  gain: reg(gain, gainArgs),
+  addFilter: reg(addFilter, addFilterArgs),
+  removeFilter: reg(removeFilter, removeFilterArgs),
+  addTrack: reg(addTrack, addTrackArgs),
+  removeTrack: reg(removeTrack, removeTrackArgs),
+  // Internal inverse/restore ops.
+  _dropAppended: reg(dropAppended, dropAppendedArgs),
+  _unsplit: reg(unsplit, unsplitArgs),
+  _uninsert: reg(uninsert, uninsertArgs),
+  _unlift: reg(unlift, unliftArgs),
+  _reinsert: reg(reinsert, reinsertArgs),
+  _restoreRegion: reg(restoreRegion, restoreRegionArgs),
+  _removeDissolve: reg(removeDissolve, removeDissolveArgs),
+  _setGain: reg(setGain, setGainArgs),
+  _restoreTrack: reg(restoreTrack, restoreTrackArgs),
+};
+
+/** The set of PUBLIC op names (excludes the `_`-prefixed internal restore ops) —
+ *  the agent-facing vocabulary. */
+export const OP_NAMES: string[] = Object.keys(REGISTRY).filter((n) => !n.startsWith("_"));
+
+// ─── apply — the dispatcher (validate args, then run) ─────────────────────────
+/** Apply an op invocation to a state. Looks the op up in the registry, validates
+ *  `args` against its Zod schema (a parse failure → `invalid-args` EditError, not
+ *  a throw), and runs it. Undo = `apply(result.inverse, result.state)`. An
+ *  unknown op name → `precondition` EditError. */
+export function apply(invocation: OpInvocation, state: Timeline): OpResult | EditError {
+  const entry = REGISTRY[invocation.op];
+  if (!entry) {
+    return { kind: "precondition", detail: `apply: unknown op "${invocation.op}"` };
+  }
+  const parsed = entry.args.safeParse(invocation.args);
+  if (!parsed.success) {
+    return { kind: "invalid-args", detail: `${invocation.op}: ${parsed.error.message}` };
+  }
+  return entry.fn(state, parsed.data);
+}
+
+/** Apply an op's inverse — sugar for `apply(result.inverse, result.state)`. The
+ *  undo of a successful op. */
+export function undo(result: OpResult): OpResult | EditError {
+  return apply(result.inverse, result.state);
+}
+
+// ─── Samples (registry-driven invariant harness) ──────────────────────────────
+// Each op contributes its `samples` under the registry name the harness drives.
+// Append + split are populated; the rest are empty until their bodies land (the
+// harness skips an op with no samples). Verbs that share a file (trim/fade/
+// filter/track) export per-verb sample arrays wired to the right name here.
+export const SAMPLES: Record<string, OpSample[]> = {
+  append: appendSamples as OpSample[],
+  split: splitSamples as OpSample[],
+  insert: insertSamples as OpSample[],
+  overwrite: overwriteSamples as OpSample[],
+  lift: liftSamples as OpSample[],
+  remove: removeSamples as OpSample[],
+  replace: replaceSamples as OpSample[],
+  trimIn: samplesTrimIn as OpSample[],
+  trimOut: samplesTrimOut as OpSample[],
+  move: moveSamples as OpSample[],
+  dissolve: dissolveSamples as OpSample[],
+  fadeIn: samplesFadeIn as OpSample[],
+  fadeOut: samplesFadeOut as OpSample[],
+  gain: gainSamples as OpSample[],
+  addFilter: samplesAddFilter as OpSample[],
+  removeFilter: samplesRemoveFilter as OpSample[],
+  addTrack: samplesAddTrack as OpSample[],
+  removeTrack: samplesRemoveTrack as OpSample[],
+};
+
+// ─── Re-exports (the public op surface) ───────────────────────────────────────
+export * from "./types";
+export * from "./primitives";
+export {
+  append,
+  split,
+  insert,
+  overwrite,
+  lift,
+  remove,
+  replace,
+  trimIn,
+  trimOut,
+  move,
+  dissolve,
+  fadeIn,
+  fadeOut,
+  gain,
+  addFilter,
+  removeFilter,
+  addTrack,
+  removeTrack,
+};
+export { isEditError };

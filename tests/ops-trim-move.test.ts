@@ -1,0 +1,582 @@
+// Focused unit tests for the TRIM + MOVE op family (Move 1a).
+//
+// The registry-driven harness (tests/op-invariants.test.ts) already proves the
+// FIVE contract laws on every `samples` fixture (purity, inverse deep-equal undo,
+// serialize Shotcut-clean, round-trip). This file pins the op-SPECIFIC mechanics
+// the generic harness can't see:
+//   • trimIn / trimOut — which neighbour blank grows/shrinks, the holding-blank
+//     insertion when there is none, the fade-exceeds-window WARNING (not an
+//     error), the escape-hatch keyframe-window re-base on a head trim, and the
+//     typed EditErrors the …Valid guards return;
+//   • move — non-ripple LIFT+OVERWRITE leaves the right blanks and preserves the
+//     clip uuid, ripple REMOVE+INSERT closes the source gap and opens the dest,
+//     a lossy overwrite is reported in `clipsRemoved`, and a written-out result
+//     is Shotcut-clean (xmllint).
+//
+// Imports go straight to the op files + the IR builder (NOT the `../src/ops`
+// registry barrel) so this suite is independent of sibling stubs still landing in
+// parallel — it exercises trim/move directly, the same way ops-transitions does.
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import {
+  FADE_IN_SERVICE,
+  FADE_OUT_SERVICE,
+  blank,
+  clip,
+  colorClip,
+  filter,
+  resetIds,
+  timeline,
+  videoTrack,
+} from "../src/ir/builder";
+import { VERTICAL } from "../src/ir/profile";
+import { toMlt } from "../src/ir/serialize";
+import type { Blank, Clip, Item, Timeline } from "../src/ir/types";
+import { move } from "../src/ops/move";
+import { shiftAnimWindow, trimIn, trimOut } from "../src/ops/trim";
+import { type EditError, type OpResult, isEditError } from "../src/ops/types";
+
+// ─── helpers ──────────────────────────────────────────────────────────────────
+function ok(r: OpResult | EditError): OpResult {
+  if (isEditError(r)) throw new Error(`unexpected EditError: ${JSON.stringify(r)}`);
+  return r;
+}
+function err(r: OpResult | EditError): EditError {
+  if (!isEditError(r)) throw new Error("expected an EditError, got a successful OpResult");
+  return r;
+}
+function vItems(tl: Timeline, i = 0): Item[] {
+  return tl.tracks.video[i]?.items ?? [];
+}
+function asClip(it: Item | undefined): Clip {
+  if (!it || it.kind !== "clip") throw new Error("expected a clip item");
+  return it;
+}
+function asBlank(it: Item | undefined): Blank {
+  if (!it || it.kind !== "blank") throw new Error("expected a blank item");
+  return it;
+}
+function playtime(c: Clip): number {
+  return c.out - c.in + 1;
+}
+function findClipIn(tl: Timeline, uuid: string): Clip {
+  for (const t of [...tl.tracks.video, ...tl.tracks.audio]) {
+    for (const it of t.items) if (it.kind === "clip" && it.id === uuid) return it;
+  }
+  throw new Error(`clip "${uuid}" not found`);
+}
+/** Write a state's XML to a temp file and assert xmllint (namespace-aware) is
+ *  clean — the exact Shotcut-openability gate `scripts/lint-xml.ts` enforces. */
+function assertXmllintClean(tl: Timeline, label: string): void {
+  const dir = mkdtempSync(join(tmpdir(), "vean-trimmove-"));
+  const path = join(dir, `${label}.mlt`);
+  writeFileSync(path, toMlt(tl));
+  const out = execFileSync("sh", ["-c", `xmllint --noout --nsclean '${path}' 2>&1 || true`], {
+    encoding: "utf8",
+  }).trim();
+  expect(out, `xmllint diagnostics for ${label}`).toBe("");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// trimIn / trimOut
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("trimIn — head resize + left-neighbour blank", () => {
+  const tl = (): Timeline => {
+    resetIds();
+    return timeline(VERTICAL, {
+      video: [videoTrack(blank(20), clip("/abs/a.mp4", { id: "c", dur: 90 }))],
+    });
+  };
+
+  it("delta>0 advances the in-point and GROWS the left blank by delta (start stays put)", () => {
+    const r = ok(trimIn(tl(), { uuid: "c", delta: 15, rippleAllTracks: false }));
+    const items = vItems(r.state);
+    expect(asBlank(items[0]).length).toBe(35); // 20 + 15
+    const c = asClip(items[1]);
+    expect(c.in).toBe(15); // 0 → 15
+    expect(c.out).toBe(89); // unchanged
+    expect(playtime(c)).toBe(75); // 90 → 75
+  });
+
+  it("delta<0 (extend head earlier) SHRINKS the left blank by |delta|", () => {
+    resetIds();
+    const start = timeline(VERTICAL, {
+      video: [videoTrack(blank(30), clip("/abs/a.mp4", { id: "c", in: 20, out: 99 }))],
+    });
+    const r = ok(trimIn(start, { uuid: "c", delta: -10, rippleAllTracks: false }));
+    const items = vItems(r.state);
+    expect(asBlank(items[0]).length).toBe(20); // 30 → 20
+    expect(asClip(items[1]).in).toBe(10); // 20 → 10 (earlier start)
+  });
+
+  it("a head clip with NO left blank gets a holding blank of `delta` inserted", () => {
+    resetIds();
+    const start = timeline(VERTICAL, {
+      video: [videoTrack(clip("/abs/a.mp4", { id: "c", dur: 60 }))],
+    });
+    const r = ok(trimIn(start, { uuid: "c", delta: 12, rippleAllTracks: false }));
+    const items = vItems(r.state);
+    expect(items.map((i) => i.kind)).toEqual(["blank", "clip"]);
+    expect(asBlank(items[0]).length).toBe(12); // holds the clip's screen position
+    expect(asClip(items[1]).in).toBe(12);
+  });
+
+  it("the consequence reports the in-delta + playtime delta + the blank swap", () => {
+    const r = ok(trimIn(tl(), { uuid: "c", delta: 15, rippleAllTracks: false }));
+    const t = r.consequences.clipsTrimmed[0];
+    expect(t).toMatchObject({ uuid: "c", inDelta: 15, outDelta: 0, playtimeDelta: -15 });
+    // The resized blank reads as removed(20)+created(35).
+    expect(r.consequences.blanksRemoved.some((b) => b.length === 20)).toBe(true);
+    expect(r.consequences.blanksCreated.some((b) => b.length === 35)).toBe(true);
+  });
+
+  it("the scalar inverse is the SAME verb with -delta (no captured data)", () => {
+    const r = ok(trimIn(tl(), { uuid: "c", delta: 15, rippleAllTracks: false }));
+    expect(r.inverse).toEqual({
+      op: "trimIn",
+      args: { uuid: "c", delta: -15, rippleAllTracks: false },
+    });
+    const back = ok(trimIn(r.state, r.inverse.args));
+    expect(back.state).toEqual(tl());
+  });
+
+  it("trimIn that would push the in-point past `out` is a typed frame-out-of-range error", () => {
+    resetIds();
+    const start = timeline(VERTICAL, {
+      video: [videoTrack(clip("/abs/a.mp4", { id: "c", in: 0, out: 9 }))],
+    });
+    const e = err(trimIn(start, { uuid: "c", delta: 20, rippleAllTracks: false }));
+    expect(e.kind).toBe("frame-out-of-range");
+  });
+
+  it("trimIn with in<0 (extend before source frame 0) is a typed error", () => {
+    resetIds();
+    const start = timeline(VERTICAL, {
+      video: [videoTrack(blank(30), clip("/abs/a.mp4", { id: "c", in: 5, out: 99 }))],
+    });
+    const e = err(trimIn(start, { uuid: "c", delta: -10, rippleAllTracks: false })); // 5-10 = -5
+    expect(e.kind).toBe("frame-out-of-range");
+  });
+
+  it("extending into adjacent CONTENT (no left blank, delta<0) is a precondition error", () => {
+    resetIds();
+    const start = timeline(VERTICAL, {
+      video: [
+        videoTrack(
+          clip("/abs/before.mp4", { id: "before", dur: 20 }),
+          clip("/abs/a.mp4", { id: "c", in: 20, out: 99 }),
+        ),
+      ],
+    });
+    const e = err(trimIn(start, { uuid: "c", delta: -5, rippleAllTracks: false }));
+    expect(e.kind).toBe("precondition");
+  });
+
+  it("clip-not-found is a typed error", () => {
+    const e = err(trimIn(tl(), { uuid: "nope", delta: 5, rippleAllTracks: false }));
+    expect(e).toMatchObject({ kind: "clip-not-found", uuid: "nope" });
+  });
+});
+
+describe("trimOut — tail resize + right-neighbour blank", () => {
+  const tl = (): Timeline => {
+    resetIds();
+    return timeline(VERTICAL, {
+      video: [
+        videoTrack(
+          clip("/abs/a.mp4", { id: "c", dur: 90 }),
+          blank(25),
+          clip("/abs/after.mp4", { id: "after", dur: 40 }),
+        ),
+      ],
+    });
+  };
+
+  it("delta>0 pulls the out-point in and GROWS the right blank (downstream stays put)", () => {
+    const r = ok(trimOut(tl(), { uuid: "c", delta: 15, rippleAllTracks: false }));
+    const items = vItems(r.state);
+    expect(asClip(items[0]).out).toBe(74); // 89 → 74
+    expect(asBlank(items[1]).length).toBe(40); // 25 → 40 (absorbs the 15)
+    expect(asClip(items[2]).id).toBe("after"); // unmoved
+  });
+
+  it("delta<0 (extend tail later) SHRINKS the right blank, bounded by source length", () => {
+    resetIds();
+    const start = timeline(VERTICAL, {
+      video: [
+        videoTrack(
+          clip("/abs/a.mp4", { id: "c", in: 0, out: 49, length: 200 }),
+          blank(30),
+          clip("/abs/after.mp4", { id: "after", dur: 40 }),
+        ),
+      ],
+    });
+    const r = ok(trimOut(start, { uuid: "c", delta: -10, rippleAllTracks: false }));
+    const items = vItems(r.state);
+    expect(asClip(items[0]).out).toBe(59); // 49 → 59 (longer)
+    expect(asBlank(items[1]).length).toBe(20); // 30 → 20
+  });
+
+  it("extending the tail PAST the source length is a typed frame-out-of-range error", () => {
+    resetIds();
+    const start = timeline(VERTICAL, {
+      video: [videoTrack(clip("/abs/a.mp4", { id: "c", in: 0, out: 49, length: 50 }), blank(30))],
+    });
+    // out 49 → 59 would exceed source length 50 (max out = 49).
+    const e = err(trimOut(start, { uuid: "c", delta: -10, rippleAllTracks: false }));
+    expect(e.kind).toBe("frame-out-of-range");
+  });
+
+  it("a tail clip with no right blank inserts a holding blank that the serializer drops", () => {
+    resetIds();
+    const start = timeline(VERTICAL, {
+      video: [videoTrack(clip("/abs/a.mp4", { id: "c", dur: 70 }))],
+    });
+    const r = ok(trimOut(start, { uuid: "c", delta: 20, rippleAllTracks: false }));
+    expect(asClip(vItems(r.state)[0]).out).toBe(49); // 69 → 49
+    // The inserted trailing blank is dropped on serialize; the inverse re-grows the
+    // clip without needing it — round-trip is still exact.
+    const back = ok(trimOut(r.state, r.inverse.args));
+    expect(back.state).toEqual(start);
+  });
+
+  it("out-delta is reported as -delta (the out-point moved by -delta)", () => {
+    const r = ok(trimOut(tl(), { uuid: "c", delta: 15, rippleAllTracks: false }));
+    expect(r.consequences.clipsTrimmed[0]).toMatchObject({
+      uuid: "c",
+      inDelta: 0,
+      outDelta: -15,
+      playtimeDelta: -15,
+    });
+  });
+});
+
+describe("trim — fade interaction (sentinels, not keyframe strings)", () => {
+  it("trimming a clip SHORTER than its fades warns (non-fatal) and keeps the sentinel verbatim", () => {
+    resetIds();
+    // A 40f clip carrying a 30f fadeIn + 30f fadeOut (60 > 40) trimmed to 25f.
+    const start = timeline(VERTICAL, {
+      video: [
+        videoTrack(clip("/abs/a.mp4", { id: "c", dur: 40, fadeIn: 30, fadeOut: 30 }), blank(50)),
+      ],
+    });
+    const r = ok(trimOut(start, { uuid: "c", delta: 15, rippleAllTracks: false })); // 40 → 25
+    expect(r.consequences.warnings.some((w) => w.code === "fade-exceeds-window")).toBe(true);
+    // The fade sentinels are UNTOUCHED (the serializer clamps; ops never rewrite
+    // a fade keyframe string — decision #1).
+    const c = asClip(vItems(r.state)[0]);
+    const fadeIn = c.filters.find((f) => f.service === FADE_IN_SERVICE);
+    const fadeOut = c.filters.find((f) => f.service === FADE_OUT_SERVICE);
+    expect(fadeIn?.properties.frames).toBe(30);
+    expect(fadeOut?.properties.frames).toBe(30);
+  });
+
+  it("the warning is advisory only — the trim still succeeds and round-trips", () => {
+    resetIds();
+    const start = timeline(VERTICAL, {
+      video: [videoTrack(clip("/abs/a.mp4", { id: "c", dur: 40, fadeIn: 30 }), blank(50))],
+    });
+    const r = ok(trimOut(start, { uuid: "c", delta: 25, rippleAllTracks: false }));
+    const back = ok(trimOut(r.state, r.inverse.args));
+    expect(back.state).toEqual(start);
+  });
+});
+
+describe("trim — escape-hatch keyframe re-base on a head trim", () => {
+  it("trimIn shifts a non-fade animated filter's keyframe frames by -delta", () => {
+    resetIds();
+    const start = timeline(VERTICAL, {
+      video: [
+        videoTrack(
+          blank(10),
+          clip("/abs/scene.mp4", {
+            id: "c",
+            dur: 100,
+            filters: [filter("brightness", { level: "0=0.2;50=0.6;99=1" })],
+          }),
+        ),
+      ],
+    });
+    // trimIn +20: the local origin advances 20, so every keyframe frame drops by 20.
+    const r = ok(trimIn(start, { uuid: "c", delta: 20, rippleAllTracks: false }));
+    const c = asClip(vItems(r.state)[1]);
+    const level = c.filters.find((f) => f.service === "brightness")?.properties.level;
+    // 0→drop (−20, outside), 50→30, 99→79. New window len = 80, so 79 is the last valid frame.
+    expect(level).toBe("30=0.6;79=1");
+  });
+
+  it("trimOut leaves a non-fade animated filter's keyframe frames UNCHANGED (origin fixed)", () => {
+    resetIds();
+    const start = timeline(VERTICAL, {
+      video: [
+        videoTrack(
+          clip("/abs/scene.mp4", {
+            id: "c",
+            dur: 100,
+            filters: [filter("brightness", { level: "0=0.2;99=1" })],
+          }),
+          blank(40),
+        ),
+      ],
+    });
+    const r = ok(trimOut(start, { uuid: "c", delta: 30, rippleAllTracks: false }));
+    const c = asClip(vItems(r.state)[0]);
+    expect(c.filters.find((f) => f.service === "brightness")?.properties.level).toBe("0=0.2;99=1");
+  });
+
+  it("shiftAnimWindow drops keyframes outside the new window and passes non-animated values through", () => {
+    expect(shiftAnimWindow("0=0;10=1;30=0", -10, 25)).toBe("0=1;20=0"); // 0→drop, 10→0, 30→drop
+    expect(shiftAnimWindow("solid", 5, 100)).toBe("solid"); // no `=` → untouched
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// move
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("move — non-ripple (lift + overwrite)", () => {
+  const tl = (): Timeline => {
+    resetIds();
+    return timeline(VERTICAL, {
+      video: [
+        videoTrack(
+          colorClip(30, "black"),
+          clip("/abs/mid.mp4", { id: "mv", dur: 40, fadeIn: 8 }),
+          colorClip(30, "gold"),
+        ),
+        videoTrack(clip("/abs/v2.mp4", { id: "v2head", dur: 20 })),
+      ],
+    });
+  };
+
+  it("LIFTS the clip from the source (a same-length blank opens where it was)", () => {
+    const r = ok(
+      move(tl(), {
+        uuid: "mv",
+        toTrack: { kind: "video", index: 1 },
+        toPosition: 60,
+        ripple: false,
+        rippleAllTracks: false,
+      }),
+    );
+    const v1 = vItems(r.state, 0);
+    // black(30) + blank(40) [the lift] + gold(30) — consolidateBlanks keeps the
+    // interior gap (it is load-bearing, between two clips).
+    expect(v1.map((i) => i.kind)).toEqual(["clip", "blank", "clip"]);
+    expect(asBlank(v1[1]).length).toBe(40);
+    // The moved clip is gone from V1.
+    expect(v1.some((i) => i.kind === "clip" && i.id === "mv")).toBe(false);
+  });
+
+  it("OVERWRITES the clip onto the destination, padding a blank past the track end", () => {
+    const r = ok(
+      move(tl(), {
+        uuid: "mv",
+        toTrack: { kind: "video", index: 1 },
+        toPosition: 60,
+        ripple: false,
+        rippleAllTracks: false,
+      }),
+    );
+    const v2 = vItems(r.state, 1);
+    // v2head(20) + blank(40) [pad 20→60] + mv(40).
+    expect(v2.map((i) => i.kind)).toEqual(["clip", "blank", "clip"]);
+    expect(asBlank(v2[1]).length).toBe(40);
+    expect(asClip(v2[2]).id).toBe("mv");
+  });
+
+  it("PRESERVES the clip uuid + all content across the move (identity)", () => {
+    const before = findClipIn(tl(), "mv");
+    const r = ok(
+      move(tl(), {
+        uuid: "mv",
+        toTrack: { kind: "video", index: 1 },
+        toPosition: 60,
+        ripple: false,
+        rippleAllTracks: false,
+      }),
+    );
+    const after = findClipIn(r.state, "mv");
+    expect(after).toEqual(before); // same id, window, filters (fadeIn), gain
+  });
+
+  it("reports clipsMoved from→to and the inverse is `move` back to the origin", () => {
+    const r = ok(
+      move(tl(), {
+        uuid: "mv",
+        toTrack: { kind: "video", index: 1 },
+        toPosition: 60,
+        ripple: false,
+        rippleAllTracks: false,
+      }),
+    );
+    const m = r.consequences.clipsMoved[0];
+    expect(m?.uuid).toBe("mv");
+    expect(m?.from.position).toBe(30); // it sat after black(30)
+    expect(m?.to.position).toBe(60);
+    expect(r.inverse.op).toBe("move");
+    expect(r.inverse.args).toMatchObject({ uuid: "mv", toPosition: 30, ripple: false });
+    // Round-trip (move back) is exact (dest was empty → lossless).
+    const back = ok(move(r.state, r.inverse.args));
+    expect(back.state).toEqual(tl());
+  });
+
+  it("a non-ripple move over REAL content is rejected (not silently lossy + non-invertible)", () => {
+    resetIds();
+    const start = timeline(VERTICAL, {
+      video: [
+        videoTrack(clip("/abs/a.mp4", { id: "mv", dur: 30 }), blank(100)),
+        videoTrack(clip("/abs/victim.mp4", { id: "victim", dur: 50 })),
+      ],
+    });
+    // Drop "mv"(30) at frame 0 on V2, where it would stamp over the first 30f of
+    // "victim". A non-ripple (overwrite) move destroys that content with no capture,
+    // so its `move`-back inverse can't reconstruct it — the op rejects it with a
+    // typed precondition rather than producing a non-invertible state (use ripple,
+    // or remove the content first). This is the fix for the straddle/overwrite-
+    // content inverse bug.
+    const e = err(
+      move(start, {
+        uuid: "mv",
+        toTrack: { kind: "video", index: 1 },
+        toPosition: 0,
+        ripple: false,
+        rippleAllTracks: false,
+      }),
+    );
+    expect(e.kind).toBe("precondition");
+    expect(JSON.stringify(e)).toMatch(/overwrite content/i);
+  });
+
+  it("a same-track / same-position move is a valid no-op (identity inverse)", () => {
+    const r = ok(
+      move(tl(), {
+        uuid: "mv",
+        toTrack: { kind: "video", index: 0 },
+        toPosition: 30, // exactly where it already sits
+        ripple: false,
+        rippleAllTracks: false,
+      }),
+    );
+    expect(r.state).toEqual(tl());
+  });
+
+  it("an unresolvable destination track is a typed track-not-found error", () => {
+    const e = err(
+      move(tl(), {
+        uuid: "mv",
+        toTrack: { kind: "video", index: 9 },
+        toPosition: 0,
+        ripple: false,
+        rippleAllTracks: false,
+      }),
+    );
+    expect(e.kind).toBe("track-not-found");
+  });
+
+  it("the result serializes Shotcut-clean (xmllint, namespace-aware)", () => {
+    const r = ok(
+      move(tl(), {
+        uuid: "mv",
+        toTrack: { kind: "video", index: 1 },
+        toPosition: 60,
+        ripple: false,
+        rippleAllTracks: false,
+      }),
+    );
+    assertXmllintClean(r.state, "move-non-ripple");
+  });
+});
+
+describe("move — ripple (remove + insert)", () => {
+  const tl = (): Timeline => {
+    resetIds();
+    return timeline(VERTICAL, {
+      video: [
+        videoTrack(
+          clip("/abs/a.mp4", { id: "mv", dur: 40 }),
+          clip("/abs/b.mp4", { id: "b", dur: 50 }),
+          clip("/abs/c.mp4", { id: "cc", dur: 30 }),
+        ),
+      ],
+    });
+  };
+
+  it("CLOSES the source gap (content after pulls left) then re-opens at the destination", () => {
+    const r = ok(
+      move(tl(), {
+        uuid: "mv",
+        toTrack: { kind: "video", index: 0 },
+        toPosition: 80, // the new tail after removing mv (120 → 80)
+        ripple: true,
+        rippleAllTracks: false,
+      }),
+    );
+    const v = vItems(r.state);
+    // After ripple-remove: b(50) + cc(30); insert mv at the tail (80) → b, cc, mv.
+    expect(v.map((i) => asClip(i).id)).toEqual(["b", "cc", "mv"]);
+    // No interior gap — the ripple closed it.
+    expect(v.every((i) => i.kind === "clip")).toBe(true);
+  });
+
+  it("the inverse ripple-move is exact (back to the origin)", () => {
+    const r = ok(
+      move(tl(), {
+        uuid: "mv",
+        toTrack: { kind: "video", index: 0 },
+        toPosition: 80,
+        ripple: true,
+        rippleAllTracks: false,
+      }),
+    );
+    expect(r.inverse.args).toMatchObject({ uuid: "mv", toPosition: 0, ripple: true });
+    const back = ok(move(r.state, r.inverse.args));
+    expect(back.state).toEqual(tl());
+  });
+
+  it("rippleAllTracks over trailing emptiness shifts the other track losslessly", () => {
+    resetIds();
+    const start = timeline(VERTICAL, {
+      video: [
+        videoTrack(
+          blank(20),
+          clip("/abs/a.mp4", { id: "mv", dur: 40 }),
+          clip("/abs/b.mp4", { id: "b", dur: 30 }),
+        ),
+        videoTrack(clip("/abs/ov.mp4", { id: "ov", dur: 10 })),
+      ],
+    });
+    const r = ok(
+      move(start, {
+        uuid: "mv",
+        toTrack: { kind: "video", index: 0 },
+        toPosition: 50, // V1's new tail after removing mv
+        ripple: true,
+        rippleAllTracks: true,
+      }),
+    );
+    // The other track (10f, before both seams) is only touched on trailing
+    // emptiness → unchanged; the ripple notes still record the shift.
+    expect(vItems(r.state, 1).map((i) => asClip(i).id)).toEqual(["ov"]);
+    expect(r.consequences.ripple.length).toBeGreaterThan(0);
+    const back = ok(move(r.state, r.inverse.args));
+    expect(back.state).toEqual(start);
+  });
+
+  it("the ripple-move result serializes Shotcut-clean (xmllint)", () => {
+    const r = ok(
+      move(tl(), {
+        uuid: "mv",
+        toTrack: { kind: "video", index: 0 },
+        toPosition: 80,
+        ripple: true,
+        rippleAllTracks: false,
+      }),
+    );
+    assertXmllintClean(r.state, "move-ripple");
+  });
+});

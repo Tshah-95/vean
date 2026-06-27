@@ -24,5 +24,14 @@ export { fromMlt } from "./ir/parse";
 // The keyframe model + animation-string round-trip.
 export * from "./ir/keyframes";
 
+// ─── The edit algebra (Move 1) ─────────────────────────────────────────────
+// The op registry + `apply`/`undo` dispatcher + the pure op(state) -> {state',
+// consequences, inverse} contract. Two reference ops (append, split) are live;
+// the rest are finalized-signature stubs filled in Move 1b. Exposed under the
+// `ops` namespace so the op verbs (which intentionally share verbs with the IR
+// builder, e.g. `dissolve`) don't collide with the builder's authoring surface:
+// `ops.append(state, args)`, `ops.apply(inv, state)`, `ops.REGISTRY`, …
+export * as ops from "./ops";
+
 // ─── The render/inspect driver (Move 0) ────────────────────────────────────
 export * from "./driver/melt";

@@ -104,11 +104,17 @@ exactly as we want" gate; everything stacks on it.
 The verbs and the type-checker. A closed set of pure operations and a static
 diagnostics engine, driven from a CLI.
 
-- [ ] Edit algebra as pure functions: `op(state) → {state', consequences, inverse}`.
-      Mine the taxonomy from Shotcut `src/commands/`: append, insert, overwrite,
-      lift, remove (ripple), trim in/out, split, move, add-transition, fades,
-      gain, add/remove filter. UUID-keyed identity; nothing mutates state any
-      other way.
+- [x] **(Move 1a)** Edit algebra as pure functions: `op(state) → {state',
+      consequences, inverse}`. Mined the taxonomy from Shotcut `src/commands/`:
+      append, insert, overwrite, lift, remove (ripple), trim in/out, split, move,
+      dissolve (add-transition), fades, gain, add/remove filter, add/remove track —
+      **18 public ops**, all implemented + UUID-keyed identity; the only mutation
+      path is `apply(op)`. Integrity hardened: cross-track ripple never shreds
+      other-track content (reports a `ripple-blocked` warning instead); straddling
+      overwrite + mid-clip insert invert exactly; positional helpers count a
+      dissolve overlap once; dissolve-corrupting edits and cross-kind moves return
+      typed `EditError`s (never throw, never an unserializable state). See
+      `GATE-MOVE1A.md`. (Diagnostics/resolve/refs below remain Move 1b.)
 - [ ] Tier-1 (static) diagnostics: gaps/overlaps, in/out beyond source length,
       keyframes outside clip bounds, dangling producer→file refs, orphaned
       filters, insufficient transition overlap, asymmetric A/V trim, fps-mismatch
@@ -120,8 +126,10 @@ diagnostics engine, driven from a CLI.
 - [ ] CLI surface: `edit`, `diagnose`, `resolve`, `refs`.
 
 **Gate:**
-- [ ] Op-inverse invariant suite: `apply(op)` then `apply(inverse)` returns the
-      original IR (undo correctness) — property-based across ops.
+- [x] **(Move 1a)** Op-inverse invariant suite: `apply(op)` then `apply(inverse)`
+      returns the original IR (undo correctness) — registry-driven across EVERY
+      public op (purity + apply→inverse deep-equal + serialize Shotcut-clean +
+      round-trip fixpoint per sample). 18/18 public ops covered, 0 pending/skipped.
 - [ ] Diagnostics fixtures: broken timelines emit the **exact** expected
       diagnostic; clean timelines emit **zero** (no false positives).
 - [ ] `resolve` / `refs` golden tests on known timelines.
