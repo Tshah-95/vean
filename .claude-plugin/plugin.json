@@ -1,0 +1,11 @@
+{
+  "name": "vean",
+  "version": "0.1.0",
+  "description": "Claude Code integration for vean timelines: editing skill, MCP domain tools, and the .mlt language server.",
+  "author": {
+    "name": "vean contributors"
+  },
+  "repository": "https://github.com/tejas/vean",
+  "license": "AGPL-3.0-only",
+  "keywords": ["video", "mlt", "lsp", "mcp", "agent-editing"]
+}

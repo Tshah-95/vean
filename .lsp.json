@@ -1,0 +1,16 @@
+{
+  "lspServers": {
+    "vean": {
+      "command": "bun",
+      "args": ["--cwd", "${CLAUDE_PLUGIN_ROOT}", "src/bridge/lsp/server.ts"],
+      "transport": "stdio",
+      "extensionToLanguage": {
+        ".mlt": "mlt"
+      },
+      "workspaceFolder": "${CLAUDE_PROJECT_DIR}",
+      "startupTimeout": 10000,
+      "shutdownTimeout": 5000,
+      "diagnostics": true
+    }
+  }
+}

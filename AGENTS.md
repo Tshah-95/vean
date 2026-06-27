@@ -8,11 +8,13 @@ frame-exact, rationally-timed model of a timeline that an agent (or a UI, or a
 human) mutates through a closed set of operations, each of which reports its
 consequences **before a single frame renders**.
 
-vean is **not an app.** It is the headless core an app sits on. Files in, files
-out. No state, no network, no secrets. The render is delegated to `melt`
-(MLT/FFmpeg) as a separate process; the motion-graphics are delegated to
-Remotion as a producer. vean owns the part nobody else does: a *typed,
-validated, diagnosable, agent-authorable* representation of an edit.
+vean is **not only an app.** Its core is the headless editing engine an app sits
+on: files in, files out, no network, no secrets. Product surfaces (CLI, LSP, MCP,
+and the future Tauri UI) share local coordination state in a gitignored
+`.vean/vean.db` SQLite database. The render is delegated to `melt` (MLT/FFmpeg)
+as a separate process; the motion-graphics are delegated to Remotion as a
+producer. vean owns the part nobody else does: a *typed, validated, diagnosable,
+agent-authorable* representation of an edit.
 
 This file is the **resolver** — it doesn't hold the knowledge, it routes to it.
 It is the single canonical brain; `CLAUDE.md` is a one-line `@AGENTS.md` shim so
@@ -24,9 +26,10 @@ Claude and Codex read the same bytes.
   filters, transitions); a deterministic serializer + parser (IR ⇄ `.mlt` XML);
   a pure edit algebra (`op(state) → {state', consequences, inverse}`); a
   diagnostics engine (the LSP); a render/inspect driver that shells out to
-  `melt` and `ffmpeg`.
+  `melt` and `ffmpeg`; a local product-state substrate for projects, setup
+  choices, jobs, and future UI/agent coordination.
 - **ISN'T:** a renderer (MLT/FFmpeg do that), a motion-graphics engine (Remotion
-  does that), a GUI (the visualization layer does that), or anything stateful.
+  does that), or a GUI (the visualization layer does that).
 
 ## The seam: depend / mine / build
 
@@ -64,6 +67,28 @@ Three layers. The agent-vs-UI ownership split falls out of them cleanly.
    diffs, git worktrees for exploration). This is **taste**, and it is mostly
    *read + light nudge* at first.
 
+## Local state contract
+
+The timeline core stays file-in/file-out. Product coordination state lives in
+`.vean/vean.db`, a repo-local SQLite database ignored by git. It is owned by
+`src/state/`, modeled with Drizzle, and migrated by committed SQL under
+`drizzle/`.
+
+- **Store in `.vean/vean.db`:** project metadata, setup choices, preferences,
+  render/agent jobs, job leases, media probe caches, future UI session metadata.
+- **Do not store in `.vean/vean.db`:** canonical timeline placement, committed
+  `.mlt` XML, assets, rendered deliverables, secrets, or anything required to
+  reproduce a project from git plus media files.
+- **Concurrency rule:** use WAL + `busy_timeout`; keep writes short; never hold a
+  transaction while rendering, probing media, or running agents. Job claiming is
+  a tiny lease transaction (`queued` → `running` with `locked_by` /
+  `locked_until`); long work happens after the transaction and finishes with a
+  short status update.
+
+CLI is the canonical command surface for this state. LSP remains ambient and
+independent. MCP is an optional adapter backed by the same core/actions, not the
+source of truth.
+
 The payoff of the split: **human gestures and agent actions become the same
 operations** — both call the edit algebra, both get undo, and both update the
 same document that `vean-lsp` watches. That unification is only possible because
@@ -82,10 +107,10 @@ This is load-bearing. Do not regress it into manual lint/tool polling.
   Pyright, and rust-analyzer, it does not make agents ask for `diagnose` after
   every edit. An empty diagnostic set clears prior diagnostics.
 - **MCP tools are domain actions, not the diagnostics source of truth.** Mutating
-  tools return `consequences`, `inverse`, touched URIs, and a compact health
-  summary (`errors`, `warnings`, and only new/blocking diagnostic details). They
-  do **not** dump the whole diagnostic set on every call; that is noisy and
-  belongs to the ambient LSP stream or explicit debug/CI commands.
+  tools return `consequences`, `inverse`, touched URIs, and optional `alerts`
+  only when the mutation introduced new blocking errors. They do **not** return a
+  standing health snapshot or dump the whole diagnostic set on every call; that is
+  noisy and belongs to the ambient LSP stream or explicit debug/CI commands.
 - **`diagnose` is a debug/CI verb.** It is allowed for gates, tests, one-off
   inspection, and non-LSP clients. It must not be the required step that makes a
   Claude Code edit loop safe.
@@ -156,34 +181,67 @@ stripped (colors become plain hex/named — vean is standalone).
    Never statically or dynamically link `libmlt` or `libavcodec` into vean.
 2. **Never bundle codecs or the `melt`/`ffmpeg` binaries.** They are system deps
    the user installs. vean's distributed artifact is pure TypeScript.
-3. **Stateless.** No DB, no network calls, no secrets. Files in, files out.
+3. **Core stateless, product state local.** `src/ir`, `src/ops`,
+   `src/diagnostics`, and `src/driver` remain deterministic/file-based. Shared
+   product state is allowed only in gitignored `.vean/vean.db` via `src/state/`.
+   No network calls or secrets.
 4. **License discipline.** AGPL-3.0; contributions only under the CLA (see
    [CONTRIBUTING.md](CONTRIBUTING.md)). Never merge un-CLA'd code — it forecloses
    dual-licensing, which is the monetization escape hatch.
 
 ## The resolver (capability × work axis)
 
-Capabilities (the *how*) live in `.claude/skills/<skill>/`; work (the *what*)
-lives in `src/`. Shallow today — skills get written *from real experience* as
-each Move lands, not guessed ahead. Until a skill exists, the method is in
-[ROADMAP.md](ROADMAP.md).
+Capabilities (the *how*) live canonically in `.agents/skills/<skill>/`; host
+compatibility shims may point there from `.claude/skills/<skill>/`. Work (the
+*what*) lives in `src/`. Shallow today — skills get written *from real
+experience* as each Move lands, not guessed ahead. Until a skill exists, the
+method is in [ROADMAP.md](ROADMAP.md). Codex agents should follow this resolver
+and read the repo-local skill file directly when named; do not depend on
+Claude-only skill discovery. Claude Code can load this checkout as a plugin with
+`claude --plugin-dir /Users/tejas/Github/vean`; `.lsp.json`, `.mcp.json`, and
+`skills/` are the Claude plugin-facing shims.
+
+### Parallelization / thread model
+
+Distributed work means **fresh agent threads** the lead agent spins up, scopes,
+and synthesizes — not a reason to keep one context overloaded. Use them readily
+when an independent context window improves the work: research, codebase
+exploration, adversarial review, test-plan critique, UI/design critique, and
+post-implementation audit. The lead thread remains the PM: it owns the goal,
+sequencing, integration, verification, and final answer.
+
+For implementation, split only along disjoint write scopes. Worker threads get a
+bounded ownership area, are told other sessions may be active, and report changed
+paths plus verification evidence. The PM thread integrates, re-runs the gates, and
+resolves conflicts. For research/review, prefer multiple fresh-context reviewers
+over one long self-confirming pass when the question is broad or correctness is
+load-bearing.
+
+Parallelization does **not** weaken the completion bar: every thread follows the
+parallel session safety rules above, never reverts unrelated work, and never uses
+"another thread can do it later" as a deferral mechanism.
 
 | When you want to… | Load skill | Work in |
 |---|---|---|
 | extend the timeline model (tracks, audio, keyframes, filters) | _(none yet — see ROADMAP Move 0)_ | `src/ir/` |
-| serialize/parse `.mlt` | _(none yet — Move 0)_ | `src/ir/`, `tests/`, `corpus/` |
-| add/verify an edit operation | _(none yet — Move 1)_ | `src/ops/`, `tests/` |
-| add a diagnostic / lint | _(none yet — Move 1)_ | `src/diagnostics/` |
-| wire the agent bridge / a skill | _(none yet — Move 2; monitor with `BUILD-MONITOR.md`)_ | `src/lsp/`, `src/bridge/`, `.claude/skills/` |
-| edit a timeline as an agent (apply an op, fix a diagnostic, tighten a cut) | `editing` | a `.mlt` doc via the bridge tools (`apply-op`/`preview-op`/`undo`/`render`/`still`) |
+| serialize/parse `.mlt` | _(none yet — see ROADMAP Move 0)_ | `src/ir/`, `tests/`, `corpus/` |
+| add/verify an edit operation | _(none yet — see ROADMAP Move 1)_ | `src/ops/`, `tests/` |
+| add a diagnostic / lint | _(none yet — see ROADMAP Move 1)_ | `src/diagnostics/` |
+| wire the agent bridge / a skill | _(none yet — see DESIGN-MOVE2/GATE-MOVE2; monitor active builds with `BUILD-MONITOR.md`)_ | `src/lsp/`, `src/bridge/`, `.agents/skills/` |
+| set up or verify a fresh clone / host integration | `setup` (`.agents/skills/setup/SKILL.md`) | system deps, `bun install`, `.lsp.json`, `.mcp.json`, skill shims, CLI PATH registration, `bun run doctor` |
+| initialize repo-local product state | `setup` (`.agents/skills/setup/SKILL.md`) | `.vean/vean.db`, Drizzle migrations, `src/state/`, `drizzle/` |
+| edit a timeline as an agent (apply an op, fix a diagnostic, tighten a cut) | `editing` (`.agents/skills/editing/SKILL.md`) | a `.mlt` doc via the bridge tools (`apply-op`/`preview-op`/`undo`/`render`/`still`) |
+| parallelize research, review, implementation, or verification | _(none — PM thread delegates directly)_ | fresh agent threads; disjoint code scopes; PM integrates + verifies |
 | build the viz layer | _(none yet — Move 3)_ | `app/` (TBD) |
 
 ### Keeping the resolver healthy
 
 When a pattern repeats or a correction lands, **promote it** — write or update a
-skill in `.claude/skills/`, then fix the row above. The bar for a skill is
-judgment/method; pure mechanics stay scripts. Write skills from what actually
-happened in a Move, not a hypothesis.
+skill in `.agents/skills/`, then fix the row above. Keep host-specific paths
+(`.claude/skills/`, future `.codex/` shims, etc.) as pointers to that canonical
+repo-local skill, not divergent copies. The bar for a skill is judgment/method;
+pure mechanics stay scripts. Write skills from what actually happened in a Move,
+not a hypothesis.
 
 ## Layout
 
@@ -193,11 +251,17 @@ src/
   ops/         ← the edit algebra: pure op(state) → {state', consequences, inverse} (Move 1)
   diagnostics/ ← the LSP: static checks, resolve-value-at-frame, find-references (Move 1)
   bridge/      ← the agent surface: CLI / MCP verbs (Move 2)
+  state/       ← repo-local product state: SQLite/Drizzle, projects, jobs, setup choices
   driver/      ← the melt/ffmpeg subprocess driver + inspect (render, still, contact)
   index.ts     ← barrel
 tests/         ← vitest: golden round-trips, op-inverse invariants, diagnostics fixtures
 corpus/        ← real .mlt files for round-trip + render-faithfulness gates (Move 0)
-.claude/skills/← CAPABILITY axis: methods, versioned (written as Moves land)
+drizzle/       ← committed local-state SQL migrations for `.vean/vean.db`
+.agents/skills/← CAPABILITY axis: methods, versioned (written as Moves land)
+.claude/skills/← compatibility shims for hosts that discover Claude-style skills
+skills/        ← Claude Code plugin skill shims (symlink back to .agents where shared)
+.lsp.json      ← Claude Code plugin LSP registration for .mlt / vean-lsp
+.mcp.json      ← Claude Code plugin MCP registration for vean-mcp
 app/           ← the reference visualization layer (Move 3, TBD)
 ROADMAP.md     ← the phases + their verification gates (the plan of record)
 BUILD-MONITOR.md ← 15-minute checkpoint/review protocol for active agent builds
@@ -218,6 +282,10 @@ Mostly **planned** — implemented per Move. See [ROADMAP.md](ROADMAP.md).
 | Diagnose a timeline | `bun run diagnose <file>` | Move 1 |
 | Resolve a param's value at a frame | `bun run resolve <param> <frame>` | Move 1 |
 | Render headless / inspect a frame | `bun run render <file>` · `bun run still <file> <frame>` | Move 0–1 |
+| Verify local setup / host integration | `bun run doctor` | Move 2 |
+| Register the CLI on PATH | `bun run setup:cli` then `bun run doctor --surface cli-lsp` | Move 2 |
+| Initialize local state | `bun run state:init` · `bun run project:init` | now |
+| Inspect local jobs | `bun src/cli.ts jobs list` | now |
 
 ## System deps (not bun packages)
 

@@ -7,8 +7,8 @@
 //
 // For each seeded task it: loads a working copy of the corpus document, applies an
 // op through the MCP TOOL CORE (`mutate` — the same path the `apply-op` MCP tool
-// runs), asserts the COMPACT ToolResult shape (consequences + inverse +
-// touchedUris + compact health, NO full diagnostic dump), writes the new IR,
+// runs), asserts the focused ToolResult shape (consequences + inverse +
+// touchedUris, NO health snapshot or full diagnostic dump), writes the new IR,
 // re-analyzes through the LSP ENGINE (`analyze` — the same path the ambient
 // `publishDiagnostics` runs) to confirm the document is clean, then RENDERS it and
 // grabs a STILL via the melt driver — a real frame on disk is the perceptual
@@ -71,7 +71,7 @@ async function runTask(task: Task, n: number): Promise<boolean> {
     return false;
   }
 
-  // 2) ToolResult discipline: the four fields present + compact health (no dump).
+  // 2) ToolResult discipline: focused mutation facts, no standing health dump.
   assert(outcome.consequences != null, "result carries consequences");
   assert(
     outcome.inverse != null && typeof outcome.inverse.op === "string",
@@ -81,14 +81,9 @@ async function runTask(task: Task, n: number): Promise<boolean> {
     outcome.touchedUris.length === 1 && outcome.touchedUris[0] === `file://${doc}`,
     "result names the touched URI",
   );
-  assert(
-    typeof outcome.health.errors === "number" && Array.isArray(outcome.health.newOrBlocking),
-    "health is the compact summary (counts + new/blocking list)",
-  );
-  assert(
-    !("diagnostics" in (outcome.health as object)),
-    "health does NOT carry a full diagnostic dump",
-  );
+  assert(!("health" in outcome), "result does NOT carry a standing health snapshot");
+  assert(!("diagnostics" in outcome), "result does NOT carry a full diagnostic dump");
+  assert(outcome.alerts == null, "result has no alerts for this clean edit");
   assert(
     (outcome.consequences[task.expectConsequence] as unknown[]).length >= 0,
     `consequences include the expected '${String(task.expectConsequence)}' field`,

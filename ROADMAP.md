@@ -222,31 +222,42 @@ bridge wire, with the Move-1 op-invariants gate re-verified green (221/221).
       ranges via the additive src/ir/source-map.ts (IR identity → .mlt text span;
       parser untouched, Move-0/1 goldens green). tests/lsp-navigation.test.ts +
       tests/lsp-codeactions.test.ts. -->
-- [x] Ship a Claude Code plugin config that registers `vean-lsp` with diagnostics
-      enabled by default. <!-- The server is a conformant stdio LSP (vean-lsp bin /
-      `bun run lsp`); host registration is editor configuration, not a code
-      artifact — documented in the `editing` skill. No vean-specific polling
-      protocol; an LSP host gets ambient vean diagnostics for free. -->
+- [x] Ship host registration references for `vean-lsp` and `vean-mcp`.
+      <!-- The server is a conformant stdio LSP (vean-lsp bin / `bun run lsp`) and
+      the MCP server is `vean-mcp` / `bun run mcp`; actual host registration is
+      represented for Claude Code by .lsp.json / .mcp.json. The repo-owned durable
+      references are package bins/scripts, AGENTS.md, .agents/skills/setup/SKILL.md,
+      .agents/skills/editing/SKILL.md, skills/setup, skills/editing, and
+      `bun run doctor`. No vean-specific
+      polling protocol; an LSP host gets ambient vean diagnostics for free. -->
 - [x] Wrap the core as MCP/CLI domain tools: `apply-op`, `preview-op`, `undo`,
       `render`, `still`, `resolve-value-at-frame`, `find-references` (+ `diagnose`
-      as the debug verb). Tools return consequences, inverse, touched URIs, and a
-      compact health summary (counts + new/blocking details only); no full
+      as the debug verb). Mutating tools return consequences, inverse, touched URIs,
+      and optional alerts only when the mutation introduced new blocking errors; no
+      standing health snapshot or full
       diagnostic dump. <!-- src/bridge/mcp/server.ts (vean-mcp bin) over the
       transport-free tool core, split by side: tools/mutate.ts (apply/preview/undo +
-      the compact-health discipline), tools/read.ts (resolve/refs queries + the
+      the focused mutation-output discipline), tools/read.ts (resolve/refs queries + the
       render/still melt verbs — render/still return `touchedUris` = the produced
       mp4/png the agent inspects next), tools/core.ts (diagnose + ser/de + re-export
       barrel). The ToolResult contract is tools/types.ts; the read-tool result
       shapes live with their handlers in tools/read.ts. CLI: `bun run render` /
       `bun run still` (scripts/render.ts, still.ts — same read-tool core, three
-      surfaces). The compact `health.newOrBlocking` is a before/after diff of the
-      SHARED engine. Verified: tests/read-tools.test.ts (Node host, fake spawn — the
+      surfaces). Optional `alerts` are a before/after diff of the SHARED engine,
+      filtered to new errors only. Verified: tests/read-tools.test.ts (Node host, fake spawn — the
       argv + touchedUris contract) + `bun run read-tools:artifact` (Bun host, real
       melt — a true PNG/MP4 on disk at the touchedUris path). -->
+- [x] Add repo-local product state substrate.
+      <!-- `src/state/` owns `.vean/vean.db` via SQLite + Drizzle. Committed
+      migrations live in `drizzle/`; `.vean/` is gitignored. CLI commands:
+      `state init/status`, `project init`, `jobs list/enqueue/claim/complete/fail`.
+      Concurrency posture: WAL, 5s busy_timeout, short lease transactions for
+      jobs, no long render/agent work inside DB transactions. -->
 - [x] Write the first real skill: the editing method — rely on ambient LSP for
       diagnostics, use MCP tools for domain actions, read consequence reports, and
-      run the render→still inspection loop. <!-- .claude/skills/editing/SKILL.md,
-      written from the actual Move-2 build. -->
+      run the render→still inspection loop. <!-- .agents/skills/editing/SKILL.md
+      is canonical; .claude/skills/editing/SKILL.md and skills/editing/SKILL.md are
+      compatibility symlinks. -->
 - [x] Seed a fixture project an agent can edit end-to-end. <!-- corpus/
       vean-multitrack.mlt is the seed; `bun run move2:e2e` drives two seeded edits
       through it op→ambient→render→still. -->
@@ -261,10 +272,10 @@ bridge wire, with the Move-1 op-invariants gate re-verified green (221/221).
       repairs: a textDocument/codeAction request returns the fix, and applying it as a
       didChange re-publishes the cleared (empty) set. -->
 - [x] Tool ergonomics eval: `apply-op` returns consequences, inverse, touched URIs,
-      and a compact health summary without flooding full diagnostic payloads.
-      <!-- tests/mcp-tools.test.ts + bun run move2:e2e: all four fields present;
-      health has no `diagnostics` dump; new/blocking surfaced, untouched warnings
-      counted-not-dumped. -->
+      and optional alerts without flooding full diagnostic payloads.
+      <!-- tests/mcp-tools.test.ts + bun run move2:e2e: required fields present;
+      clean edits have no health snapshot, no diagnostics dump, and no alerts;
+      new blocking errors surface in alerts. -->
 - [x] Behavioral eval: a natural request ("tighten the gap", "duck the audio")
       maps to the right ops, receives ambient feedback, renders. <!-- the two
       seeded tasks (trimIn to tighten, gain to duck) in move2:e2e — op via tool →

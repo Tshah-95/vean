@@ -53,9 +53,9 @@ src/bridge/
                          the navigation/code-action handlers (delegated to engine).
   tools/
     types.ts          ← the ToolResult CONTRACT (consequences, inverse,
-                         touchedUris, COMPACT health — no full dump).
+                         touchedUris, optional alerts — no health dump).
     core.ts           ← TRANSPORT-FREE tool core: mutate/preview/undo (the edit
-                         algebra + the compact-health diff), the read tools
+                         algebra + the alerts diff), the read tools
                          (resolve/refs), the debug diagnose tool, ser/de helpers.
   mcp/
     server.ts         ← the stdio MCP binding: registers the tool set, marshals
@@ -71,8 +71,10 @@ JSON-RPC, no stdio, no process. That is what makes the ambient behavior testable
 over an in-memory connection — no spawned subprocess), and it is the same split
 Move 1 used (engine vs CLI verb).
 
-Bins/scripts wired in `package.json`: `vean-lsp` / `vean-mcp` (the `bin` entries),
-`bun run lsp` / `bun run mcp` (dev), `bun run move2:e2e` (the render gate).
+Bins/scripts wired in `package.json`: `vean` / `vean-lsp` / `vean-mcp` (the `bin`
+entries), `bun run doctor` (setup/host/surface verification; LSP, CLI, and MCP are
+independent checks), `bun run setup:cli` (PATH registration via `bun link`), `bun
+run lsp` / `bun run mcp` (dev), `bun run move2:e2e` (the render gate).
 
 ---
 
@@ -144,33 +146,26 @@ type ToolResult = {
   consequences: Consequences;   // the edit algebra's structured "what changed"
   inverse: OpInvocation;        // re-apply via `undo` to reverse this edit
   touchedUris: string[];        // which documents changed (re-read / re-publish)
-  health: {                     // a COMPACT diagnostic summary — NOT the full set
-    errors: number;             //   counts over the post-edit document
-    warnings: number;
-    clean: boolean;
-    newOrBlocking: Diagnostic[];//   ONLY the news: diagnostics this edit
-  };                            //   INTRODUCED + any blocking ERROR
+  alerts?: Diagnostic[];        // only NEW blocking errors introduced by this edit
 };
 type ToolError = { ok: false; kind: string; detail: string };  // typed, not thrown
 ```
 
-`health.newOrBlocking` is computed in `core.ts mutate` by diffing the **shared
-engine's** pre-edit and post-edit sets (keyed by code + stable location): a key
-present after but not before is NEW; a post-edit ERROR is BLOCKING (surfaced even
-if pre-existing, because it blocks a faithful render). A pre-existing WARNING the
-edit didn't touch is COUNTED but omitted from the detail list — it's ambient
-context the LSP already showed, not news. This is the ONLY place full `Diagnostic`
-objects enter a tool result, and only for the ones that are news.
+`alerts` is computed in `tools/mutate.ts` by diffing the **shared engine's**
+pre-edit and post-edit sets (keyed by code + stable location), then keeping only
+new `error` diagnostics introduced by the mutation. Clean edits omit the field.
+Pre-existing warnings/errors and warning-level regressions stay out of mutation
+responses; they belong to the ambient LSP stream or explicit debug/CI commands.
 
 The full current set is the **ambient LSP's** job (`publishDiagnostics`) and the
 explicit **`diagnose`** debug verb's job — the one tool deliberately allowed to
 return the full array, because an agent calls it on purpose for a complete report,
 not after every edit.
 
-**Why this matters for the agent loop (review lens #4):** Claude sees a new adverse
-effect (`newOrBlocking`) and the inverse in the tool's own reply, AND the full
-current picture ambiently from the LSP — without ever being told to "run a
-diagnostic command". `apply-op` → compact delta; the editor → full ambient set.
+**Why this matters for the agent loop (review lens #4):** Claude sees the mutation
+facts and inverse in the tool's reply, plus `alerts` only if this edit introduced
+a new blocking error. The full current picture arrives ambiently from the LSP —
+without ever being told to "run a diagnostic command".
 
 ---
 
@@ -252,15 +247,17 @@ cleanliness + the trim-undo persist round-trip).
 
 ## 7. What this Move does NOT build (correctly out of scope)
 
-- **The Claude Code plugin config** that registers `vean-lsp` with diagnostics on
-  by default — that is editor/host configuration, not a code deliverable, and is
-  documented in the skill instead. The server itself is a conformant LSP a host
-  registers like any other.
+- **Host-specific LSP auto-registration outside Claude Code** — the repo ships
+  Claude Code plugin config (`.lsp.json`, `.mcp.json`, `skills/`) plus stable
+  generic references: the `vean-lsp` bin / `bun run lsp`, the `vean-mcp` bin /
+  `bun run mcp`, the canonical `.agents/skills/editing/SKILL.md`, and the AGENTS
+  resolver row that points Codex at that skill.
 - **The reference viz layer** (Move 3) — it only needs to *read* the IR + render
   outputs and is unblocked already.
-- **Stateful sessions / network / DB** — Hard boundary #3. The "document" is a
-  file on disk addressed by a URI; the MCP server reads it, applies the op, writes
-  it back. The shared file is what keeps the MCP edit and the ambient LSP in
-  lock-step.
+- **Canonical timeline state in a DB** — the "document" is still a file on disk
+  addressed by a URI; the MCP server reads it, applies the op, writes it back.
+  The shared file is what keeps the edit and the ambient LSP in lock-step.
+  Product coordination state is separate and local: `.vean/vean.db` stores
+  projects, setup choices, and job metadata, not timeline placement.
 
 See [GATE-MOVE2.md](GATE-MOVE2.md) for the verification.

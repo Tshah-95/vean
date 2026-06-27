@@ -3,14 +3,14 @@
 // find-references) and the two driver inspect verbs (render, still).
 //
 // Split from the MUTATING core (`./core`, which owns apply-op / undo / preview and
-// the compact-health discipline) for the same transport-free reason the LSP engine
+// the mutation-output discipline) for the same transport-free reason the LSP engine
 // is split from its server: these are pure (resolve/refs) or driver-delegating
 // (render/still) functions that CALL THE SHARED CORE — the navigation queries
 // (src/query) and the melt driver (src/driver) — and the MCP server / CLI just
 // JSON-marshal them. They own NO rule and NO edit logic.
 //
 // Why a distinct result shape from the mutating ToolResult (`./types`): a read
-// tool changes nothing, so it carries no `consequences` / `inverse` / health DELTA
+// tool changes nothing, so it carries no `consequences` / `inverse` / alerts
 // — that triple is meaningless for a query. Instead each read tool returns its own
 // payload directly (the resolved value, the reference set, the produced artifact
 // path). The one field a read tool DOES share with the mutating contract is
@@ -32,7 +32,7 @@ import {
 
 // ─── Read-tool result shapes ──────────────────────────────────────────────────
 /** A pure-query read tool's result: `ok` + the typed query payload. No mutation,
- *  so no consequences/inverse/health — the discipline triple is only for edits. A
+ *  so no consequences/inverse/alerts — the mutation result shape is only for edits. A
  *  thin, honest wrapper: the agent gets the same structured answer the shared query
  *  computes, flagged with `ok` so the MCP envelope is uniform across the tool set. */
 export type ReadResult<T> = {

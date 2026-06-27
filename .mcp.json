@@ -1,0 +1,10 @@
+{
+  "vean": {
+    "command": "bun",
+    "args": ["--cwd", "${CLAUDE_PLUGIN_ROOT}", "src/bridge/mcp/server.ts"],
+    "env": {
+      "VEAN_PLUGIN_ROOT": "${CLAUDE_PLUGIN_ROOT}",
+      "VEAN_PROJECT_DIR": "${CLAUDE_PROJECT_DIR}"
+    }
+  }
+}

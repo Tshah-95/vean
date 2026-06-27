@@ -8,23 +8,21 @@
 // file I/O — those are the binding's job and tested separately), so it isolates the
 // contract from the wiring. What it proves, per the contract:
 //
-//   • `mutate` (apply-op) returns consequences + inverse + touchedUris + a COMPACT
-//     `health` — counts + ONLY the new/blocking details — and NO full-set dump
-//     (`health` has no `diagnostics` key);
-//   • a NEW defect an edit introduces appears in `health.newOrBlocking`, while a
-//     pre-existing, untouched WARNING is COUNTED but not dumped (it's ambient
-//     context the LSP already showed, not news);
+//   • `mutate` (apply-op) returns consequences + inverse + touchedUris, with NO
+//     standing health snapshot and NO full-set dump;
+//   • a NEW ERROR an edit introduces appears in `alerts`; clean edits and
+//     pre-existing diagnostics do not add noise to the tool response;
 //   • `preview` returns the same report but mutates NOTHING (state in === state out);
 //   • `undoTool` re-applies an inverse and round-trips to the original IR;
-//   • `healthDelta` keys diagnostics by STABLE identity (code + clip uuid / track /
-//     transition), so the new-vs-existing diff survives reordering — never by index;
+//   • `alertsDelta` keys diagnostics by STABLE identity (code + clip uuid / track /
+//     transition), so the new-error diff survives reordering — never by index;
 //   • a precondition failure is a typed ToolError VALUE, not a throw.
 //
 // These run on the PURE core, so they execute under vitest's Node host (no Bun, no
 // melt). The render→still leg is the separate `bun run move2:e2e` gate.
 import { describe, expect, it } from "vitest";
 import { serializeDoc } from "../src/bridge/tools/core";
-import { healthDelta, mutate, preview, undoTool } from "../src/bridge/tools/mutate";
+import { alertsDelta, mutate, preview, undoTool } from "../src/bridge/tools/mutate";
 import { isToolError } from "../src/bridge/tools/types";
 import type { Diagnostic } from "../src/diagnostics";
 import { VERTICAL, clip, colorClip, filter, resetIds, timeline, videoTrack } from "../src/index";
@@ -47,8 +45,8 @@ function cleanDoc(): Timeline {
   });
 }
 
-describe("mutate (apply-op) — the compact ToolResult contract", () => {
-  it("returns consequences + inverse + touchedUris + a COMPACT health (no full dump)", () => {
+describe("mutate (apply-op) — the focused ToolResult contract", () => {
+  it("returns consequences + inverse + touchedUris, with no standing health snapshot", () => {
     const state = cleanDoc();
     const { outcome, newState } = mutate(
       state,
@@ -58,17 +56,15 @@ describe("mutate (apply-op) — the compact ToolResult contract", () => {
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
 
-    // The four required fields are present.
+    // The required fields are present.
     expect(outcome.consequences).toBeDefined();
     expect(outcome.inverse).toBeDefined();
     expect(outcome.touchedUris).toEqual([URI]);
-    expect(outcome.health).toBeDefined();
 
-    // The health is COMPACT: counts + an (here empty) new/blocking list, and
-    // CRUCIALLY no `diagnostics` array (the full-set dump the contract forbids).
-    expect(outcome.health).toMatchObject({ errors: 0, warnings: 0, clean: true });
-    expect(outcome.health.newOrBlocking).toEqual([]);
-    expect(outcome.health).not.toHaveProperty("diagnostics");
+    // Clean edits do not carry a standing health object or empty alerts.
+    expect(outcome).not.toHaveProperty("health");
+    expect(outcome).not.toHaveProperty("diagnostics");
+    expect(outcome.alerts).toBeUndefined();
 
     // The edit produced a serializable state (a tool never writes an unserializable
     // timeline — the op-purity + serializer contract).
@@ -76,12 +72,10 @@ describe("mutate (apply-op) — the compact ToolResult contract", () => {
     expect(() => serializeDoc(newState as Timeline)).not.toThrow();
   });
 
-  it("a BLOCKING error already in the document is surfaced after an UNRELATED edit (but the full set is never dumped)", () => {
-    // A document that ALREADY carries an error: a clip window past its source
-    // length. (A public op refuses to CREATE this — the edit algebra guards against
-    // an out-of-bounds window — so we hand-build the pre-broken IR the LSP/MCP might
-    // hold mid-edit.) An unrelated edit must still surface the blocking error in the
-    // compact summary — the agent sees the adverse effect without a diagnose call.
+  it("a pre-existing blocking error is NOT repeated after an unrelated edit", () => {
+    // A document that ALREADY carries an error. An unrelated edit must not repeat
+    // the standing problem in a mutating tool reply; the LSP/diagnose surfaces own
+    // the current document health.
     const tl: Timeline = {
       profile: VERTICAL,
       tracks: {
@@ -119,16 +113,12 @@ describe("mutate (apply-op) — the compact ToolResult contract", () => {
     const { outcome } = mutate(tl, { op: "trimIn", args: { uuid: "ok", delta: 5 } }, URI);
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
-    // The blocking error is surfaced in the compact list (the agent sees it without
-    // a diagnose call), and the list is SMALL — just the blocking news, not the full
-    // set — with no `diagnostics` full-dump field.
-    expect(outcome.health.errors).toBeGreaterThanOrEqual(1);
-    expect(outcome.health.newOrBlocking.map((d) => d.code)).toContain("in-out-beyond-source");
-    expect(outcome.health.newOrBlocking.length).toBeLessThanOrEqual(3);
-    expect(outcome.health).not.toHaveProperty("diagnostics");
+    expect(outcome.alerts).toBeUndefined();
+    expect(outcome).not.toHaveProperty("health");
+    expect(outcome).not.toHaveProperty("diagnostics");
   });
 
-  it("a pre-existing WARNING (untouched) is COUNTED but NOT pulled into newOrBlocking", () => {
+  it("a pre-existing WARNING (untouched) is not included in alerts", () => {
     // A document with a WARNING (a keyframe animation entirely past the played
     // window → a dead-clamp warning) but no error. An unrelated edit must NOT pull
     // that pre-existing warning into the compact detail list — only its COUNT.
@@ -148,8 +138,7 @@ describe("mutate (apply-op) — the compact ToolResult contract", () => {
     const { outcome } = mutate(tl, { op: "trimIn", args: { uuid: "other", delta: 5 } }, URI);
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
-    expect(outcome.health.warnings).toBeGreaterThanOrEqual(1);
-    expect(outcome.health.newOrBlocking.map((d) => d.code)).not.toContain("keyframe-outside-clip");
+    expect(outcome.alerts).toBeUndefined();
   });
 
   it("a precondition failure is a typed ToolError value (no throw)", () => {
@@ -177,7 +166,7 @@ describe("mutate (apply-op) — the compact ToolResult contract", () => {
 });
 
 describe("preview (preview-op) — same report, document unchanged", () => {
-  it("returns the consequences + inverse + health a hypothetical edit WOULD produce, mutating nothing", () => {
+  it("returns the consequences + inverse + optional alerts a hypothetical edit WOULD produce, mutating nothing", () => {
     const state = cleanDoc();
     const before = serializeDoc(state);
     const outcome = preview(state, { op: "trimIn", args: { uuid: "a", delta: 10 } }, URI);
@@ -185,7 +174,8 @@ describe("preview (preview-op) — same report, document unchanged", () => {
     if (!outcome.ok) return;
     expect(outcome.consequences).toBeDefined();
     expect(outcome.inverse).toBeDefined();
-    expect(outcome.health).not.toHaveProperty("diagnostics");
+    expect(outcome).not.toHaveProperty("health");
+    expect(outcome).not.toHaveProperty("diagnostics");
     // The input state is byte-identical afterward (preview discards the new state).
     expect(serializeDoc(state)).toBe(before);
   });
@@ -213,7 +203,8 @@ describe("undoTool (undo) — re-apply an inverse, round-trip to the original", 
     // tool), and it returns the SAME compact contract (so an agent can redo it).
     expect(back.newState).toEqual(state);
     expect(back.outcome.touchedUris).toEqual([URI]);
-    expect(back.outcome.health).not.toHaveProperty("diagnostics");
+    expect(back.outcome).not.toHaveProperty("health");
+    expect(back.outcome).not.toHaveProperty("diagnostics");
     expect(back.outcome.inverse).toBeDefined(); // undo's own inverse = the redo
   });
 
@@ -225,7 +216,7 @@ describe("undoTool (undo) — re-apply an inverse, round-trip to the original", 
     const fwd = mutate(tl, { op: "split", args: { uuid: "a", frame: 30 } }, URI);
     expect(fwd.outcome.ok).toBe(true);
     if (!fwd.outcome.ok || !fwd.newState) return;
-    expect(fwd.outcome.health.clean).toBe(true);
+    expect(fwd.outcome.alerts).toBeUndefined();
     const back = undoTool(fwd.newState, fwd.outcome.inverse, URI);
     expect(back.outcome.ok).toBe(true);
     if (!back.outcome.ok || !back.newState) return;
@@ -233,7 +224,7 @@ describe("undoTool (undo) — re-apply an inverse, round-trip to the original", 
   });
 });
 
-describe("healthDelta — the compact new-vs-existing diff (stable-identity keyed)", () => {
+describe("alertsDelta — new blocking errors only (stable-identity keyed)", () => {
   /** Build a minimal Diagnostic for the diff. */
   function diag(code: string, severity: Diagnostic["severity"], clip: string): Diagnostic {
     return { code, severity, message: `${code} on ${clip}`, location: { clip }, source: "test" };
@@ -242,21 +233,14 @@ describe("healthDelta — the compact new-vs-existing diff (stable-identity keye
   it("a key present AFTER but not BEFORE is NEW (introduced by the edit)", () => {
     const before = [diag("warn-x", "warning", "c1")];
     const after = [diag("warn-x", "warning", "c1"), diag("err-y", "error", "c2")];
-    const h = healthDelta(before, after);
-    expect(h.errors).toBe(1);
-    expect(h.warnings).toBe(1);
-    expect(h.clean).toBe(false);
-    // The new error is in the detail list; the pre-existing untouched warning is NOT.
-    expect(h.newOrBlocking.map((d) => d.code)).toEqual(["err-y"]);
+    const alerts = alertsDelta(before, after);
+    expect(alerts.map((d) => d.code)).toEqual(["err-y"]);
   });
 
-  it("a pre-existing ERROR is BLOCKING (surfaced even though it isn't new)", () => {
+  it("a pre-existing ERROR is not repeated", () => {
     const before = [diag("err-y", "error", "c2")];
     const after = [diag("err-y", "error", "c2")];
-    const h = healthDelta(before, after);
-    // Not new (key unchanged) but an error → blocking → surfaced anyway.
-    expect(h.newOrBlocking.map((d) => d.code)).toEqual(["err-y"]);
-    expect(h.errors).toBe(1);
+    expect(alertsDelta(before, after)).toEqual([]);
   });
 
   it("identity is keyed by STABLE location, not array index (a reorder is not a 'new' diagnostic)", () => {
@@ -265,16 +249,14 @@ describe("healthDelta — the compact new-vs-existing diff (stable-identity keye
     // Same two diagnostics, different ORDER after the edit. Neither is new.
     const before = [a, b];
     const after = [b, a];
-    const h = healthDelta(before, after);
-    // Both errors counted (blocking), but de-duped to the two distinct stable keys —
-    // a reorder introduced nothing.
-    expect(h.errors).toBe(2);
-    expect(h.newOrBlocking.map((d) => d.location.clip).sort()).toEqual(["cA", "cB"]);
+    expect(alertsDelta(before, after)).toEqual([]);
   });
 
-  it("a clean post-edit set yields an empty detail list and clean=true", () => {
-    const h = healthDelta([], []);
-    expect(h).toMatchObject({ errors: 0, warnings: 0, clean: true });
-    expect(h.newOrBlocking).toEqual([]);
+  it("warnings introduced by an edit are not mutation alerts", () => {
+    expect(alertsDelta([], [diag("warn-x", "warning", "c1")])).toEqual([]);
+  });
+
+  it("a clean post-edit set yields an empty alert list", () => {
+    expect(alertsDelta([], [])).toEqual([]);
   });
 });

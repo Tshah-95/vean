@@ -60,9 +60,9 @@ export function collectDiagnostics(
   return out;
 }
 
-/** A compact health summary of a diagnostic set — the shape an MCP mutation tool
- *  returns (errors/warnings counts, never the full payload), and the CLI prints.
- *  Keeping it here means every surface derives the summary the SAME way. */
+/** A compact health summary of a diagnostic set — used by the explicit `diagnose`
+ *  debug/CI surface and CLI reports. Mutating tools intentionally do not return
+ *  this standing health snapshot; they only surface mutation-local alerts. */
 export type DiagnosticHealth = {
   errors: number;
   warnings: number;

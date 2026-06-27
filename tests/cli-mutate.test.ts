@@ -6,7 +6,7 @@
 //
 // What each asserts:
 //   • `preview-op` on a valid op exits 0, prints the consequence report + the
-//     COMPACT health (no full diagnostic dump) + the inverse, and writes NOTHING —
+//     inverse, and writes NOTHING —
 //     a DRY RUN leaves the input file byte-identical;
 //   • `preview-op` of a bad precondition exits 1 with the typed ToolError, still
 //     writing nothing;
@@ -66,17 +66,16 @@ describe("scripts/preview-op.ts — CLI dry-run", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("previews a valid op: exits 0, prints consequences + COMPACT health + inverse, writes NOTHING", () => {
+  it("previews a valid op: exits 0, prints consequences + inverse, writes NOTHING", () => {
     const before = readFileSync(doc, "utf8");
     const run = runScript(PREVIEW, [doc, "trimIn", JSON.stringify({ uuid: CLIP, delta: 10 })]);
 
     expect(run.code).toBe(0);
     expect(run.stdout).toContain("DRY RUN");
     expect(run.stdout).toContain("consequences");
-    // The COMPACT health is printed — counts + new/blocking only (a clean edit ⇒
-    // none) — and the inverse is scriptable.
-    expect(run.stdout).toContain("health (compact");
-    expect(run.stdout).toMatch(/clean — 0 error\(s\), 0 warning\(s\)/);
+    // Clean previews do not print a standing health block; the inverse is scriptable.
+    expect(run.stdout).not.toContain("health");
+    expect(run.stdout).not.toContain("alerts");
     expect(run.stdout).toContain("inverse");
     // It is a DRY RUN — the file on disk is byte-identical.
     expect(readFileSync(doc, "utf8")).toBe(before);

@@ -10,6 +10,7 @@
     ".": "./src/index.ts"
   },
   "bin": {
+    "vean": "src/cli.ts",
     "vean-lsp": "src/bridge/lsp/server.ts",
     "vean-mcp": "src/bridge/mcp/server.ts"
   },
@@ -19,6 +20,12 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome format --write .",
+    "doctor": "bun src/cli.ts doctor",
+    "setup:cli": "bun link",
+    "state:init": "bun src/cli.ts state init",
+    "project:init": "bun src/cli.ts project init",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "bun src/cli.ts state init",
     "roundtrip": "bun scripts/roundtrip.ts",
     "edit": "bun scripts/edit.ts",
     "preview-op": "bun scripts/preview-op.ts",
@@ -34,10 +41,13 @@
     "verify:corpus": "bun scripts/verify-corpus.ts",
     "lsp": "bun src/bridge/lsp/server.ts",
     "mcp": "bun src/bridge/mcp/server.ts",
-    "move2:e2e": "bun scripts/move2-e2e.ts"
+    "move2:e2e": "bun scripts/move2-e2e.ts",
+    "verify:claude-code": "bun src/cli.ts doctor --host claude-code --surface mcp-lsp"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "commander": "^15.0.0",
+    "drizzle-orm": "^0.45.2",
     "fast-xml-parser": "^5.9.3",
     "vscode-jsonrpc": "^9.0.0",
     "vscode-languageserver": "^10.0.1",
@@ -47,6 +57,7 @@
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
     "@types/bun": "^1.3.14",
+    "drizzle-kit": "^0.31.10",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
   }

@@ -3,7 +3,7 @@
 // INVERSE invocation (the `inverse` JSON a prior `apply-op`/`edit` printed) to a
 // `.mlt` file, writing the undone document back. Mirrors the `undo` MCP tool:
 // re-apply the inverse through the SAME transport-free mutating-tool core
-// (`undoTool`, src/bridge/tools/mutate), persist, and print the compact ToolResult.
+// (`undoTool`, src/bridge/tools/mutate), persist, and print the ToolResult.
 //
 //   bun run undo-op <file.mlt> <inverse-json> [out.mlt]
 //
@@ -36,7 +36,7 @@ import { fromMlt } from "../src/ir/parse";
 import { toMlt } from "../src/ir/serialize";
 import type { OpInvocation } from "../src/ops";
 import { formatConsequences, xmlIsClean } from "./edit";
-import { formatHealth } from "./preview-op";
+import { formatAlerts } from "./preview-op";
 
 const USAGE = "usage: bun run undo-op <file.mlt> <inverse-json> [out.mlt]";
 
@@ -92,8 +92,10 @@ async function main(): Promise<void> {
   console.log(`xml:  ${lint.ok ? "clean (Shotcut-openable)" : lint.detail}`);
   console.log("consequences (what the undo did):");
   console.log(formatConsequences(outcome.consequences));
-  console.log("health (compact — counts + new/blocking only):");
-  console.log(formatHealth(outcome.health));
+  if (outcome.alerts && outcome.alerts.length > 0) {
+    console.log("alerts (new blocking errors introduced by this undo):");
+    console.log(formatAlerts(outcome.alerts));
+  }
   console.log("inverse (the REDO this undo carries — scriptable):");
   console.log(`  ${JSON.stringify(outcome.inverse)}`);
   process.exit(0);

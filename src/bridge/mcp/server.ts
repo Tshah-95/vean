@@ -8,7 +8,7 @@
 //
 // Tools:
 //   • apply-op   (mutating)  → ToolResult {consequences, inverse, touchedUris,
-//                              compact health}. Persists the new IR to the doc.
+//                              optional alerts}. Persists the new IR to the doc.
 //   • preview-op (read)      → the same ToolResult, WITHOUT persisting (a dry run).
 //   • undo       (mutating)  → re-applies an inverse invocation.
 //   • render / still (driver)→ shells out to melt for an MP4 / a single PNG.
@@ -16,9 +16,10 @@
 //   • diagnose   (debug)     → the FULL set (the one tool allowed to; the explicit
 //                              debug verb, NOT the ambient loop).
 //
-// Tool-output discipline (review lens #3) is enforced in the tool core: the
-// mutating tools return the COMPACT health (new/blocking deltas), never a full
-// diagnostic dump. The full set is the ambient LSP's job + `diagnose`'s job.
+// Tool-output discipline (review lens #3) is enforced in the tool core: mutating
+// tools return mutation-local facts and optional alerts for newly introduced
+// blocking errors, never a standing health snapshot or full diagnostic dump. The
+// full set is the ambient LSP's job + `diagnose`'s job.
 //
 // STATELESS PROCESS (Hard boundary #3): the server holds no DB and makes no
 // network calls. The "document" is a file on disk addressed by a URI/path; a
@@ -29,7 +30,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { diagnoseTool, parseDoc, serializeDoc } from "../tools/core";
-// The mutating tools come straight from their dedicated module (the compact-health
+// The mutating tools come straight from their dedicated module (the output
 // discipline lives there) — the binding marshals them, it owns no edit logic.
 import { mutate, preview, undoTool } from "../tools/mutate";
 // The read/render tools come straight from their dedicated module (`../tools/read`)
@@ -75,12 +76,12 @@ function reply(
  *  server bound to an in-memory transport, or assert the registered set. */
 export function registerTools(server: McpServer): void {
   // apply-op — the mutating workhorse. Reads the doc, applies the op via the edit
-  // algebra, persists the new IR, returns the COMPACT ToolResult.
+  // algebra, persists the new IR, returns the focused ToolResult.
   server.registerTool(
     "apply-op",
     {
       description:
-        "Apply an edit op to a .mlt document. Returns the consequence report, the inverse (for undo), the touched URIs, and a COMPACT diagnostic health summary (counts + new/blocking details only — NOT the full set; that is the ambient vean-lsp's job). Persists the new document.",
+        "Apply an edit op to a .mlt document. Returns consequences, the inverse (for undo), touched URIs, and optional alerts only if this edit introduced new blocking errors. Full diagnostics are the ambient vean-lsp's job or the explicit diagnose tool's job. Persists the new document.",
       inputSchema: {
         uri: z.string().describe("file:// URI or path of the .mlt document to edit"),
         op: z.string().describe("the op name (append, split, trimIn, move, dissolve, gain, …)"),
@@ -106,7 +107,7 @@ export function registerTools(server: McpServer): void {
     "preview-op",
     {
       description:
-        "Preview an edit op WITHOUT applying it: returns the same consequence report + inverse + compact health the edit WOULD produce, but does not change the document. The 'report before you render' surface.",
+        "Preview an edit op WITHOUT applying it: returns the same consequences + inverse + optional alerts the edit WOULD produce, but does not change the document. The 'report before you render' surface.",
       inputSchema: {
         uri: z.string(),
         op: z.string(),
@@ -130,7 +131,7 @@ export function registerTools(server: McpServer): void {
     "undo",
     {
       description:
-        "Undo an edit by re-applying its inverse invocation (the `inverse` field a prior apply-op returned). Returns the same compact ToolResult.",
+        "Undo an edit by re-applying its inverse invocation (the `inverse` field a prior apply-op returned). Returns consequences, a redo inverse, touched URIs, and optional alerts.",
       inputSchema: {
         uri: z.string(),
         inverse: z
@@ -205,7 +206,7 @@ export function registerTools(server: McpServer): void {
     "diagnose",
     {
       description:
-        "DEBUG/CI verb: the FULL current diagnostic set + health for a document. This is the ONE tool that returns the full set — call it deliberately for a complete report. After ordinary edits, rely on apply-op's compact health + the ambient vean-lsp; do NOT poll this.",
+        "DEBUG/CI verb: the FULL current diagnostic set + health for a document. This is the ONE tool that returns the full set — call it deliberately for a complete report. After ordinary edits, rely on mutation consequences/alerts + the ambient vean-lsp; do NOT poll this.",
       inputSchema: { uri: z.string() },
     },
     async ({ uri }) => {

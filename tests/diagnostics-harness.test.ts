@@ -10,7 +10,8 @@
 //      engine and for EACH checker run in isolation. This is the no-false-positive
 //      gate: a checker that fires on a valid timeline is worse than no checker.
 //   2. The engine is the SHARED core — `collectDiagnostics` returns the FULL set
-//      (LSP-ready) and `summarize` derives the compact health the MCP/CLI surface.
+//      (LSP-ready) and `summarize` derives the compact health for diagnose/CLI
+//      reporting.
 //
 // (That each checker actually FIRES on a broken state — so silence isn't vacuous —
 // is proven in tests/diagnostics-checks.test.ts; this file is the silence gate.)

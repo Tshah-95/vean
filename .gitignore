@@ -5,6 +5,7 @@ bun.lockb
 # build / render outputs
 dist/
 out/
+.vean/
 
 # rendered artifacts (corpus keeps .mlt sources, never renders)
 *.mp4

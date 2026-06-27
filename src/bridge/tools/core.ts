@@ -9,25 +9,25 @@
 //
 // The MUTATING tools (`apply-op`, `preview-op`, `undo`) and the tool-output
 // discipline they enforce live in their own module, `./mutate` — kept apart
-// because the compact-health contract is the load-bearing rule and deserves a
+// because the mutation-output contract is the load-bearing rule and deserves a
 // dedicated home (and its own focused tests). They are RE-EXPORTED here so the
 // barrel + the bindings have one import surface for "the tool core".
 //
 // `diagnose` is the ONE tool allowed to return the FULL diagnostic set: it is the
 // explicit debug/CI verb, called deliberately for a complete report, NOT after
 // every edit. It lives here, with the read tools, deliberately APART from the
-// mutators in `./mutate` — the mutators return the compact delta, never the full
-// dump.
+// mutators in `./mutate` — the mutators return mutation-local facts, never a
+// standing health snapshot or the full dump.
 import { type Diagnostic, collectDiagnostics, summarize } from "../../diagnostics";
 import { fromMlt } from "../../ir/parse";
 import { toMlt } from "../../ir/serialize";
 import type { Timeline } from "../../ir/types";
 
 // ─── The mutating tools (re-exported from their dedicated module) ────────────
-// `apply-op` / `preview-op` / `undo` + the compact-health discipline live in
+// `apply-op` / `preview-op` / `undo` + the mutation-output discipline live in
 // `./mutate`; surface them here so the barrel + bindings import "the tool core"
 // from one place.
-export { editErrorDetail, healthDelta, mutate, preview, undoTool } from "./mutate";
+export { alertsDelta, editErrorDetail, mutate, preview, undoTool } from "./mutate";
 
 // ─── The read/render tools (re-exported from their dedicated module) ─────────
 // The two navigation queries (resolve-value-at-frame, find-references) and the two
@@ -52,7 +52,7 @@ export {
 /** diagnose (debug/CI tool, NOT the ambient loop): the FULL current set + health.
  *  This is the ONE tool allowed to return the full set, because it is the explicit
  *  debug verb — an agent calls it deliberately for a full report, not after every
- *  edit. The mutating tools (`./mutate`) return the compact delta instead. */
+ *  edit. The mutating tools (`./mutate`) return mutation-local facts instead. */
 export function diagnoseTool(state: Timeline): {
   health: ReturnType<typeof summarize>;
   diagnostics: Diagnostic[];

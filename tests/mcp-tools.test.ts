@@ -3,13 +3,10 @@
 // BUILD-MONITOR review lens #3, the explicit escalation trigger "tool responses
 // include full diagnostic dumps by default"):
 //
-//   • a mutating tool returns `consequences`, `inverse`, `touchedUris`, and a
-//     COMPACT `health` summary (errors/warnings counts + new/blocking details);
-//   • it does NOT return the full diagnostic set — `health` has no `diagnostics`
-//     array, and on a clean edit the detail list is empty;
-//   • a NEW defect introduced by an edit DOES appear in `health.newOrBlocking`
-//     (the agent sees the adverse effect without being told to run diagnose),
-//     while the FULL pre-existing set is never dumped;
+//   • a mutating tool returns `consequences`, `inverse`, and `touchedUris`;
+//   • it does NOT return a standing health snapshot or full diagnostic set;
+//   • a NEW error introduced by an edit appears in `alerts`, while pre-existing
+//     diagnostics stay with the ambient LSP / explicit diagnose surfaces;
 //   • the inverse round-trips (undo restores the original IR);
 //   • a precondition failure is a typed ToolError value, not a throw.
 //
@@ -19,7 +16,7 @@
 // prove every clip the seeded tasks touch ends in a clean, serializable state.
 import { describe, expect, it } from "vitest";
 import { diagnoseTool, serializeDoc } from "../src/bridge/tools/core";
-// The mutating tools come from their dedicated module (the compact-health contract
+// The mutating tools come from their dedicated module (the output contract
 // these tests gate lives there).
 import { mutate, preview } from "../src/bridge/tools/mutate";
 import { isToolError } from "../src/bridge/tools/types";
@@ -42,8 +39,8 @@ async function corpus(): Promise<Timeline> {
   return fromMlt(xml);
 }
 
-describe("apply-op (mutate) — the compact ToolResult contract", () => {
-  it("returns consequences + inverse + touchedUris + a COMPACT health (no full dump)", async () => {
+describe("apply-op (mutate) — the focused ToolResult contract", () => {
+  it("returns consequences + inverse + touchedUris, with no standing health snapshot", async () => {
     const state = await corpus();
     const { outcome, newState } = mutate(
       state,
@@ -53,17 +50,15 @@ describe("apply-op (mutate) — the compact ToolResult contract", () => {
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
 
-    // The four required fields are present.
+    // The required fields are present.
     expect(outcome.consequences).toBeDefined();
     expect(outcome.inverse).toBeDefined();
     expect(outcome.touchedUris).toEqual([URI]);
-    expect(outcome.health).toBeDefined();
 
-    // The health is COMPACT: counts + a (here empty) new/blocking list, and
-    // CRUCIALLY no `diagnostics` array (the full-set dump the contract forbids).
-    expect(outcome.health).toMatchObject({ errors: 0, warnings: 0, clean: true });
-    expect(outcome.health.newOrBlocking).toEqual([]);
-    expect(outcome.health).not.toHaveProperty("diagnostics");
+    // Clean edits do not carry a standing health object or empty alerts.
+    expect(outcome).not.toHaveProperty("health");
+    expect(outcome).not.toHaveProperty("diagnostics");
+    expect(outcome.alerts).toBeUndefined();
 
     // The edit produced a serializable state (the op's purity + serializer
     // contract — a tool never writes an unserializable timeline).
@@ -84,15 +79,14 @@ describe("apply-op (mutate) — the compact ToolResult contract", () => {
     expect(back.newState).toEqual(state);
   });
 
-  it("a BLOCKING error in the document is surfaced in health.newOrBlocking after an unrelated edit (but the FULL set is never dumped)", () => {
+  it("a pre-existing blocking error is NOT repeated after an unrelated edit", () => {
     // A document that ALREADY carries an error: a clip window past its source
     // length. (A public op refuses to CREATE this state — the edit algebra guards
     // against writing an out-of-bounds window, returning a typed EditError instead;
     // that is correct op hygiene. So we hand-build the pre-broken IR the LSP/MCP
     // might hold mid-edit, exactly as tests/diagnostics-checks.test.ts does.) An
-    // unrelated edit (gain on a DIFFERENT, audio clip) must still surface the
-    // blocking error in the compact summary — the agent sees the adverse effect
-    // ambiently, without a diagnose call.
+    // unrelated edit (gain on a DIFFERENT, audio clip) must not repeat the standing
+    // error in a mutating tool reply; the LSP/diagnose surfaces own the full health.
     const tl: Timeline = {
       profile: VERTICAL,
       tracks: {
@@ -131,22 +125,15 @@ describe("apply-op (mutate) — the compact ToolResult contract", () => {
     const { outcome } = mutate(tl, { op: "gain", args: { uuid: "snd", db: -6 } }, URI);
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
-    // The blocking error is surfaced in the compact list — the agent sees it
-    // without a diagnose call.
-    expect(outcome.health.errors).toBeGreaterThanOrEqual(1);
-    const codes = outcome.health.newOrBlocking.map((d) => d.code);
-    expect(codes).toContain("in-out-beyond-source");
-    // The compact list is SMALL (just the blocking news), not the full set — and
-    // carries no `diagnostics` full-dump field.
-    expect(outcome.health.newOrBlocking.length).toBeLessThanOrEqual(3);
-    expect(outcome.health).not.toHaveProperty("diagnostics");
+    expect(outcome.alerts).toBeUndefined();
+    expect(outcome).not.toHaveProperty("health");
+    expect(outcome).not.toHaveProperty("diagnostics");
   });
 
-  it("a pre-existing WARNING (non-blocking, untouched) is summarized in counts but NOT dumped into newOrBlocking", () => {
+  it("a pre-existing WARNING (non-blocking, untouched) is not included in alerts", () => {
     // A document with a WARNING (a keyframe animation entirely past the played
     // window → a dead-clamp warning) but no error. An unrelated edit must NOT pull
-    // that pre-existing warning into the compact detail list (it's ambient context
-    // the LSP already showed, not news) — only its COUNT is reported.
+    // that pre-existing warning into the mutating tool response.
     resetIds();
     const tl = timeline(VERTICAL, {
       video: [
@@ -168,9 +155,7 @@ describe("apply-op (mutate) — the compact ToolResult contract", () => {
     const { outcome } = mutate(tl, { op: "trimIn", args: { uuid: "other", delta: 5 } }, URI);
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
-    // The warning is COUNTED but not in the detail list (untouched + non-blocking).
-    expect(outcome.health.warnings).toBeGreaterThanOrEqual(1);
-    expect(outcome.health.newOrBlocking.map((d) => d.code)).not.toContain("keyframe-outside-clip");
+    expect(outcome.alerts).toBeUndefined();
   });
 
   it("a precondition failure is a typed ToolError value (no throw)", async () => {
@@ -192,7 +177,7 @@ describe("apply-op (mutate) — the compact ToolResult contract", () => {
 });
 
 describe("preview-op — same report, document unchanged", () => {
-  it("returns the consequences + health a hypothetical edit WOULD produce", async () => {
+  it("returns the consequences + optional alerts a hypothetical edit WOULD produce", async () => {
     const state = await corpus();
     const before = serializeDoc(state);
     const outcome = preview(state, { op: "gain", args: { uuid: "clip-5", db: -6 } }, URI);
@@ -200,6 +185,7 @@ describe("preview-op — same report, document unchanged", () => {
     if (!outcome.ok) return;
     expect(outcome.consequences).toBeDefined();
     expect(outcome.inverse).toBeDefined();
+    expect(outcome).not.toHaveProperty("health");
     // The input state is untouched (preview discards the new state).
     expect(serializeDoc(state)).toBe(before);
   });
@@ -226,7 +212,7 @@ describe("seeded editing tasks — the op→clean-state legs (render leg is move
     );
     expect(outcome.ok).toBe(true);
     if (!outcome.ok || !newState) return;
-    expect(outcome.health.clean).toBe(true);
+    expect(outcome.alerts).toBeUndefined();
     expect(outcome.consequences.clipsTrimmed.length).toBeGreaterThanOrEqual(1);
     expect(() => fromMlt(serializeDoc(newState))).not.toThrow(); // round-trips
   });
@@ -240,7 +226,7 @@ describe("seeded editing tasks — the op→clean-state legs (render leg is move
     );
     expect(outcome.ok).toBe(true);
     if (!outcome.ok || !newState) return;
-    expect(outcome.health.clean).toBe(true);
+    expect(outcome.alerts).toBeUndefined();
     expect(() => fromMlt(serializeDoc(newState))).not.toThrow();
   });
 
@@ -254,7 +240,7 @@ describe("seeded editing tasks — the op→clean-state legs (render leg is move
     const { outcome, newState } = mutate(tl, { op: "split", args: { uuid: "a", frame: 40 } }, URI);
     expect(outcome.ok).toBe(true);
     if (!outcome.ok || !newState) return;
-    expect(outcome.health.clean).toBe(true);
+    expect(outcome.alerts).toBeUndefined();
     expect(outcome.consequences.clipsAdded.length).toBe(1); // the new head half
     expect(() => fromMlt(serializeDoc(newState))).not.toThrow();
   });
@@ -278,8 +264,7 @@ describe("seeded editing tasks — the op→clean-state legs (render leg is move
     const { outcome, newState } = mutate(tl, { op: "split", args: { uuid: "a", frame: 30 } }, URI);
     expect(outcome.ok).toBe(true);
     if (!outcome.ok || !newState) return;
-    expect(outcome.health.clean).toBe(true);
-    expect(outcome.health.newOrBlocking).toEqual([]);
+    expect(outcome.alerts).toBeUndefined();
     // And it still serializes + round-trips.
     expect(() => fromMlt(serializeDoc(newState))).not.toThrow();
   });

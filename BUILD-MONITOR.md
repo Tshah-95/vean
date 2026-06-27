@@ -34,8 +34,9 @@ Challenge the work against this contract, in order:
 2. **Shared rules.** Do LSP, MCP, CLI, tests, and future UI call the same
    `src/diagnostics/` engine rather than reimplementing checks?
 3. **Tool output discipline.** Do mutation tools return consequences, inverse,
-   touched URIs, and compact health summaries without dumping full diagnostic
-   payloads every time?
+   touched URIs, and optional alerts only for newly introduced blocking errors,
+   without returning standing health snapshots or full diagnostic payloads every
+   time?
 4. **Agent ergonomics.** Can Claude see new adverse effects and their fixes
    without being instructed to run a separate diagnostic command?
 5. **Protocol fidelity.** Does the LSP surface use normal document sync,
@@ -43,7 +44,10 @@ Challenge the work against this contract, in order:
    they fit, rather than inventing a bespoke polling protocol?
 6. **Core invariants.** Frame-exact integer timing, stable clip identity,
    deterministic XML, Shotcut-openable output, no GPL linking, no stateful
-   network/DB dependencies.
+   network dependencies, and only repo-local product state in `.vean/vean.db`.
+7. **Local state hygiene.** Does any new product state go through `src/state/`
+   and Drizzle migrations, with `.vean/` gitignored, WAL enabled, and short
+   transactions? No long render/agent work inside a DB transaction.
 
 ## Escalation triggers
 
@@ -56,6 +60,8 @@ Pause and challenge the agent if any of these appear:
 - LSP diagnostics are only pull/manual, with no pushed current-set behavior.
 - An op writes an unserializable or non-invertible timeline.
 - Tests pass only by narrowing fixtures instead of preserving the contract.
+- Long-running work happens while holding a SQLite transaction or file lock.
+- `.vean/` contents are staged or treated as canonical timeline data.
 
 ## Completion criteria
 
@@ -64,7 +70,9 @@ The build is complete only when the Move 2 gates in `ROADMAP.md` pass:
 - `vean-lsp` pushes a known defect into Claude context without manual
   `diagnose`.
 - Claude fixes that defect and the pushed diagnostic set clears.
-- MCP tools return consequences, inverse, touched URIs, and compact health
-  summaries.
+- MCP tools return consequences, inverse, touched URIs, and optional alerts
+  without standing health snapshots.
 - At least two seeded editing tasks pass through op → ambient diagnostics →
   render/still review.
+- `.vean/vean.db` initializes through `bun run project:init`, doctor reports
+  state clean, and job lease smoke tests pass.

@@ -7,8 +7,8 @@
 //               is the transport-free heart (calls collectDiagnostics + the
 //               source map + the queries); `server` is the stdio binding.
 //   • tools/  — the ToolResult contract + the transport-free tool core (wraps the
-//               edit algebra, diagnostics, queries, driver; enforces the compact
-//               health discipline).
+//               edit algebra, diagnostics, queries, driver; enforces the focused
+//               mutation-output discipline).
 //   • mcp/    — vean-mcp: the DOMAIN-ACTION surface. Registers the tool set on an
 //               MCP stdio server, marshalling each call to the tool core.
 //
@@ -31,13 +31,12 @@ export { registerHandlers } from "./lsp/server";
 
 // Tools — the contract + the core.
 export {
-  type ToolHealth,
   type ToolResult,
   type ToolError,
   type ToolOutcome,
   isToolError,
 } from "./tools/types";
-// The MUTATING tools (apply-op / preview-op / undo) + the compact-health discipline.
+// The MUTATING tools (apply-op / preview-op / undo) + the mutation-output discipline.
 export { mutate, preview, undoTool } from "./tools/mutate";
 // The read / render / debug tools + the ser/de helpers. The two navigation
 // queries (resolve/refs) + the two melt inspect verbs (render/still) live in

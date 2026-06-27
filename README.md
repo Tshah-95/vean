@@ -38,8 +38,9 @@ vean is **not** a renderer, a motion-graphics engine, or a GUI. It delegates:
   (pre-rendered alpha clips for export; `@remotion/player` for live preview).
 - **UI** → a reference visualization layer built on this core (planned).
 
-It is inherently **stateless**: files in, files out. No database, no network, no
-secrets.
+The timeline core is **stateless**: files in, files out. Product coordination
+state is local-only: CLI/LSP/MCP/future UI metadata lives in gitignored
+`.vean/vean.db` and never replaces committed timeline files.
 
 ## Architecture
 
@@ -80,6 +81,54 @@ agent-editing loop by Move 2, and a UI you'd choose over Shotcut by Move 3.
 - [Bun](https://bun.sh)
 - `mlt` (provides `melt`) and `ffmpeg` — `brew install mlt ffmpeg` /
   `apt install melt ffmpeg`
+
+## Claude Code / Agent Setup
+
+This repo is also a Claude Code plugin root:
+
+- `.lsp.json` registers `vean-lsp` for `.mlt` files.
+- `.mcp.json` registers `vean-mcp` as the domain-action tool server.
+- `skills/setup/SKILL.md` points at the setup/bootstrap skill in
+  `.agents/skills/setup/SKILL.md`.
+- `skills/editing/SKILL.md` points at the canonical repo skill in
+  `.agents/skills/editing/SKILL.md`.
+
+Use it directly from this checkout:
+
+```bash
+claude --plugin-dir /Users/tejas/Github/vean
+```
+
+Verify the host-facing setup with:
+
+```bash
+bun run project:init
+bun run doctor
+```
+
+If you want the preferred CLI+LSP setup, register this checkout's `vean` binary
+first:
+
+```bash
+bun run setup:cli
+bun run doctor --surface cli-lsp
+```
+
+`claude plugin validate` currently warns that root `CLAUDE.md` is not plugin
+context; that is expected for this layout. Plugin-visible context lives in
+`skills/*`, while `CLAUDE.md` remains the normal repo/project shim.
+
+## Local State
+
+vean uses a repo-local SQLite database at `.vean/vean.db` for product/app state:
+projects, setup choices, job leases, and future UI coordination. It is ignored by
+git. The canonical timeline remains the `.mlt` document and media files.
+
+```bash
+bun run project:init
+bun src/cli.ts state status
+bun src/cli.ts jobs list
+```
 
 ## License
 

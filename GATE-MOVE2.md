@@ -3,8 +3,8 @@
 **Status: GREEN — Move 2 COMPLETE.** The agent bridge is built as a surface OVER
 the Move-0/1 shared core (it CALLS `src/diagnostics`, `src/query`, `src/ops`,
 `src/driver`; it reimplements no rule). `vean-lsp` pushes diagnostics ambiently;
-the MCP tools return the compact ToolResult; two seeded editing tasks pass
-end-to-end through op → ambient diagnostics → render → still. A cross-surface
+the MCP tools return focused mutation results with optional alerts; two seeded
+editing tasks pass end-to-end through op → ambient diagnostics → render → still. A cross-surface
 defect the bridge surfaced (split-of-a-color-clip) was fixed at root cause in the
 edit algebra and regression-tested, with the full Move-1 gate re-verified green.
 
@@ -21,8 +21,8 @@ vitest 2.1.9, Biome 1.9.4.
 |---|---|---|
 | 1 | `vean-lsp` PUSHES a known defect into the client (`publishDiagnostics`) automatically after a document change, with NO manual `diagnose` in the path | `tests/lsp-ambient.test.ts` — a `didOpen` over a **real paired JSON-RPC connection** driving the actual `registerHandlers` makes the server send `textDocument/publishDiagnostics` carrying `in-out-beyond-source`. No diagnose request exists in the test. |
 | 2 | Applying the fix clears the pushed set (empty `publishDiagnostics`) | `tests/lsp-ambient.test.ts` — a `didChange` with the corrected document publishes `diagnostics: []`. Also: the **code action** for the defect, applied, makes re-analysis return zero diagnostics. |
-| 3 | MCP tools return consequences, inverse, touched URIs, and a COMPACT health summary — verified to NOT include a full diagnostic dump; the inverse is a WORKING undo | `tests/mcp-tools.test.ts` + `bun run move2:e2e` — the ToolResult carries all four fields; `health` has counts + `newOrBlocking` only; `health` has no `diagnostics` key; a new/blocking diagnostic appears in `newOrBlocking` while an untouched pre-existing warning is counted but NOT dumped. The `inverse` is exercised as a real undo INCLUDING the persist path (apply-op → serialize/write → reparse → undo) — driven over the real MCP wire (apply-op → `undo` tool, real on-disk `.mlt`) and pinned by `mcp-tools.test.ts` Task 5. This is where the C3 trim-on-color-clip inverse defect was found and fixed (see § Defects). |
-| 4 | ≥2 seeded editing tasks pass end-to-end: op (via tool) → ambient diagnostics clean → render → still (a real frame) | `bun run move2:e2e` — Task 1 (`trimIn clip-3 +10`) and Task 2 (`gain clip-5 -6dB`) each: apply via the tool core, assert the compact ToolResult, persist, re-analyze clean, render an MP4, grab a real PNG still. OVERALL PASS 2/2. (A third file-clip split task + the color-split fix are covered in the unit suite.) |
+| 3 | MCP tools return consequences, inverse, touched URIs, and optional alerts — verified to NOT include a standing health snapshot or full diagnostic dump; the inverse is a WORKING undo | `tests/mcp-tools.test.ts` + `bun run move2:e2e` — the ToolResult carries the required mutation fields; clean edits have no `health`, no `diagnostics`, and no empty `alerts`; newly introduced blocking errors appear in `alerts`. The `inverse` is exercised as a real undo INCLUDING the persist path (apply-op → serialize/write → reparse → undo) — driven over the real MCP wire (apply-op → `undo` tool, real on-disk `.mlt`) and pinned by `mcp-tools.test.ts` Task 5. This is where the C3 trim-on-color-clip inverse defect was found and fixed (see § Defects). |
+| 4 | ≥2 seeded editing tasks pass end-to-end: op (via tool) → ambient diagnostics clean → render → still (a real frame) | `bun run move2:e2e` — Task 1 (`trimIn clip-3 +10`) and Task 2 (`gain clip-5 -6dB`) each: apply via the tool core, assert the focused ToolResult, persist, re-analyze clean, render an MP4, grab a real PNG still. OVERALL PASS 2/2. (A third file-clip split task + the color-split fix are covered in the unit suite.) |
 
 ---
 
@@ -32,14 +32,16 @@ vitest 2.1.9, Biome 1.9.4.
 |---|---|
 | `bun run typecheck` (`tsc --noEmit`) | clean |
 | `bun run lint` (`biome check .`) | **96 files**, no fixes |
-| `bun run test` (vitest) | **773 passed**, 0 skipped, **33 files** |
+| `bun run test` (vitest) | **778 passed**, 0 skipped, **35 files** |
 | `bun run lint:xml` | **12/12** XML namespace-clean (Shotcut-openable) — unchanged |
 | `bun run verify:corpus` | **10/10** faithful; every sampled frame SSIM **1.0000** — unchanged |
 | `tests/op-invariants.test.ts` | **221 passed** (18/18 public ops; +8 from the color-trim samples that lock the trim-color rebase) |
 | `bun run move2:e2e` | **OVERALL PASS — 2/2** seeded tasks op→ambient→render→still |
 | `bun run read-tools:artifact` | **OVERALL PASS** — `renderTool`/`stillTool` (the read-tool core) produce a true MP4 + PNG on disk at their reported `touchedUris`; a missing doc is a typed `ReadError`, not a throw |
 
-New test files this Move: `lsp-ambient.test.ts` (the ambient gate over the real
+New test files this Move: `doctor.test.ts` (repo/host setup doctor + Commander
+JSON smoke), `state-cli.test.ts` (`.vean/vean.db` migration/WAL + leased job
+lifecycle over the real Bun CLI), `lsp-ambient.test.ts` (the ambient gate over the real
 protocol + source-mapping + code-action + parse-error robustness),
 `lsp-navigation.test.ts` + `lsp-codeactions.test.ts` (the READ + FIX surfaces over
 the wire), `mcp-tools.test.ts` (13 — the tool-output discipline + the seeded-task
@@ -62,17 +64,18 @@ Per AGENTS.md "Agent feedback contract" + BUILD-MONITOR.md review lens:
    `collectDiagnostics` (src/diagnostics) — the ONE engine. No `src/lsp/`, no
    diagnostics in `src/bridge/`; neither exists. ✅
 3. **TOOL OUTPUT DISCIPLINE.** Mutating tools return consequences + inverse +
-   touchedUris + a compact health (counts + `newOrBlocking` only); the full set is
-   never in a mutating tool's reply (the `diagnose` tool is the one deliberate
-   exception). ✅
-4. **AGENT ERGONOMICS.** A new adverse effect shows in `newOrBlocking` and the
-   inverse is in the same reply; the full current picture arrives ambiently — no
-   "remember to run diagnose". ✅
+   touchedUris + optional `alerts` only for newly introduced blocking errors; no
+   standing health snapshot and never the full set in a mutating tool reply (the
+   `diagnose` tool is the one deliberate exception). ✅
+4. **AGENT ERGONOMICS.** Mutation facts and the inverse are in the same reply;
+   new blocking errors show in `alerts`; the full current picture arrives
+   ambiently — no "remember to run diagnose". ✅
 5. **PROTOCOL FIDELITY.** Real LSP: document sync, `publishDiagnostics`,
    references/definition/hover, code actions. No bespoke polling protocol. ✅
 6. **CORE INVARIANTS.** Frame-exact integer timing, stable uuid identity,
    deterministic Shotcut-openable XML (lint:xml 12/12, verify:corpus SSIM 1.0), no
-   GPL linking (melt/ffmpeg driven as subprocesses), no stateful network/DB. ✅
+   GPL linking (melt/ffmpeg driven as subprocesses), no network state, and product
+   coordination state confined to gitignored `.vean/vean.db`. ✅
 
 None of the escalation triggers fired: no diagnose-after-edit requirement, no
 diagnostics reimplemented in the bridge, no full-dump tool responses, no pull-only
@@ -93,14 +96,30 @@ src/bridge/
                            WorkspaceEdits over the .mlt text from a diagnostic's code+data)
   lsp/server.ts            stdio: TextDocuments sync → publishDiagnostics ambient loop;
                            binds analyze + navigation + codeActions to the JSON-RPC handlers
-  tools/types.ts           the ToolResult contract (compact health, no dump)
+  tools/types.ts           the ToolResult contract (focused output, optional alerts)
   tools/core.ts            transport-free: mutate/preview/undo/resolve/refs/diagnose
   mcp/server.ts            stdio: registers the tool set, marshals to the core
+src/cli.ts                 Commander CLI entrypoint (`vean doctor`)
+src/cli/doctor.ts          setup/host doctor: deps, skills, Claude/Codex wiring,
+                           LSP initialize, MCP tool listing, CLI PATH registration
+src/state/                 SQLite/Drizzle local state: projects, setup choices,
+                           jobs with short lease transactions
+drizzle/                   committed SQL migrations for `.vean/vean.db`
 src/ir/source-map.ts       ADDITIVE: IR-identity → .mlt text-span index
 scripts/move2-e2e.ts       the op→ambient→render→still gate (bun run move2:e2e)
-.claude/skills/editing/    the first real skill: the agent editing method
-package.json               bins: vean-lsp, vean-mcp · scripts: lsp, mcp, move2:e2e
+.agents/skills/editing/    the first real skill: the agent editing method
+.agents/skills/setup/      setup/bootstrap method for fresh clones and host wiring
+.claude/skills/editing/    compatibility symlink to the canonical skill
+.claude/skills/setup/      compatibility symlink to the canonical setup skill
+package.json               bins: vean, vean-lsp, vean-mcp · scripts: doctor, lsp,
+                           setup:cli, state:init, project:init, mcp, move2:e2e
 ```
+
+`bun run doctor --surface lsp` probes only `vean-lsp`; `--surface cli-lsp` adds
+the PATH-registered CLI check; `--surface mcp-lsp` adds the MCP server check.
+`--no-probe` is only the fast resolver/config path.
+`bun run doctor --surface cli` verifies the shell-facing `vean` command is
+registered on PATH and resolves back to this checkout.
 
 Libraries (Bun-verified): `vscode-languageserver` 10 +
 `vscode-languageserver-textdocument` for the LSP; `@modelcontextprotocol/sdk` for
@@ -217,9 +236,11 @@ persisted-undo path.
 
 ## Still open (correctly deferred — not Move-2 deliverables)
 
-- **The Claude Code plugin config** registering `vean-lsp` with diagnostics on by
-  default — editor/host configuration, not a code artifact; documented in the
-  `editing` skill. The server is a conformant LSP a host registers like any other.
+- **Host-specific LSP auto-registration outside Claude Code** — the repo-owned
+  setup is the Claude Code plugin config (`.lsp.json`, `.mcp.json`, `skills/`),
+  the `vean-lsp`/`vean-mcp` bins, the `bun run lsp`/`bun run mcp` scripts, the
+  canonical `.agents/skills/editing/SKILL.md`, and the AGENTS resolver row Codex
+  can follow.
 - **The viz layer** (Move 3) — only reads the IR + render outputs; unblocked.
 - **The I/O-injected perceptual diagnostics** (dangling FILE ref, upscaling,
   colorspace) carried over from Move 1b as finalized-signature stubs — they land
