@@ -5,10 +5,12 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const repo = join(import.meta.dirname, "..");
+const configHome = mkdtempSync(join(tmpdir(), "vean-state-config-"));
 
 function run(args: string[], cwd = repo) {
   const result = spawnSync("bun", ["src/cli.ts", ...args], {
     cwd,
+    env: { ...process.env, VEAN_CONFIG_HOME: configHome },
     encoding: "utf8",
   });
   if (result.status !== 0) {

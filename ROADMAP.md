@@ -304,41 +304,44 @@ keeping canonical edit state in `.mlt` files.
 
 ### 3A. Canonical action registry
 
-- [ ] Add `src/actions/` as the single typed runtime above `src/ops`,
+- [x] Add `src/actions/` as the single typed runtime above `src/ops`,
       `src/diagnostics`, `src/query`, `src/driver`, and `src/state`.
       `src/ops` remains the pure edit algebra; actions are product behaviors
       such as `timeline.applyOp`, `render.still`, `project.init`, and
-      `media.scan`.
-- [ ] Define `ActionDefinition<I, O>` with stable id, title, description, Zod
+      `media.scan`. <!-- Seeded with existing Move-2 timeline/render tools plus
+      setup/state/project/job actions; media actions remain future work. -->
+- [x] Define `ActionDefinition<I, O>` with stable id, title, description, Zod
       input/output schemas, required scopes, effect metadata, surface metadata,
-      and an `execute(ctx, input)` handler. Zod remains canonical; JSON Schema is
-      emitted for MCP/docs/UI tooling.
+      and an `execute(ctx, input)` handler. Zod remains canonical; JSON Schema
+      export for MCP/docs/UI tooling remains future.
 - [ ] Define `ActionContext` as dependency injection, not ambient globals:
       project resolver, document store, local state DB, media catalog, driver,
       logger, clock, id factory, cancellation signal, surface name, and policy
       decision.
-- [ ] Add `executeAction(id, input, ctx)` that validates input, resolves project
+- [x] Add `executeAction(id, input, ctx)` that validates input, resolves project
       context, applies permission/confirmation policy, opens DB connections
       briefly, executes the handler, validates output, and returns a typed
-      success/error envelope.
-- [ ] Move existing tool cores behind actions without changing behavior:
+      success/error envelope. <!-- Seed policy enforces deny/validation and
+      carries effect metadata; interactive confirmations remain future. -->
+- [x] Move existing tool cores behind actions without changing behavior:
       `apply-op`, `preview-op`, `undo`, `diagnose`, `resolve-value-at-frame`,
       `find-references`, `render`, `still`, `state init/status`, `project init`,
       and `jobs list/enqueue/claim/complete/fail`.
-- [ ] Preserve the Move-2 tool-output contract: mutating timeline actions return
+- [x] Preserve the Move-2 tool-output contract: mutating timeline actions return
       consequences, inverse, touched URIs, and only newly introduced blocking
       alerts; the full diagnostic set belongs to ambient LSP or explicit
-      `diagnose`.
+      `diagnose`. <!-- Covered by tests/cli-actions.test.ts over
+      timeline.previewOp. -->
 
 ### 3B. Permission, effect, and audit metadata
 
-- [ ] Add native vean metadata, then project it down to host-specific concepts.
+- [x] Add native vean metadata, then project it down to host-specific concepts.
       MCP annotations and app hints are not the source of truth.
-- [ ] Scopes: `timeline:read`, `timeline:write`, `media:read`,
+- [x] Scopes: `timeline:read`, `timeline:write`, `media:read`,
       `media:write`, `render:execute`, `state:read`, `state:write`,
       `jobs:read`, `jobs:write`, `fs:read`, `fs:write`, `process:execute`,
       `external:open`.
-- [ ] Effects: `kind` (`read`, `compute`, `preview`, `create`, `update`,
+- [x] Effects: `kind` (`read`, `compute`, `preview`, `create`, `update`,
       `delete`, `render`, `execute`), mutated resources, `openWorld`,
       `destructive`, `idempotency` (`pure`, `idempotent`, `non-idempotent`),
       `reversibility` (`none-needed`, `inverse-op`, `snapshot`, `manual`,
@@ -361,13 +364,15 @@ keeping canonical edit state in `.mlt` files.
 
 ### 3C. Complete Commander CLI
 
-- [ ] Keep Commander as the CLI framework. No hand-rolled argument parsing.
-- [ ] Expose every registered action through the escape hatch:
+- [x] Keep Commander as the CLI framework. No hand-rolled argument parsing.
+- [x] Expose every registered action through the escape hatch:
       `vean action list`, `vean action describe <id>`, and
       `vean action run <id> --input-json ...`.
-- [ ] Give high-frequency actions ergonomic Commander commands that still call
-      `executeAction`: `doctor`, `project`, `timeline`, `media`, `render`,
-      `jobs`, `setup`, and `config`.
+- [x] Give the seeded high-frequency actions ergonomic Commander commands that
+      still call `executeAction`: `doctor`, `project`, `timeline`, `render`,
+      `state`, and `jobs`.
+- [ ] Add ergonomic Commander commands for the next action families: `media`,
+      `setup` beyond doctor, and `config`.
 - [ ] Define global options consistently: `--project <id-or-path>`,
       `--timeline <id-or-path>`, `--repo <path>` where needed, `--json`,
       `--dry-run`, `--yes`, `--confirm <token>`, `--cwd <path>`, and
@@ -381,7 +386,7 @@ keeping canonical edit state in `.mlt` files.
 
 ### 3D. Project selection and routing
 
-- [ ] Implement a project resolver used by all surfaces. Resolution order:
+- [x] Implement a project resolver used by all surfaces. Resolution order:
       explicit `--project`, `VEAN_PROJECT`, nearest ancestor containing
       `.vean/vean.db`, then the user's active project pointer if present. The
       resolver must print/return the chosen project in JSON output so agents do
@@ -394,9 +399,10 @@ keeping canonical edit state in `.mlt` files.
       root path, active timeline, folder roles, media roots, render/output
       roots, setup choices, and user-approved import policies. Keep this
       gitignored and reproducible; never make it the canonical timeline.
-- [ ] If a persistent cross-shell active project pointer is needed, store only a
+- [x] If a persistent cross-shell active project pointer is needed, store only a
       pointer/index in OS user config (macOS Application Support / XDG config),
       not canonical project data. This is a UX locator, not source of truth.
+      <!-- Implemented as VEAN_CONFIG_HOME-aware ~/.vean/projects.json seed. -->
 - [ ] Add route resolution helpers so commands can address project resources by
       role instead of long paths: `timeline:main`, `media:raw`, `media:proxy`,
       `renders:review`, `stills:latest`, `transcripts:source`, etc.
@@ -437,7 +443,7 @@ keeping canonical edit state in `.mlt` files.
 - [ ] Keep LSP code actions diagnostic-first and narrow. They may call the
       action runtime only when the full edit is deterministic from the diagnostic
       and current document.
-- [ ] Add docs output: `vean action docs --format markdown|json` so the website,
+- [x] Add docs output: `vean action docs --format markdown|json` so the website,
       README, and future app can list supported actions without drift.
 
 ### 3G. Homebrew and developer distribution
@@ -485,6 +491,9 @@ The product UI is a local Mac app, not a web app. The website exists to download
 the app and host docs. The app uses the same action runtime, local state, and
 renderer sidecars as the CLI; it does not become a second implementation.
 
+- [x] Seed Tauri Mac app scaffold and harness without product UI decisions.
+      <!-- app/src-tauri, minimal Vite surface, sidecar manifest placeholder, and
+      `bun run app:doctor`; native build waits for Rust toolchain. -->
 - [ ] Tauri Mac app shell: project picker, current project dashboard, timeline
       read view, media browser, render/still preview, jobs/activity panel, and
       agent session panel.

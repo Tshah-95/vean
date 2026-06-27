@@ -8,6 +8,7 @@
 //   src/ops/         the edit algebra: op(state) -> {state', consequences, inverse} (Move 1)
 //   src/diagnostics/ the LSP: static checks, resolve-value-at-frame, find-references (Move 1)
 //   src/bridge/      the agent surface: CLI / MCP verbs (Move 2)
+//   src/actions/     product actions + metadata projected to CLI/MCP/LSP/Tauri (Move 3)
 
 export const VERSION = "0.0.0";
 
@@ -60,3 +61,10 @@ export * from "./driver/melt";
 // `collectDiagnostics` + the queries + the source map; the tools call the edit
 // algebra + diagnostics + driver. Namespaced so the bridge's verbs don't collide.
 export * as bridge from "./bridge";
+
+// ─── The product action runtime (Move 3) ───────────────────────────────────
+// Product behaviors are defined once here and projected to Commander CLI, MCP,
+// narrow LSP code actions, and the local Tauri app. The registry wraps the core
+// and bridge tool implementations; it does not make `.vean` canonical for
+// timeline state.
+export * as actions from "./actions";

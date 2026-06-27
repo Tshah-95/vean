@@ -3,7 +3,7 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ESNext"],
+    "lib": ["ESNext", "DOM"],
     "types": ["bun"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -18,5 +18,5 @@
       "@/*": ["src/*"]
     }
   },
-  "include": ["src", "tests", "scripts"]
+  "include": ["src", "tests", "scripts", "app/src"]
 }

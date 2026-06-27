@@ -323,6 +323,8 @@ Mostly **planned** — implemented per Move. See [ROADMAP.md](ROADMAP.md).
 | Register the CLI on PATH | `bun run setup:cli` then `bun run doctor --surface cli-lsp` | Move 2 |
 | Initialize local state | `bun run state:init` · `bun run project:init` | now |
 | Inspect local jobs | `bun src/cli.ts jobs list` | now |
+| Inspect/run action registry | `bun src/cli.ts action list` · `bun src/cli.ts action run <id> --input-json '{}'` | Move 3 |
+| Verify local app scaffold | `bun run app:doctor` | Move 4 seed |
 
 ## System deps (not bun packages)
 

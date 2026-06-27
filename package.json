@@ -21,6 +21,7 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "doctor": "bun src/cli.ts doctor",
+    "app:doctor": "bun scripts/app-doctor.ts",
     "setup:cli": "bun link",
     "state:init": "bun src/cli.ts state init",
     "project:init": "bun src/cli.ts project init",

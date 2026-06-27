@@ -141,6 +141,26 @@ bun src/cli.ts state status
 bun src/cli.ts jobs list
 ```
 
+## Action Runtime / App Scaffold
+
+The Commander CLI is now backed by the seeded action registry:
+
+```bash
+bun src/cli.ts action list
+bun src/cli.ts action describe timeline.previewOp
+bun src/cli.ts action run state.status --input-json '{}'
+```
+
+The local Mac app scaffold lives in `app/`. Verify the scaffold, Tauri config,
+capabilities, sidecar manifest, and action-registry linkage with:
+
+```bash
+bun run app:doctor
+```
+
+`app:doctor` warns if Rust/Cargo is not installed; native Tauri builds require
+that toolchain, but the scaffold harness still verifies without it.
+
 ## License
 
 [AGPL-3.0](LICENSE). Contributions are accepted under a CLA — see
