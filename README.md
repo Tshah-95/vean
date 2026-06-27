@@ -92,6 +92,7 @@ and project/media ergonomics; Move 4 is the local Mac app.
 - [Bun](https://bun.sh)
 - `mlt` (provides `melt`) and `ffmpeg` — `brew install mlt ffmpeg` /
   `apt install melt ffmpeg`
+- Rust/Cargo for native Tauri app builds — macOS: `brew install rust`
 
 ## Claude Code / Agent Setup
 
@@ -132,14 +133,29 @@ context; that is expected for this layout. Plugin-visible context lives in
 ## Local State
 
 vean uses a repo-local SQLite database at `.vean/vean.db` for product/app state:
-projects, setup choices, job leases, and future UI coordination. It is ignored by
-git. The canonical timeline remains the `.mlt` document and media files.
+projects, setup choices, job leases, media roots/catalog rows, route aliases, and
+future UI coordination. It is ignored by git. The canonical timeline remains the
+`.mlt` document and media files.
 
 ```bash
 bun run project:init
 bun src/cli.ts state status
 bun src/cli.ts jobs list
 ```
+
+The first media-routing slice is action-backed and exposed through Commander and
+MCP:
+
+```bash
+bun src/cli.ts media root add /path/to/media --role raw --json
+bun src/cli.ts media scan --json
+bun src/cli.ts media find interview --json
+bun src/cli.ts route resolve media:raw --json
+```
+
+This catalogs lightweight path/kind/size/mtime metadata only. Transcription,
+labels, proxies, waveform analysis, and model-backed inference are intentionally
+future action families.
 
 ## Action Runtime / App Scaffold
 
@@ -158,8 +174,14 @@ capabilities, sidecar manifest, and action-registry linkage with:
 bun run app:doctor
 ```
 
-`app:doctor` warns if Rust/Cargo is not installed; native Tauri builds require
-that toolchain, but the scaffold harness still verifies without it.
+Native app builds are covered by the stricter gate:
+
+```bash
+bun run app:doctor -- --native
+```
+
+That gate requires Rust/Cargo and produces the local macOS `.app` bundle. DMG
+packaging is a later distribution task, not the seed harness target.
 
 ## License
 

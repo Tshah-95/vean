@@ -298,6 +298,123 @@ renderCommand
     if (!opts.json) printJson(output);
   });
 
+const media = program.command("media").description("Manage project media catalog and roots");
+const mediaRoot = media.command("root").description("Manage media roots");
+
+mediaRoot
+  .command("add <path>")
+  .description("Register a media root")
+  .option("--role <role>", "media root role", "raw")
+  .option("--policy-json <json>", "root policy JSON", assertJson, "{}")
+  .option("--no-route", "do not create/update the default media:<role> route alias")
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(
+    async (
+      path: string,
+      opts: { role: string; policyJson: string; route?: boolean; repo?: string; json?: boolean },
+    ) => {
+      const output = await printActionOutput(
+        "media.root.add",
+        {
+          path,
+          role: opts.role,
+          policyJson: opts.policyJson,
+          setRoute: opts.route !== false,
+          repo: opts.repo,
+        },
+        opts.json,
+      );
+      if (!opts.json) printJson(output);
+    },
+  );
+
+mediaRoot
+  .command("list")
+  .description("List media roots")
+  .option("--role <role>", "filter by media root role")
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(async (opts: { role?: string; repo?: string; json?: boolean }) => {
+    const output = await printActionOutput("media.root.list", opts, opts.json);
+    if (!opts.json) printJson(output);
+  });
+
+mediaRoot
+  .command("remove <id>")
+  .description("Remove a media root and its cataloged assets")
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(async (id: string, opts: { repo?: string; json?: boolean }) => {
+    const output = await printActionOutput("media.root.remove", { ...opts, id }, opts.json);
+    if (!opts.json) printJson(output);
+  });
+
+media
+  .command("scan")
+  .description("Scan a media root and catalog lightweight metadata")
+  .option("--root-id <id>", "media root id to scan")
+  .option("--limit <n>", "maximum files to catalog", parseInteger, 1000)
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(async (opts: { rootId?: string; limit: number; repo?: string; json?: boolean }) => {
+    const output = await printActionOutput("media.scan", opts, opts.json);
+    if (!opts.json) printJson(output);
+  });
+
+media
+  .command("list")
+  .description("List cataloged media assets")
+  .option("--kind <kind>", "filter by kind: video, audio, image, timeline, unknown")
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(async (opts: { kind?: string; repo?: string; json?: boolean }) => {
+    const output = await printActionOutput("media.list", opts, opts.json);
+    if (!opts.json) printJson(output);
+  });
+
+media
+  .command("find <query>")
+  .description("Find cataloged media assets by relative path")
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(async (query: string, opts: { repo?: string; json?: boolean }) => {
+    const output = await printActionOutput("media.find", { ...opts, query }, opts.json);
+    if (!opts.json) printJson(output);
+  });
+
+const route = program.command("route").description("Manage project route aliases");
+
+route
+  .command("set <alias> <target>")
+  .description("Set a route alias")
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(async (alias: string, target: string, opts: { repo?: string; json?: boolean }) => {
+    const output = await printActionOutput("route.set", { ...opts, alias, target }, opts.json);
+    if (!opts.json) printJson(output);
+  });
+
+route
+  .command("list")
+  .description("List route aliases")
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(async (opts: { repo?: string; json?: boolean }) => {
+    const output = await printActionOutput("route.list", opts, opts.json);
+    if (!opts.json) printJson(output);
+  });
+
+route
+  .command("resolve <alias>")
+  .description("Resolve a route alias")
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(async (alias: string, opts: { repo?: string; json?: boolean }) => {
+    const output = await printActionOutput("route.resolve", { ...opts, alias }, opts.json);
+    if (!opts.json) printJson(output);
+  });
+
 const state = program.command("state").description("Manage repo-local vean state in .vean/");
 
 state

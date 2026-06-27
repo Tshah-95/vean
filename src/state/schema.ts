@@ -64,3 +64,74 @@ export const jobs = sqliteTable(
     lockIdx: index("jobs_lock_idx").on(table.lockedUntil, table.lockedBy),
   }),
 );
+
+export const mediaRoots = sqliteTable(
+  "media_roots",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    role: text("role").notNull().default("raw"),
+    path: text("path").notNull(),
+    policyJson: text("policy_json").notNull().default("{}"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    projectRolePathUnique: uniqueIndex("media_roots_project_role_path_unique").on(
+      table.projectId,
+      table.role,
+      table.path,
+    ),
+  }),
+);
+
+export const mediaAssets = sqliteTable(
+  "media_assets",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    rootId: text("root_id")
+      .notNull()
+      .references(() => mediaRoots.id, { onDelete: "cascade" }),
+    path: text("path").notNull(),
+    relativePath: text("relative_path").notNull(),
+    kind: text("kind").notNull().default("unknown"),
+    sizeBytes: integer("size_bytes"),
+    mtimeMs: integer("mtime_ms"),
+    labelsJson: text("labels_json").notNull().default("[]"),
+    probeJson: text("probe_json").notNull().default("{}"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    projectPathUnique: uniqueIndex("media_assets_project_path_unique").on(
+      table.projectId,
+      table.path,
+    ),
+    projectKindIdx: index("media_assets_project_kind_idx").on(table.projectId, table.kind),
+  }),
+);
+
+export const routeAliases = sqliteTable(
+  "route_aliases",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    alias: text("alias").notNull(),
+    target: text("target").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    projectAliasUnique: uniqueIndex("route_aliases_project_alias_unique").on(
+      table.projectId,
+      table.alias,
+    ),
+  }),
+);

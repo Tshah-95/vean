@@ -315,6 +315,169 @@ const actions = [
     },
   }),
   action({
+    id: "media.root.add",
+    title: "Add Media Root",
+    description: "Register a project media root with a role and lightweight policy.",
+    input: z.object({
+      repo: z.string().optional(),
+      role: z.string().default("raw"),
+      path: z.string(),
+      policyJson: jsonString,
+      setRoute: z.boolean().default(true),
+    }),
+    output: z.unknown(),
+    scopes: ["media:write", "state:write"],
+    effect: baseEffects.stateWrite,
+    surfaces: { cli: { command: "media root add" }, mcp: { name: "media-root-add" } },
+    async execute(ctx, input) {
+      const { addMediaRoot, defaultRouteAliasForRoot, setRouteAlias } = await import(
+        "../state/media"
+      );
+      const repo = input.repo ?? ctx.project?.rootPath ?? ctx.cwd;
+      const root = addMediaRoot(repo, input);
+      const route = input.setRoute
+        ? setRouteAlias(repo, defaultRouteAliasForRoot(root), root.path)
+        : null;
+      return { root, route };
+    },
+  }),
+  action({
+    id: "media.root.list",
+    title: "List Media Roots",
+    description: "List registered media roots for the current project.",
+    input: z.object({ repo: z.string().optional(), role: z.string().optional() }),
+    output: z.unknown(),
+    scopes: ["media:read", "state:read"],
+    effect: baseEffects.stateRead,
+    surfaces: { cli: { command: "media root list" }, mcp: { name: "media-root-list" } },
+    async execute(ctx, input) {
+      const { listMediaRoots } = await import("../state/media");
+      return listMediaRoots(input.repo ?? ctx.project?.rootPath ?? ctx.cwd, input.role);
+    },
+  }),
+  action({
+    id: "media.root.remove",
+    title: "Remove Media Root",
+    description: "Remove a media root and its cataloged assets from the project.",
+    input: z.object({ repo: z.string().optional(), id: z.string() }),
+    output: z.unknown(),
+    scopes: ["media:write", "state:write"],
+    effect: {
+      ...baseEffects.stateWrite,
+      destructive: true,
+      reversibility: "manual",
+      approval: "ask-strong",
+    },
+    surfaces: { cli: { command: "media root remove" }, mcp: { name: "media-root-remove" } },
+    async execute(ctx, input) {
+      const { removeMediaRoot } = await import("../state/media");
+      return removeMediaRoot(input.repo ?? ctx.project?.rootPath ?? ctx.cwd, input.id) ?? null;
+    },
+  }),
+  action({
+    id: "media.scan",
+    title: "Scan Media Root",
+    description: "Scan a media root and catalog lightweight file metadata.",
+    input: z.object({
+      repo: z.string().optional(),
+      rootId: z.string().optional(),
+      limit: z.number().int().positive().default(1000),
+    }),
+    output: z.unknown(),
+    scopes: ["media:write", "state:write", "fs:read"],
+    effect: {
+      kind: "update",
+      mutates: ["projectState"],
+      openWorld: false,
+      destructive: false,
+      idempotency: "idempotent",
+      reversibility: "snapshot",
+      dryRun: "none",
+      approval: "ask",
+      audit: "metadata",
+      job: { mode: "inline", cancellable: true, retrySafe: true },
+    },
+    surfaces: { cli: { command: "media scan" }, mcp: { name: "media-scan" } },
+    async execute(ctx, input) {
+      const { scanMediaRoot } = await import("../state/media");
+      return scanMediaRoot(input.repo ?? ctx.project?.rootPath ?? ctx.cwd, input);
+    },
+  }),
+  action({
+    id: "media.list",
+    title: "List Media Assets",
+    description: "List cataloged media assets for the current project.",
+    input: z.object({ repo: z.string().optional(), kind: z.string().optional() }),
+    output: z.unknown(),
+    scopes: ["media:read", "state:read"],
+    effect: baseEffects.stateRead,
+    surfaces: { cli: { command: "media list" }, mcp: { name: "media-list" } },
+    async execute(ctx, input) {
+      const { listMediaAssets } = await import("../state/media");
+      return listMediaAssets(input.repo ?? ctx.project?.rootPath ?? ctx.cwd, input.kind);
+    },
+  }),
+  action({
+    id: "media.find",
+    title: "Find Media Assets",
+    description: "Find cataloged media assets by relative-path substring.",
+    input: z.object({ repo: z.string().optional(), query: z.string() }),
+    output: z.unknown(),
+    scopes: ["media:read", "state:read"],
+    effect: baseEffects.stateRead,
+    surfaces: { cli: { command: "media find" }, mcp: { name: "media-find" } },
+    async execute(ctx, input) {
+      const { findMediaAssets } = await import("../state/media");
+      return findMediaAssets(input.repo ?? ctx.project?.rootPath ?? ctx.cwd, input.query);
+    },
+  }),
+  action({
+    id: "route.set",
+    title: "Set Route Alias",
+    description: "Set a project route alias such as media:raw or renders:review.",
+    input: z.object({ repo: z.string().optional(), alias: z.string(), target: z.string() }),
+    output: z.unknown(),
+    scopes: ["state:write"],
+    effect: baseEffects.stateWrite,
+    surfaces: { cli: { command: "route set" }, mcp: { name: "route-set" } },
+    async execute(ctx, input) {
+      const { setRouteAlias } = await import("../state/media");
+      return setRouteAlias(
+        input.repo ?? ctx.project?.rootPath ?? ctx.cwd,
+        input.alias,
+        input.target,
+      );
+    },
+  }),
+  action({
+    id: "route.list",
+    title: "List Route Aliases",
+    description: "List project route aliases.",
+    input: repoInput,
+    output: z.unknown(),
+    scopes: ["state:read"],
+    effect: baseEffects.stateRead,
+    surfaces: { cli: { command: "route list" }, mcp: { name: "route-list" } },
+    async execute(ctx, input) {
+      const { listRouteAliases } = await import("../state/media");
+      return listRouteAliases(input.repo ?? ctx.project?.rootPath ?? ctx.cwd);
+    },
+  }),
+  action({
+    id: "route.resolve",
+    title: "Resolve Route Alias",
+    description: "Resolve a project route alias to its target.",
+    input: z.object({ repo: z.string().optional(), alias: z.string() }),
+    output: z.unknown(),
+    scopes: ["state:read"],
+    effect: baseEffects.stateRead,
+    surfaces: { cli: { command: "route resolve" }, mcp: { name: "route-resolve" } },
+    async execute(ctx, input) {
+      const { resolveRouteAlias } = await import("../state/media");
+      return resolveRouteAlias(input.repo ?? ctx.project?.rootPath ?? ctx.cwd, input.alias) ?? null;
+    },
+  }),
+  action({
     id: "setup.doctor",
     title: "Doctor",
     description: "Verify local dependencies, agent integrations, and stdio servers.",

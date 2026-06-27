@@ -46,6 +46,12 @@ making preference-dependent changes. Otherwise ask the same questions plainly.
 - **Local state**: initialize repo-local `.vean/vean.db` now? Default yes; it is
   gitignored and holds setup choices, jobs, project metadata, and future UI
   coordination state.
+- **Native Mac app**: verify scaffold only, or also build the native `.app`?
+  Native build requires Rust/Cargo and takes longer; scaffold verification is
+  enough unless the user is working on the app.
+- **Media routing**: register a media root now? Default no unless the user
+  names a folder. If yes, prefer role `raw` first and let the setup flow create
+  the `media:raw` route alias.
 
 Default choices when the user does not answer and continuing is safe:
 
@@ -62,6 +68,12 @@ Default choices when the user does not answer and continuing is safe:
   Drizzle migrations, and register the repo root in the `projects` table. Use
   `bun src/cli.ts state status` to inspect without mutating. `.vean/` must stay
   gitignored.
+- **Media routing**: after local state exists, add a media root with
+  `bun src/cli.ts media root add <path> --role raw --json`, scan it with
+  `bun src/cli.ts media scan --json`, and verify the generated route with
+  `bun src/cli.ts route resolve media:raw --json`. This only catalogs
+  lightweight path/kind/size/mtime metadata; transcription, labels, proxies,
+  and model-backed inference are later action families.
 - **LSP only**: verify with `bun run doctor --surface lsp`. This starts
   `vean-lsp` unless `--no-probe` is passed. This is the safe first-pass check
   before CLI PATH registration.
@@ -92,6 +104,9 @@ Default choices when the user does not answer and continuing is safe:
   stdio servers.
 - **Shared skills**: `.agents/skills/*` is the repo-local source of truth.
   `.claude/skills/*` and `skills/*` should be symlinks back to `.agents/skills/*`.
+- **Native Mac app**: `bun run app:doctor` verifies the scaffold. If Rust/Cargo
+  is installed and the user wants the app build gate, run
+  `bun run app:doctor -- --native`; it builds the local macOS `.app` bundle.
 
 ## CLI provenance
 
@@ -134,4 +149,10 @@ Render-capable machines should also pass:
 
 ```bash
 bun run move2:e2e
+```
+
+Native-app machines should also pass:
+
+```bash
+bun run app:doctor -- --native
 ```

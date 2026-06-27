@@ -45,7 +45,7 @@ describe("vean local state CLI", () => {
       busyTimeoutMs?: number;
     }>(["state", "init", "--repo", target, "--json"]);
     expect(after.exists).toBe(true);
-    expect(after.migrationsApplied).toBe(1);
+    expect(after.migrationsApplied).toBe(2);
     expect(after.journalMode).toBe("wal");
     expect(after.busyTimeoutMs).toBe(5000);
   });

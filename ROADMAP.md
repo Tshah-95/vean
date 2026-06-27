@@ -9,9 +9,10 @@ The shape of the whole thing: **Moves 0–2 are the headless spine** (well-speci
 mostly agent-buildable — the answer key is Shotcut's source + the MLT clone).
 **Move 3 is the product runtime spine**: one typed action registry, a complete
 Commander CLI, project/media ergonomics, and shared permission/effect metadata
-that all surfaces consume. **Move 4 is the local Mac app**: Tauri, bundled media
-sidecars, project UI, and the same action runtime behind every button. **Move 5**
-unifies Remotion as a producer. **Move 6+** is the parallelizable breadth.
+that all surfaces consume. Its contract lives in [DESIGN-MOVE3.md](DESIGN-MOVE3.md).
+**Move 4 is the local Mac app**: Tauri, bundled media sidecars, project UI, and
+the same action runtime behind every button. **Move 5** unifies Remotion as a
+producer. **Move 6+** is the parallelizable breadth.
 
 ---
 
@@ -309,7 +310,7 @@ keeping canonical edit state in `.mlt` files.
       `src/ops` remains the pure edit algebra; actions are product behaviors
       such as `timeline.applyOp`, `render.still`, `project.init`, and
       `media.scan`. <!-- Seeded with existing Move-2 timeline/render tools plus
-      setup/state/project/job actions; media actions remain future work. -->
+      setup/state/project/job/media/route actions. -->
 - [x] Define `ActionDefinition<I, O>` with stable id, title, description, Zod
       input/output schemas, required scopes, effect metadata, surface metadata,
       and an `execute(ctx, input)` handler. Zod remains canonical; JSON Schema
@@ -371,8 +372,12 @@ keeping canonical edit state in `.mlt` files.
 - [x] Give the seeded high-frequency actions ergonomic Commander commands that
       still call `executeAction`: `doctor`, `project`, `timeline`, `render`,
       `state`, and `jobs`.
-- [ ] Add ergonomic Commander commands for the next action families: `media`,
-      `setup` beyond doctor, and `config`.
+- [x] Add ergonomic Commander commands for `media` and `route` actions.
+      <!-- `vean media root add/list/remove`, `vean media scan/list/find`, and
+      `vean route set/list/resolve` all call `executeAction`; setup beyond doctor
+      and config remain future work. -->
+- [ ] Add ergonomic Commander commands for the next action families:
+      `setup` beyond doctor and `config`.
 - [ ] Define global options consistently: `--project <id-or-path>`,
       `--timeline <id-or-path>`, `--repo <path>` where needed, `--json`,
       `--dry-run`, `--yes`, `--confirm <token>`, `--cwd <path>`, and
@@ -403,27 +408,35 @@ keeping canonical edit state in `.mlt` files.
       pointer/index in OS user config (macOS Application Support / XDG config),
       not canonical project data. This is a UX locator, not source of truth.
       <!-- Implemented as VEAN_CONFIG_HOME-aware ~/.vean/projects.json seed. -->
-- [ ] Add route resolution helpers so commands can address project resources by
+- [x] Add route resolution helpers so commands can address project resources by
       role instead of long paths: `timeline:main`, `media:raw`, `media:proxy`,
       `renders:review`, `stills:latest`, `transcripts:source`, etc.
+      <!-- Initial route table/actions landed for arbitrary aliases plus
+      automatic `media:<role>` aliases when adding media roots. Timeline/render/
+      still/transcript route families are the next consumers. -->
 - [ ] Make every path-bearing action report resolved paths and touched URIs.
       Agents should never have to infer where a render, still, transcript, proxy,
       or imported asset landed.
 
 ### 3E. Media catalog and local asset ergonomics
 
-- [ ] Add project-local media roots with policies: link, copy, proxy, ignore,
+- [x] Add project-local media roots with policies: link, copy, proxy, ignore,
       transcribe, label, and watch. Start Mac-only.
-- [ ] Add media commands:
-      `vean media root add/list/remove`, `vean media scan`, `vean media add`,
-      `vean media list`, `vean media find`, `vean media probe`,
-      `vean media label`, and `vean media transcribe` (stub or job-backed until
-      transcription lands).
-- [ ] Track media catalog rows in `.vean/vean.db`: stable media id, path,
-      content hash or fingerprint when available, size/mtime, duration, fps,
-      resolution, audio streams, labels, transcript status, proxy status, and
-      last probe result. This is cache/coordination state; the files remain the
-      source.
+      <!-- Landed as `media_roots.policy_json`, with policy carried as metadata
+      but not yet interpreted by import/proxy/transcription jobs. -->
+- [x] Add media commands:
+      `vean media root add/list/remove`, `vean media scan`, `vean media list`,
+      and `vean media find`.
+- [ ] Add media commands for the next tier:
+      `vean media add`, `vean media probe`, `vean media label`, and
+      `vean media transcribe` (stub or job-backed until transcription lands).
+- [x] Track initial media catalog rows in `.vean/vean.db`: stable media id,
+      root id, path, relative path, extension-derived kind, size, mtime, labels
+      JSON placeholder, probe JSON placeholder, and timestamps.
+- [ ] Expand media catalog rows with content hash/fingerprint when available,
+      duration, fps, resolution, audio streams, transcript status, proxy status,
+      and last probe result. This is cache/coordination state; the files remain
+      the source.
 - [ ] Use jobs for slow work: probing large folders, proxy generation,
       transcription, waveform analysis, render/export, and agent sessions. Job
       claims stay short transactions; subprocess work happens outside DB locks.
@@ -434,9 +447,12 @@ keeping canonical edit state in `.mlt` files.
 
 ### 3F. Surface adapters
 
-- [ ] Generate MCP tool registration from the registry first, with explicit
+- [x] Generate MCP tool registration from the registry first, with explicit
       opt-in/opt-out per action. MCP remains a domain-action adapter, not the
       policy source and not the ambient diagnostics source.
+      <!-- `src/bridge/mcp/server.ts` now loops action descriptors with MCP
+      metadata and registers tools from the canonical Zod-backed action inputs.
+      `bun run doctor --surface mcp-lsp` starts the server and lists 17 tools. -->
 - [ ] Generate Tauri invoke-command descriptors/capability inputs from action
       metadata for the Move-4 app. The app may add presentation-specific code,
       but not duplicate domain logic.
@@ -492,8 +508,10 @@ the app and host docs. The app uses the same action runtime, local state, and
 renderer sidecars as the CLI; it does not become a second implementation.
 
 - [x] Seed Tauri Mac app scaffold and harness without product UI decisions.
-      <!-- app/src-tauri, minimal Vite surface, sidecar manifest placeholder, and
-      `bun run app:doctor`; native build waits for Rust toolchain. -->
+      <!-- app/src-tauri, minimal Vite surface, sidecar manifest placeholder,
+      `bun run app:doctor`, `bun run app:doctor -- --native`, and a verified
+      macOS `.app` bundle target. DMG packaging remains later because the current
+      seed gate only needs a bootable app artifact, not installer distribution. -->
 - [ ] Tauri Mac app shell: project picker, current project dashboard, timeline
       read view, media browser, render/still preview, jobs/activity panel, and
       agent session panel.

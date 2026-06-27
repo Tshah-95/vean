@@ -120,6 +120,29 @@ real workflows such as `timeline.applyOp`, `render.still`, `project.init`,
   enforced before execution and projected to CLI confirmations, MCP hints, and
   Tauri capabilities.
 
+`DESIGN-MOVE3.md` is the detailed contract for action/runtime/media routing.
+When adding a product action, update the registry, add/confirm CLI and MCP
+projection, add a stable JSON test, and keep the app path as an adapter over the
+same action id.
+
+## Media routing contract
+
+Media ergonomics are first-party, but inference-heavy media intelligence is not
+first-party until the product/install/privacy shape is decided.
+
+- **First-party now:** media roots, route aliases, lightweight scans,
+  path/kind/size/mtime catalog rows, CLI/MCP list/find, and touched-path output.
+- **Route addresses:** prefer aliases such as `media:raw`, `media:proxy`,
+  `timeline:main`, `renders:review`, `stills:latest`, and
+  `transcripts:source` over repeated absolute paths once a project is selected.
+- **State boundary:** `.vean/vean.db` is cache/coordination state only. Media
+  files, `.mlt` timelines, renders, transcripts, and other deliverables remain
+  files on disk.
+- **Deferred action families:** transcription, semantic labels, embeddings,
+  scene/object/face inference, waveform analysis, proxy generation, and
+  filesystem watching. Add them later as registry actions backed by short job
+  leases, not as bespoke scripts or app-only flows.
+
 The payoff of the split: **human gestures and agent actions become the same
 operations** — both call the edit algebra, both get undo, and both update the
 same document that `vean-lsp` watches. That unification is only possible because
@@ -266,8 +289,8 @@ parallel session safety rules above, never reverts unrelated work, and never use
 | initialize repo-local product state | `setup` (`.agents/skills/setup/SKILL.md`) | `.vean/vean.db`, Drizzle migrations, `src/state/`, `drizzle/` |
 | edit a timeline as an agent (apply an op, fix a diagnostic, tighten a cut) | `editing` (`.agents/skills/editing/SKILL.md`) | a `.mlt` doc via the bridge tools (`apply-op`/`preview-op`/`undo`/`render`/`still`) |
 | parallelize research, review, implementation, or verification | _(none — PM thread delegates directly)_ | fresh agent threads; disjoint code scopes; PM integrates + verifies |
-| add or expose a product action | _(none yet — Move 3)_ | `src/actions/`, CLI/MCP/LSP/Tauri adapters, tests |
-| improve project/media ergonomics | _(none yet — Move 3)_ | `src/actions/`, `src/state/`, Commander CLI, media catalog migrations |
+| add or expose a product action | _(none yet — see DESIGN-MOVE3)_ | `src/actions/`, CLI/MCP/LSP/Tauri adapters, tests |
+| improve project/media ergonomics | _(none yet — see DESIGN-MOVE3)_ | `src/actions/`, `src/state/`, Commander CLI, media catalog migrations |
 | build the local Mac app | _(none yet — Move 4)_ | `app/` (Tauri), action IPC, bundled renderer sidecars |
 
 ### Keeping the resolver healthy
@@ -324,10 +347,13 @@ Mostly **planned** — implemented per Move. See [ROADMAP.md](ROADMAP.md).
 | Initialize local state | `bun run state:init` · `bun run project:init` | now |
 | Inspect local jobs | `bun src/cli.ts jobs list` | now |
 | Inspect/run action registry | `bun src/cli.ts action list` · `bun src/cli.ts action run <id> --input-json '{}'` | Move 3 |
-| Verify local app scaffold | `bun run app:doctor` | Move 4 seed |
+| Add/scan/find media | `bun src/cli.ts media root add <path>` · `bun src/cli.ts media scan` · `bun src/cli.ts media find <query>` | Move 3 |
+| Resolve a route alias | `bun src/cli.ts route resolve media:raw` | Move 3 |
+| Verify local app scaffold | `bun run app:doctor` · `bun run app:doctor -- --native` | Move 4 seed |
 
 ## System deps (not bun packages)
 
 `mlt` (provides `melt`) and `ffmpeg`. Mac: `brew install mlt ffmpeg`. Linux:
-`apt install melt ffmpeg`. Optional, for the Remotion producer: a Node/Bun
+`apt install melt ffmpeg`. Native Tauri app builds also need Rust/Cargo
+(`brew install rust` on macOS). Optional, for the Remotion producer: a Node/Bun
 Remotion install (peer, user-provided).

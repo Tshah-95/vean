@@ -32,7 +32,27 @@ function commandExists(command: string): boolean {
   return result.status === 0 && result.stdout.trim().length > 0;
 }
 
-function appChecks(): Check[] {
+function nativeBuildCheck(): Check {
+  const result = spawnSync("bun", ["run", "tauri:build"], {
+    cwd: appRoot,
+    encoding: "utf8",
+    timeout: 120_000,
+  });
+  if (result.status === 0) {
+    return check("native:build", "pass", "Tauri native app build completed");
+  }
+  return check(
+    "native:build",
+    "fail",
+    (result.stderr || result.stdout || "native build failed")
+      .trim()
+      .split("\n")
+      .slice(-6)
+      .join("\n"),
+  );
+}
+
+function appChecks(options: { native?: boolean } = {}): Check[] {
   const checks: Check[] = [];
 
   const packagePath = join(appRoot, "package.json");
@@ -67,7 +87,7 @@ function appChecks(): Check[] {
     checks.push(
       check(
         "tauri:config",
-        config.identifier === "studio.vean.app" &&
+        config.identifier === "studio.vean.desktop" &&
           config.app?.windows?.some((window) => window.label === "main")
           ? "pass"
           : "fail",
@@ -77,14 +97,23 @@ function appChecks(): Check[] {
     checks.push(
       check(
         "tauri:bundle",
-        config.bundle?.targets?.includes("dmg") &&
+        config.bundle?.targets?.includes("app") &&
           config.bundle?.resources?.includes("sidecars/README.md")
           ? "pass"
           : "fail",
-        "Tauri bundle is Mac-first and carries sidecar manifest resources",
+        "Tauri bundle builds a Mac app and carries sidecar manifest resources",
       ),
     );
   }
+
+  const iconPath = join(appRoot, "src-tauri", "icons", "icon.png");
+  checks.push(
+    check(
+      "tauri:icon",
+      existsSync(iconPath) ? "pass" : "fail",
+      existsSync(iconPath) ? "RGBA app icon exists" : "src-tauri/icons/icon.png is missing",
+    ),
+  );
 
   const capabilityPath = join(appRoot, "src-tauri", "capabilities", "default.json");
   if (!existsSync(capabilityPath)) {
@@ -136,6 +165,10 @@ function appChecks(): Check[] {
     ),
   );
 
+  if (options.native) {
+    checks.push(nativeBuildCheck());
+  }
+
   return checks;
 }
 
@@ -147,7 +180,8 @@ function format(report: Report): string {
 
 const json = process.argv.includes("--json");
 const strict = process.argv.includes("--strict");
-const checks = appChecks();
+const native = process.argv.includes("--native");
+const checks = appChecks({ native });
 const ok =
   checks.every((item) => item.status !== "fail") &&
   (!strict || checks.every((item) => item.status === "pass"));

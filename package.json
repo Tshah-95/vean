@@ -22,6 +22,7 @@
     "format": "biome format --write .",
     "doctor": "bun src/cli.ts doctor",
     "app:doctor": "bun scripts/app-doctor.ts",
+    "app:build": "cd app && bun run tauri:build",
     "setup:cli": "bun link",
     "state:init": "bun src/cli.ts state init",
     "project:init": "bun src/cli.ts project init",
