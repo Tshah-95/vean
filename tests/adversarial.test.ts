@@ -110,8 +110,14 @@ describe("keyframes: percent values", () => {
 
   it("a rect opacity may be a percent (only the opacity slot)", () => {
     expect(kfRound("0=0 0 100 100 50%")).toBe("0=0 0 100 100 50%");
-    // A percent in a non-opacity rect slot is NOT a valid MLT rect → rejected.
-    expect(() => parseAnim("0=0 0 100% 100 1")).toThrow(/malformed rect component/);
+    // A percent in a non-opacity rect slot is NOT a valid MLT rect; rather than
+    // THROW (Move-0's behavior — a latent crash on a legal-but-exotic property),
+    // the value is now carried VERBATIM as an opaque token and round-trips
+    // byte-faithfully (DESIGN-MOVE1.md §4 gaps 2+3: the KeyframeValue union is
+    // total, so no op/query can crash on it).
+    const m = parseAnim("0=0 0 100% 100 1");
+    expect(m.keyframes[0]?.value.type).toBe("opaque");
+    expect(kfRound("0=0 0 100% 100 1")).toBe("0=0 0 100% 100 1");
   });
 });
 

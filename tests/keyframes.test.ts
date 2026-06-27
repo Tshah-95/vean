@@ -3,6 +3,7 @@ import {
   type ColorValue,
   type Keyframes,
   type NumberValue,
+  type OpaqueValue,
   type RectValue,
   isAnimated,
   parseAnim,
@@ -136,11 +137,17 @@ describe("times: integer, negative/relative, and timecode", () => {
     expect(m.keyframes[0]?.frame).toBe(38);
   });
 
-  it("HH:MM:SS:FF timecode parses to a frame (normalizes to .mmm on serialize)", () => {
-    // 00:00:01:12 at 25fps = 25 + 12 = 37 frames = 1.480s.
+  it("HH:MM:SS:FF timecode parses to a frame and ROUND-TRIPS its :FF spelling (gap 1)", () => {
+    // 00:00:01:12 at 25fps = 25 + 12 = 37 frames = 1.480s. The `:ff` sub-form is
+    // recorded so serialize re-emits `:FF` byte-identically (not the lossy `.mmm`).
     const m = parseAnim("00:00:01:12=100", { fps: [25, 1] });
     expect(m.keyframes[0]?.frame).toBe(37);
-    expect(serializeAnim(m, { fps: [25, 1] })).toBe("00:00:01.480=100");
+    expect(m.keyframes[0]?.timecodeSubform).toBe(":ff");
+    expect(serializeAnim(m, { fps: [25, 1] })).toBe("00:00:01:12=100");
+    // The .mmm sub-form still round-trips its own spelling.
+    expect(parseAnim("00:00:01.520=100", { fps: [25, 1] }).keyframes[0]?.timecodeSubform).toBe(
+      ".mmm",
+    );
   });
 
   it("rational fps (29.97 = [30000,1001]) rounds to 30 for SS:FF math", () => {
@@ -251,6 +258,57 @@ describe("frame re-basing (serialize subtracts opts.in; parse adds it)", () => {
     const s = "0=0;-1=1";
     // Even with a non-zero in, the relative frame is untouched.
     expect(serializeAnim(parseAnim(s, { in: 20 }), { in: 20 })).toBe(s);
+  });
+});
+
+// The 5 low/latent keyframe-engine gaps Move 0's GATE deferred to Move 1, now
+// resolved per DESIGN-MOVE1.md §4. resolveValueAtFrame (src/query/resolve.ts) is
+// their real consumer; these golden round-trips lock the contract.
+describe("Move-1b: the 5 resolved keyframe-engine gaps", () => {
+  it("gap 1+4: a frame-aligned :FF timecode round-trips its :FF spelling losslessly", () => {
+    // Frame-exact: no millisecond rounding can drift it (the gap-4 family).
+    golden("00:00:02:00=1", { fps: [25, 1] });
+    golden("00:00:01:12=100;00:00:02:00=0", { fps: [25, 1] });
+    // A rational fps rounds to whole frames for the :FF math (29.97 → 30).
+    golden("00:00:02:00=1", { fps: [30000, 1001] });
+  });
+
+  it("gap 2: an empty value (`0=`) round-trips empty — it does NOT fabricate a 0", () => {
+    const m = golden("0=");
+    expect(m.keyframes[0]?.value.type).toBe("opaque");
+    expect((m.keyframes[0]?.value as OpaqueValue).raw).toBe("");
+    // The whole-string empty case (no `=`) stays a no-keyframe static (unchanged).
+    expect(parseAnim("").keyframes).toHaveLength(0);
+  });
+
+  it("gap 3: a text value (`0=normal`) parses to opaque and round-trips, never throws", () => {
+    const m = golden("0=normal");
+    expect(m.keyframes[0]?.value.type).toBe("opaque");
+    expect((m.keyframes[0]?.value as OpaqueValue).raw).toBe("normal");
+    // A mixed animation of text + numeric values is total — no throw.
+    const mixed = parseAnim("0=normal;30=1.5");
+    expect(mixed.keyframes[0]?.value.type).toBe("opaque");
+    expect((mixed.keyframes[1]?.value as NumberValue).value).toBe(1.5);
+  });
+
+  it("gap 3: a quoted value containing ';' or '=' round-trips quoted (no throw)", () => {
+    // serializeAnim re-quotes an opaque whose raw carries a ';' or '=' so the
+    // tokenizer recovers it as ONE item/value.
+    expect(serializeAnim(parseAnim('0="a;b"'))).toBe('0="a;b"');
+    expect(serializeAnim(parseAnim('0="x=y"'))).toBe('0="x=y"');
+    const m = parseAnim('0="a;b"');
+    expect((m.keyframes[0]?.value as OpaqueValue).raw).toBe("a;b");
+  });
+
+  it("gap 5: a genuine edge-anchored 2-keyframe ramp is NOT mistaken for a fade", () => {
+    // The keyframe ENGINE keeps a real `0=0;N=1` brightness ramp as a literal
+    // number animation; fade detection is name-keyed at the FILTER layer
+    // (src/ops/primitives.ts isFadeIn/isFadeOut), never on the keyframe shape.
+    const m = golden("0=0;59=1");
+    expect(m.static).toBe(false);
+    expect(m.keyframes).toHaveLength(2);
+    expect((m.keyframes[0]?.value as NumberValue).value).toBe(0);
+    expect((m.keyframes[1]?.value as NumberValue).value).toBe(1);
   });
 });
 

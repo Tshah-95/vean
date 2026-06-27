@@ -64,7 +64,7 @@ const GOLDEN = `<?xml version="1.0" encoding="utf-8"?>
     <property name="length">25</property>
     <property name="mlt_service">color</property>
     <property name="resource">#FF000000</property>
-    <property name="shotcut:uuid">{vean-producer0}</property>
+    <property name="shotcut:uuid">clip-0</property>
     <filter mlt_service="brightness">
       <property name="shotcut:filter">fadeInBrightness</property>
       <property name="level">0=0;11=1</property>
@@ -74,27 +74,27 @@ const GOLDEN = `<?xml version="1.0" encoding="utf-8"?>
     <property name="length">45</property>
     <property name="mlt_service">color</property>
     <property name="resource">#FF000000</property>
-    <property name="shotcut:uuid">{vean-producer1}</property>
+    <property name="shotcut:uuid">clip-0</property>
   </producer>
   <producer id="producer2" in="0" out="19">
     <property name="length">60</property>
     <property name="mlt_service">color</property>
     <property name="resource">#FFFFD700</property>
-    <property name="shotcut:uuid">{vean-producer2}</property>
+    <property name="shotcut:uuid">clip-1</property>
   </producer>
   <producer id="producer3" in="0" out="39">
     <property name="length">40</property>
     <property name="mlt_service">color</property>
     <property name="resource">#FFFFD700</property>
-    <property name="shotcut:uuid">{vean-producer3}</property>
+    <property name="shotcut:uuid">clip-1</property>
   </producer>
   <producer id="producer4" in="20" out="79">
     <property name="resource">/abs/overlay.mp4</property>
-    <property name="shotcut:uuid">{vean-producer4}</property>
+    <property name="shotcut:uuid">clip-3</property>
   </producer>
   <producer id="producer5" in="0" out="124">
     <property name="resource">/abs/vo.wav</property>
-    <property name="shotcut:uuid">{vean-producer5}</property>
+    <property name="shotcut:uuid">clip-5</property>
     <filter mlt_service="volume">
       <property name="shotcut:filter">volume</property>
       <property name="gain">0.8</property>

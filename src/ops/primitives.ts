@@ -181,6 +181,63 @@ export function isFadeOut(f: Filter): boolean {
   return f.service === FADE_OUT_SERVICE || (f.shotcutName ?? "").startsWith("fadeOut");
 }
 
+// ─── Escape-hatch keyframe-window re-base (DESIGN-MOVE1.md §4) ─────────────────
+/** Re-base an escape-hatch animation string by `shift` frames: every keyframe
+ *  `frame=value` becomes `(frame+shift)=value`, clamped to `[0, len-1]`, dropping
+ *  keyframes that fall outside the new window. Fade SENTINELS never reach here
+ *  (they carry `{frames}`, not a keyframe string — decision #1); only a literal
+ *  animated property (`"0=…;N=…"`) is shifted. A non-animated value (no `=`) passes
+ *  through untouched. This is the shared re-base both trim (head-trim moves the
+ *  clip's local origin) and split (the TAIL half's origin moves by the head length)
+ *  consume, mirroring `MLT.adjustClipFilters` shifting a filter's window by the
+ *  edit delta. Lives here in `primitives` so split + trim share one implementation;
+ *  `trim.ts` re-exports it for the test that imports it by its historical path. */
+export function shiftAnimWindow(value: string, shift: number, len: number): string {
+  if (!value.includes("=")) return value;
+  const kept: string[] = [];
+  for (const token of value.split(";")) {
+    const eq = token.indexOf("=");
+    if (eq < 0) {
+      kept.push(token);
+      continue;
+    }
+    const frameStr = token.slice(0, eq);
+    const rest = token.slice(eq + 1);
+    const frame = Number.parseInt(frameStr, 10);
+    if (Number.isNaN(frame)) {
+      // A non-numeric keyframe time (e.g. a timecode) — leave it verbatim rather
+      // than risk corrupting it; the full timecode re-base is a separate concern.
+      kept.push(token);
+      continue;
+    }
+    const moved = frame + shift;
+    if (moved < 0 || moved > len - 1) continue; // outside the new window — drop
+    kept.push(`${moved}=${rest}`);
+  }
+  return kept.join(";");
+}
+
+/** Apply `shiftAnimWindow` across a clip's NON-fade filters in place (the clip is
+ *  assumed already a private clone). Returns whether any window was shifted. Used
+ *  by trim (origin move on head-trim) and split (tail-half origin move). */
+export function shiftClipAnimWindows(clip: Clip, shift: number, len: number): boolean {
+  if (shift === 0) return false;
+  let touched = false;
+  for (const f of clip.filters) {
+    if (isFadeIn(f) || isFadeOut(f)) continue; // fades are sentinels, not strings
+    for (const [k, v] of Object.entries(f.properties)) {
+      if (typeof v === "string" && v.includes("=")) {
+        const next = shiftAnimWindow(v, shift, len);
+        if (next !== v) {
+          f.properties[k] = next;
+          touched = true;
+        }
+      }
+    }
+  }
+  return touched;
+}
+
 // ─── Blanks ──────────────────────────────────────────────────────────────────
 /** A blank of `length` frames (length must be > 0 to exist as an item). */
 export function blankItem(length: number): Blank {
@@ -334,20 +391,42 @@ export function splitEntryAt(
   }
 
   // A clip. Left/right source windows (inclusive).
+  const headLen = localFrame; // head plays the clip's local frames [0, localFrame-1]
+  const tailLen = playtime(it) - localFrame; // tail plays local [localFrame, len-1]
+  // Deep-clone each half's filters so a downstream window re-base mutates only that
+  // half — `Array.filter` keeps the SAME filter-object references, so without the
+  // clone the two halves would share a filter and a re-base on one would corrupt
+  // the other (the head would inherit the tail's shifted keyframes).
   const leftClip: Clip = {
     ...structuredClone(it),
     id: uuid(), // fresh identity for the head
     in: it.in,
     out: it.in + localFrame - 1,
-    filters: it.filters.filter((f) => !isFadeOut(f)), // drop fadeOut from the head
+    filters: it.filters.filter((f) => !isFadeOut(f)).map((f) => structuredClone(f)), // drop fadeOut from the head
   };
   const rightClip: Clip = {
     ...structuredClone(it),
     id: it.id, // the original identity survives on the tail
     in: it.in + localFrame,
     out: it.out,
-    filters: it.filters.filter((f) => !isFadeIn(f)), // drop fadeIn from the tail
+    filters: it.filters.filter((f) => !isFadeIn(f)).map((f) => structuredClone(f)), // drop fadeIn from the tail
   };
+  // Re-base escape-hatch animated filter windows (DESIGN-MOVE1.md §3 step 4 / §4):
+  //   • HEAD: origin unchanged (it still plays the clip from local 0), so its
+  //     keyframe strings are left VERBATIM. Keyframes past `headLen-1` are outside
+  //     the head's shorter window, but melt simply doesn't reach them, and KEEPING
+  //     them preserves the in-window interpolation gradient (a `0=0;50=0.5` ramp
+  //     queried at frame 30 still tends toward the real 50-target) AND the round-
+  //     trip fixpoint. Dropping them would flatten the head — wrong. (`headLen` is
+  //     referenced for symmetry/legibility; the head needs no shift.)
+  //   • TAIL: its origin moves forward by `localFrame` (it now plays from source
+  //     `in+localFrame`), so every keyframe re-bases by `-localFrame`; any that fall
+  //     before 0 are dropped. Without this the tail's keyframes mis-anchor when the
+  //     serializer re-emits them on the tail's 0-based window.
+  // Fade sentinels carry only `{frames}` (no keyframe string), so they're untouched
+  // here — the serializer owns their keyframe math.
+  void headLen; // the head is faithful verbatim; see above
+  shiftClipAnimWindows(rightClip, -localFrame, tailLen);
   // `length` (source duration): for a FILE clip both halves window the same
   // producer, so `length` (the source's total duration) is unchanged. For a COLOR
   // clip there is no external source — `length` IS the clip's own played count, and

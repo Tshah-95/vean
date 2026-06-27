@@ -26,10 +26,13 @@ const EDIT = join(ROOT, "scripts", "edit.ts");
 const UNDO = join(ROOT, "scripts", "undo.ts");
 const CORPUS_FILE = join(ROOT, "corpus", "vean-multitrack.mlt");
 
-// `producer3` is the gold clip on V1 (track playlist0), timeline frames 65..124 —
-// so a split at frame 90 is safely mid-clip. These ids come from parsing the
-// committed corpus file (serialize mints `producer${N}`; parse reads them back).
-const GOLD_CLIP = "producer3";
+// `clip-1` is the gold clip on V1 (track playlist0), timeline frames 45..104 — so
+// a split at frame 90 is safely mid-clip. These ids are the clips' STABLE uuids,
+// which now survive the round-trip: serialize routes `Clip.id` through
+// `shotcut:uuid` and parse reads it straight back (Move 1b), so the corpus's
+// authored builder ids (`clip-0`, `clip-1`, …) are what parse yields — not the
+// ephemeral `producer${N}` XML ref targets the serializer mints.
+const GOLD_CLIP = "clip-1";
 const SPLIT_FRAME = 90;
 const SPLIT_TRACK = "playlist0";
 
@@ -106,7 +109,7 @@ describe("scripts/edit.ts — CLI smoke", () => {
     const run = runScript(EDIT, [
       CORPUS_FILE,
       "fadeIn",
-      JSON.stringify({ uuid: "producer4", frames: 10 }),
+      JSON.stringify({ uuid: "clip-3", frames: 10 }),
       out,
     ]);
     expect(run.code).toBe(0);
@@ -164,9 +167,11 @@ describe("scripts/undo.ts — round-trip demonstration", () => {
   it("the in-process inverse output equals vean's normal form of the input (the byte-target the CLI checks)", () => {
     // The CLI's `undo: verified` line asserts exactly this byte-identity; we
     // reproduce the target here so a regression localizes to the op layer, not the
-    // script. (Done in-process: split mints a uuid that a serialize→parse reload
-    // would rename — the documented Move-1b persistence gap — so the contract's
-    // guarantee is the LIVE-state inverse, which is what the CLI verifies.)
+    // script. (Done in-process: split's left half mints a fresh random `uuid()`
+    // that a serialize→parse reload can't reproduce deterministically — authored
+    // clip ids now DO survive the round-trip via shotcut:uuid (Move 1b), but a
+    // newly-minted runtime uuid is random by design — so the contract's guarantee
+    // is the LIVE-state inverse, which is what the CLI verifies.)
     const inputXml = readFileSync(CORPUS_FILE, "utf8");
     const normalized = toMlt(fromMlt(inputXml));
     const tmp = mkdtempSync(join(tmpdir(), "vean-cli-undo-"));

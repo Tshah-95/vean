@@ -13,7 +13,7 @@
     <property name="length">60</property>
     <property name="mlt_service">color</property>
     <property name="resource">#FFFFD700</property>
-    <property name="shotcut:uuid">{vean-producer0}</property>
+    <property name="shotcut:uuid">clip-0</property>
     <filter mlt_service="affine">
       <property name="transition.rect">0=0 0 1920 1080 1;30~=200 100 1520 880 0.8;59=0 0 1920 1080 1</property>
     </filter>

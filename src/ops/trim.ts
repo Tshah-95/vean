@@ -42,7 +42,14 @@ import {
   isFadeOut,
   playtime,
   rippleOtherTracks,
+  shiftAnimWindow,
+  shiftClipAnimWindows,
 } from "./primitives";
+
+// Re-export the shared keyframe-window re-base so the historical import path
+// (`../src/ops/trim`) the trim/move tests use keeps working — the implementation
+// now lives in `primitives` so split + trim share one copy (DESIGN-MOVE1.md §4).
+export { shiftAnimWindow };
 import {
   type Consequences,
   type EditError,
@@ -54,60 +61,6 @@ import {
   noConsequences,
   trimArgs,
 } from "./types";
-
-// ─── Escape-hatch keyframe re-base (DESIGN-MOVE1.md §4) ───────────────────────
-/** Re-base an escape-hatch animation string by `shift` frames: every keyframe
- *  `frame=value` becomes `(frame+shift)=value`, clamped to `[0, len-1]`, dropping
- *  keyframes that fall outside the trimmed window. Fade SENTINELS never reach
- *  here (they carry `{frames}`, not a keyframe string — decision #1); only a
- *  literal animated property (`"0=…;N=…"`) is shifted. A non-animated value (no
- *  `=`) passes through untouched. This is the trim half of the rule split.ts
- *  documents; it keeps a clip carrying an animated filter window-correct after a
- *  head trim (the only trim that moves the clip's local origin). */
-export function shiftAnimWindow(value: string, shift: number, len: number): string {
-  if (!value.includes("=")) return value;
-  const kept: string[] = [];
-  for (const token of value.split(";")) {
-    const eq = token.indexOf("=");
-    if (eq < 0) {
-      kept.push(token);
-      continue;
-    }
-    const frameStr = token.slice(0, eq);
-    const rest = token.slice(eq + 1);
-    const frame = Number.parseInt(frameStr, 10);
-    if (Number.isNaN(frame)) {
-      // A non-numeric keyframe time (e.g. a timecode) — leave it verbatim rather
-      // than risk corrupting it; the full timecode re-base is a Move 1b concern.
-      kept.push(token);
-      continue;
-    }
-    const moved = frame + shift;
-    if (moved < 0 || moved > len - 1) continue; // outside the new window — drop
-    kept.push(`${moved}=${rest}`);
-  }
-  return kept.join(";");
-}
-
-/** Apply `shiftAnimWindow` across a clip's NON-fade filters in place (the clip is
- *  already a private clone). Returns whether any window was shifted. */
-function shiftClipAnimWindows(clip: Clip, shift: number, len: number): boolean {
-  if (shift === 0) return false;
-  let touched = false;
-  for (const f of clip.filters) {
-    if (isFadeIn(f) || isFadeOut(f)) continue; // fades are sentinels, not strings
-    for (const [k, v] of Object.entries(f.properties)) {
-      if (typeof v === "string" && v.includes("=")) {
-        const next = shiftAnimWindow(v, shift, len);
-        if (next !== v) {
-          f.properties[k] = next;
-          touched = true;
-        }
-      }
-    }
-  }
-  return touched;
-}
 
 // ─── Fade clamp (a fade can't exceed the trimmed window) ──────────────────────
 /** The total fade frames a clip carries (fadeIn + fadeOut sentinels). */

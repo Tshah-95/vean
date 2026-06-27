@@ -79,7 +79,15 @@ export type ColorValue = {
   b: number;
   hasAlpha: boolean;
 };
-export type KeyframeValue = NumberValue | RectValue | ColorValue;
+/** A value that is neither a number, rect, nor color: an empty body (`0=`), a
+ *  text token (`0=normal`), or any string a strict parse can't reduce — carried
+ *  VERBATIM so it round-trips byte-faithfully. This is the total-ing member of the
+ *  union (DESIGN-MOVE1.md §4 gaps 2+3): with it, `parseValue` can never throw on a
+ *  legal-but-exotic property, so no op or query can crash on a clip carrying a
+ *  text-valued animated filter. `serializeAnim` re-quotes an opaque whose `raw`
+ *  contains a `;` or `=` so the tokenizer recovers it intact. */
+export type OpaqueValue = { type: "opaque"; raw: string };
+export type KeyframeValue = NumberValue | RectValue | ColorValue | OpaqueValue;
 
 // ─── Keyframe + model ──────────────────────────────────────────────────────
 /** One keyframe: a frame time, a value, and the interp LEAVING it. `frame` is in
@@ -96,6 +104,13 @@ export type Keyframe = {
   negative?: boolean;
   /** True if the time was authored as a timecode (HH:MM:SS.mmm | :FF). */
   timecode?: boolean;
+  /** The timecode SUB-FORM, when `timecode` is set: `":ff"` for the frame-exact
+   *  `HH:MM:SS:FF` spelling, `".mmm"` for the millisecond `HH:MM:SS.mmm` spelling.
+   *  Recorded on parse so serialize reproduces the EXACT authored form rather than
+   *  always emitting `.mmm` (DESIGN-MOVE1.md §4 gaps 1+4). `:ff` is frame-exact —
+   *  it carries no sub-millisecond rounding drift, so a frame-aligned timecode
+   *  authored as `:ff` round-trips losslessly. Absent ⇒ `.mmm` (back-compat). */
+  timecodeSubform?: ":ff" | ".mmm";
 };
 
 /** The parsed animation: the kind of value it carries + its ordered keyframes.
@@ -206,7 +221,7 @@ function fpsRound(fps?: [number, number]): number {
 function parseTime(
   raw: string,
   opts: ParseOpts,
-): { frame: number; negative?: boolean; timecode?: boolean } {
+): { frame: number; negative?: boolean; timecode?: boolean; timecodeSubform?: ":ff" | ".mmm" } {
   const tc = raw.match(TIMECODE);
   if (tc) {
     const hh = Number(tc[1]);
@@ -217,14 +232,14 @@ function parseTime(
     const fps = fpsRound(opts.fps);
     let frames: number;
     if (sep === ":") {
-      // HH:MM:SS:FF — FF is a literal frame index.
+      // HH:MM:SS:FF — FF is a literal frame index. Frame-exact, no ms rounding.
       frames = (hh * 3600 + mm * 60 + ss) * fps + Number(frac);
-    } else {
-      // HH:MM:SS.mmm — fractional seconds (millis as written) → frames.
-      const millis = Number(`0.${frac}`);
-      frames = Math.round((hh * 3600 + mm * 60 + ss + millis) * fps);
+      return { frame: frames, timecode: true, timecodeSubform: ":ff" };
     }
-    return { frame: frames, timecode: true };
+    // HH:MM:SS.mmm — fractional seconds (millis as written) → frames.
+    const millis = Number(`0.${frac}`);
+    frames = Math.round((hh * 3600 + mm * 60 + ss + millis) * fps);
+    return { frame: frames, timecode: true, timecodeSubform: ".mmm" };
   }
   const n = Number(raw);
   if (!Number.isFinite(n) || !Number.isInteger(n)) {
@@ -247,13 +262,26 @@ function formatTime(kf: Keyframe, rebased: number, fps?: [number, number]): stri
   if (kf.negative) return String(kf.frame);
   if (kf.timecode) {
     const f = fpsRound(fps);
+    const pad = (v: number, w: number) => String(v).padStart(w, "0");
+    if (kf.timecodeSubform === ":ff") {
+      // HH:MM:SS:FF — frame-exact. Decompose the (rebased) absolute frame into
+      // whole seconds + a frame index 0..f-1 with NO millisecond rounding, so a
+      // frame-aligned timecode round-trips byte-identically (gaps 1+4: the `:ff`
+      // subform avoids the lossy `.mmm` path entirely).
+      const ff = ((rebased % f) + f) % f;
+      const totalSec = Math.floor(rebased / f);
+      const hh = Math.floor(totalSec / 3600);
+      const mm = Math.floor((totalSec % 3600) / 60);
+      const ss = totalSec % 60;
+      return `${pad(hh, 2)}:${pad(mm, 2)}:${pad(ss, 2)}:${pad(ff, 2)}`;
+    }
+    // HH:MM:SS.mmm — millisecond spelling (the default sub-form).
     const totalSeconds = rebased / f;
     const hh = Math.floor(totalSeconds / 3600);
     const mm = Math.floor((totalSeconds % 3600) / 60);
     const whole = Math.floor(totalSeconds);
     const ss = whole % 60;
     const millis = Math.round((totalSeconds - whole) * 1000);
-    const pad = (v: number, w: number) => String(v).padStart(w, "0");
     return `${pad(hh, 2)}:${pad(mm, 2)}:${pad(ss, 2)}.${pad(millis, 3)}`;
   }
   return String(rebased);
@@ -320,57 +348,74 @@ function formatColor(c: ColorValue): string {
     : `#${hx(c.r)}${hx(c.g)}${hx(c.b)}`;
 }
 
-/** A scalar is percent-flagged iff it ends in `%`. The numeric model holds the
- *  divided-by-100 value; the `%` is re-emitted on serialize (the flag preserves
- *  it). Returns the parsed number and whether a `%` was present. */
-function parseScalar(raw: string): { value: number; percent: boolean } {
-  if (raw.endsWith("%")) {
-    const body = raw.slice(0, -1);
-    const n = numAcceptingComma(body);
-    if (!Number.isFinite(n)) throw new Error(`vean: malformed percent value "${raw}"`);
-    return { value: n / 100, percent: true };
-  }
-  const n = numAcceptingComma(raw);
-  if (!Number.isFinite(n)) throw new Error(`vean: malformed numeric value "${raw}"`);
-  return { value: n, percent: false };
-}
-
 function formatScalar(value: number, percent: boolean): string {
   if (percent) return `${fmtNum(value * 100)}%`;
   return fmtNum(value);
 }
 
+/** A scalar a strict parse can reduce to a number (with optional `%`), or `null`
+ *  when the token is not numeric (empty, text, or otherwise). Never throws — the
+ *  caller falls back to the opaque family for a non-numeric token (gaps 2+3). */
+function tryScalar(raw: string): { value: number; percent: boolean } | null {
+  if (raw.endsWith("%")) {
+    const n = numAcceptingComma(raw.slice(0, -1));
+    return Number.isFinite(n) ? { value: n / 100, percent: true } : null;
+  }
+  // An empty body is NOT a number (`Number("") === 0` would fabricate a `0` the
+  // property never carried — gap 2). A non-numeric token is opaque, not a scalar.
+  if (raw.trim() === "") return null;
+  const n = numAcceptingComma(raw);
+  return Number.isFinite(n) ? { value: n, percent: false } : null;
+}
+
 /** Parse a value token into a typed `KeyframeValue`. Tries color (`#…`), then
- *  rect (5 whitespace-separated components: `x y w h opacity`), then scalar. */
+ *  rect (5 whitespace-separated numeric components: `x y w h opacity`), then
+ *  scalar; anything else (empty `0=`, a text token `0=normal`, a value a strict
+ *  parse can't reduce) becomes an OPAQUE value carried verbatim — `parseValue`
+ *  NEVER throws, which is what makes the `KeyframeValue` union total (gaps 2+3,
+ *  DESIGN-MOVE1.md §4). The raw passed here is already unquoted by the caller. */
 function parseValue(raw: string): KeyframeValue {
   const color = parseColor(raw);
   if (color) return color;
 
   const parts = raw.split(/\s+/).filter((p) => p.length > 0);
   if (parts.length === 5) {
-    // rect — opacity may carry a percent; x/y/w/h are plain numbers.
+    // A rect iff ALL five components are numeric (opacity may carry a percent);
+    // otherwise it's an opaque token that happens to have five space-separated
+    // words, kept verbatim rather than mis-parsed.
     const [xs, ys, ws, hs, os] = parts as [string, string, string, string, string];
-    const op = parseScalar(os);
-    const num = (p: string) => {
-      const v = numAcceptingComma(p);
-      if (!Number.isFinite(v)) throw new Error(`vean: malformed rect component "${p}"`);
-      return v;
-    };
-    return {
-      type: "rect",
-      x: num(xs),
-      y: num(ys),
-      w: num(ws),
-      h: num(hs),
-      opacity: op.value,
-      opacityPercent: op.percent || undefined,
-    };
+    const op = tryScalar(os);
+    const x = numAcceptingComma(xs);
+    const y = numAcceptingComma(ys);
+    const w = numAcceptingComma(ws);
+    const h = numAcceptingComma(hs);
+    if (
+      op != null &&
+      Number.isFinite(x) &&
+      Number.isFinite(y) &&
+      Number.isFinite(w) &&
+      Number.isFinite(h)
+    ) {
+      return {
+        type: "rect",
+        x,
+        y,
+        w,
+        h,
+        opacity: op.value,
+        opacityPercent: op.percent || undefined,
+      };
+    }
   }
 
-  const sc = parseScalar(raw);
-  const nv: NumberValue = { type: "number", value: sc.value };
-  if (sc.percent) nv.percent = true;
-  return nv;
+  const sc = tryScalar(raw);
+  if (sc != null) {
+    const nv: NumberValue = { type: "number", value: sc.value };
+    if (sc.percent) nv.percent = true;
+    return nv;
+  }
+  // Empty / text / un-reducible — carry it verbatim (gaps 2+3).
+  return { type: "opaque", raw };
 }
 
 function formatValue(v: KeyframeValue): string {
@@ -384,6 +429,7 @@ function formatValue(v: KeyframeValue): string {
       formatScalar(v.opacity, v.opacityPercent ?? false),
     ].join(" ");
   }
+  if (v.type === "opaque") return v.raw;
   return formatScalar(v.value, v.percent ?? false);
 }
 
@@ -482,7 +528,10 @@ export function parseAnim(s: string, opts: ParseOpts = {}): Keyframes {
     const kf: Keyframe = { frame: absFrame, value, interp };
     if (pennerChar) kf.pennerChar = pennerChar;
     if (t.negative) kf.negative = true;
-    if (t.timecode) kf.timecode = true;
+    if (t.timecode) {
+      kf.timecode = true;
+      if (t.timecodeSubform) kf.timecodeSubform = t.timecodeSubform;
+    }
     keyframes.push(kf);
   }
 
@@ -518,4 +567,176 @@ export function serializeAnim(model: Keyframes, opts: SerializeOpts = {}): strin
     items.push(`${timeStr}${marker}=${value}`);
   }
   return items.join(";");
+}
+
+// ─── valueAtFrame — evaluate the model at a frame (the resolver's engine) ─────
+/** The keyframe whose value family the model carries, with its effective ABSOLUTE
+ *  frame resolved (a negative `-1` becomes `length-1`). `frame` is already absolute
+ *  in the model; we only need to resolve a keyframe's relative/negative authoring. */
+export type EvalOpts = {
+  /** Source length (frames), to resolve a negative keyframe time (`-1` → len-1). */
+  length?: number;
+};
+
+/** Resolve a keyframe's effective absolute frame: a negative/relative time anchors
+ *  to the source end (`-1` = `length-1`, `-2` = `length-2`, …). Everything else is
+ *  already absolute. Without a `length`, a negative frame stays as authored (its
+ *  ordering against positive frames is then undefined, so the evaluator treats it
+ *  as the first/last by position — see `valueAtFrame`). */
+function effectiveFrame(kf: Keyframe, length?: number): number {
+  if (kf.negative && length != null) return length + kf.frame; // length + (-1) = length-1
+  return kf.frame;
+}
+
+/** Linear interpolation of two numbers at parameter `t` ∈ [0,1]. */
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+/** Catmull-Rom interpolation of `p1`→`p2` at `t`, with neighbours `p0`/`p3` for
+ *  the tangents (MLT's `~` smooth). Falls back to the endpoints when a neighbour is
+ *  missing (clamped tangent), which matches melt clamping at the curve ends. */
+function catmullRom(p0: number, p1: number, p2: number, p3: number, t: number): number {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return (
+    0.5 *
+    (2 * p1 +
+      (-p0 + p2) * t +
+      (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 +
+      (-p0 + 3 * p1 - 3 * p2 + p3) * t3)
+  );
+}
+
+/** Interpolate a single numeric channel between two keyframes at fraction `t`,
+ *  honoring the LEFT keyframe's interp:
+ *   • `discrete` → hold the left value (no interpolation),
+ *   • `smooth`/`smooth_natural`/`smooth_tight` → Catmull-Rom (the `~` family),
+ *   • `penner` → approximated by linear (the exact Penner easing is melt-internal;
+ *     the resolver reports the effective value and labels the approximation),
+ *   • `linear` (and any unknown) → straight lerp.
+ *  `prev`/`next2` are the values of the keyframes flanking [left,right] for the
+ *  Catmull-Rom tangents (default to the segment endpoints when absent). */
+function interpChannel(
+  left: number,
+  right: number,
+  t: number,
+  interp: Interp,
+  prev = left,
+  next2 = right,
+): number {
+  if (interp === "discrete") return left;
+  if (interp === "smooth" || interp === "smooth_natural" || interp === "smooth_tight") {
+    return catmullRom(prev, left, right, next2, t);
+  }
+  return lerp(left, right, t); // linear + penner (documented approximation)
+}
+
+/** Pull the numeric channels out of a value for component-wise interpolation. A
+ *  rect is `[x,y,w,h,opacity]`; a color `[a,r,g,b]`; a number `[value]`. An opaque
+ *  value has no channels (returns `null` — it can't be interpolated; the evaluator
+ *  holds it). */
+function channelsOf(v: KeyframeValue): number[] | null {
+  if (v.type === "number") return [v.value];
+  if (v.type === "rect") return [v.x, v.y, v.w, v.h, v.opacity];
+  if (v.type === "color") return [v.a, v.r, v.g, v.b];
+  return null; // opaque
+}
+
+/** Rebuild a value of the same family from interpolated channels (the inverse of
+ *  `channelsOf`), preserving the percent/alpha flags from `ref`. */
+function valueFromChannels(ref: KeyframeValue, ch: number[]): KeyframeValue {
+  if (ref.type === "number") {
+    const nv: NumberValue = { type: "number", value: ch[0] as number };
+    if (ref.percent) nv.percent = true;
+    return nv;
+  }
+  if (ref.type === "rect") {
+    const r: RectValue = {
+      type: "rect",
+      x: ch[0] as number,
+      y: ch[1] as number,
+      w: ch[2] as number,
+      h: ch[3] as number,
+      opacity: ch[4] as number,
+    };
+    if (ref.opacityPercent) r.opacityPercent = true;
+    return r;
+  }
+  // color
+  return {
+    type: "color",
+    a: Math.round(ch[0] as number),
+    r: Math.round(ch[1] as number),
+    g: Math.round(ch[2] as number),
+    b: Math.round(ch[3] as number),
+    hasAlpha: (ref as ColorValue).hasAlpha,
+  };
+}
+
+/** The effective value of an animation model at an ABSOLUTE `frame` — the engine
+ *  behind `resolveValueAtFrame` ("go-to-definition for video"). Honors the full
+ *  grammar: the interp markers (discrete hold / linear / Catmull-Rom smooth /
+ *  Penner≈linear), percent + rect + color (interpolated COMPONENT-WISE), and
+ *  negative/relative frames (resolved against `opts.length`). Clamps to the first
+ *  keyframe before the range and the last keyframe after it (melt's edge behavior).
+ *  A static model returns its single value; an empty model returns `null`. An
+ *  opaque-valued keyframe can't be interpolated, so the evaluator HOLDS the
+ *  left keyframe's opaque value across its segment. */
+export function valueAtFrame(
+  model: Keyframes,
+  frame: number,
+  opts: EvalOpts = {},
+): KeyframeValue | null {
+  const kfs = model.keyframes;
+  if (kfs.length === 0) return null;
+  if (model.static || kfs.length === 1) return (kfs[0] as Keyframe).value;
+
+  // Sort by effective absolute frame so negative/relative times anchor correctly.
+  const resolved = kfs
+    .map((kf) => ({ kf, at: effectiveFrame(kf, opts.length) }))
+    .sort((a, b) => a.at - b.at);
+
+  const firstEntry = resolved[0] as { kf: Keyframe; at: number };
+  const lastEntry = resolved[resolved.length - 1] as { kf: Keyframe; at: number };
+  if (frame <= firstEntry.at) return firstEntry.kf.value; // clamp left
+  if (frame >= lastEntry.at) return lastEntry.kf.value; // clamp right
+
+  // Find the segment [left, right] containing `frame`.
+  let i = 0;
+  while (i < resolved.length - 1 && !(frame < (resolved[i + 1] as { at: number }).at)) i++;
+  const leftE = resolved[i] as { kf: Keyframe; at: number };
+  const rightE = resolved[i + 1] as { kf: Keyframe; at: number };
+  const span = rightE.at - leftE.at;
+  const t = span === 0 ? 0 : (frame - leftE.at) / span;
+
+  const leftCh = channelsOf(leftE.kf.value);
+  const rightCh = channelsOf(rightE.kf.value);
+  // Opaque or mismatched families can't be interpolated — hold the left value.
+  if (leftCh == null || rightCh == null || leftCh.length !== rightCh.length) {
+    return leftE.kf.value;
+  }
+  const prevCh = channelsOf((resolved[i - 1]?.kf ?? leftE.kf).value) ?? leftCh;
+  const next2Ch = channelsOf((resolved[i + 2]?.kf ?? rightE.kf).value) ?? rightCh;
+  const out = leftCh.map((lv, c) =>
+    interpChannel(
+      lv,
+      rightCh[c] as number,
+      t,
+      leftE.kf.interp,
+      prevCh[c] ?? lv,
+      next2Ch[c] ?? (rightCh[c] as number),
+    ),
+  );
+  return valueFromChannels(leftE.kf.value, out);
+}
+
+/** The scalar magnitude of a value for a single-number readout (the common case a
+ *  diagnostic or a fade query wants): a number's value (×100 undone if percent is
+ *  already divided), a rect's opacity, a color's alpha 0..1, an opaque → `null`. */
+export function scalarOf(v: KeyframeValue): number | null {
+  if (v.type === "number") return v.value;
+  if (v.type === "rect") return v.opacity;
+  if (v.type === "color") return v.a / 255;
+  return null;
 }

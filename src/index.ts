@@ -33,5 +33,21 @@ export * from "./ir/keyframes";
 // `ops.append(state, args)`, `ops.apply(inv, state)`, `ops.REGISTRY`, …
 export * as ops from "./ops";
 
+// ─── The navigation queries (Move 1b) ──────────────────────────────────────
+// Pure, document-keyed QUERIES over the IR — the LSP's hover/go-to-definition/
+// find-references surface. `resolveValueAtFrame` (the effective value of a
+// parameter at a frame, with the resolution path) and `findReferences` (clips
+// using a source, readers/writers of a property, a clip's adjacency/ripple set).
+// Namespaced so the query verbs don't collide with the ops/builder surface.
+export * as query from "./query";
+
+// ─── The diagnostics engine (Move 1b) ──────────────────────────────────────
+// The SHARED diagnostics core — the one place domain validity rules live. The
+// future LSP, the MCP tools, the CLI debug verb, tests, and the UI all call
+// `collectDiagnostics(state)` (the FULL current set for a document — LSP-ready,
+// an empty set clears). Pure + document-keyed; no I/O. Namespaced so the
+// diagnostics verbs don't collide with ops/query.
+export * as diagnostics from "./diagnostics";
+
 // ─── The render/inspect driver (Move 0) ────────────────────────────────────
 export * from "./driver/melt";

@@ -5,7 +5,17 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { formatRoundtrip, lineDiff, roundtripXml } from "../scripts/roundtrip";
 import { parseSsimAll, ssimPng } from "../scripts/verify-corpus";
-import { VERTICAL, clip, colorClip, resetIds, timeline, toMlt, videoTrack } from "../src/index";
+import {
+  VERTICAL,
+  audioTrack,
+  clip,
+  colorClip,
+  fromMlt,
+  resetIds,
+  timeline,
+  toMlt,
+  videoTrack,
+} from "../src/index";
 
 // The round-trip harness + corpus gate are the Move-0 verification surface. Their
 // PURE pieces — the line diff that localizes a divergence, and the SSIM-output
@@ -174,6 +184,52 @@ describe("roundtripXml (end-to-end)", () => {
     // Not byte-identical: emit adds the background track / uuids / shotcut hints.
     expect(r.byteIdentical).toBe(false);
     expect(formatRoundtrip("hand", r)).toMatch(/^PASS.*fixpoint stable/);
+  });
+});
+
+// Clip identity (`Clip.id`) is now routed through `shotcut:uuid` (Move 1b, per
+// DESIGN-MOVE1.md §1), so authored ids survive a serialize→parse reload — they are
+// no longer renamed to the ephemeral `producer${N}` XML ref targets. This is what
+// lets a session reload from disk mid-edit and keep targeting clips by their
+// stable uuids (and what makes the corpus CLI tests address `clip-1`, not
+// `producer3`).
+describe("clip identity survives the round-trip (shotcut:uuid routing)", () => {
+  function authored() {
+    resetIds();
+    return timeline(VERTICAL, {
+      video: [
+        videoTrack(
+          colorClip(45, "black", { id: "intro", fadeIn: 12 }),
+          colorClip(60, "gold", { id: "payoff", fadeOut: 15 }),
+        ),
+        videoTrack(clip("/abs/overlay.mp4", { id: "lower-third", in: 20, out: 79 })),
+      ],
+      audio: [audioTrack(clip("/abs/vo.wav", { id: "narration", dur: 90, gain: 0.8 }))],
+    });
+  }
+
+  it("every authored clip id round-trips through fromMlt(toMlt(tl))", () => {
+    const before = authored();
+    const after = fromMlt(toMlt(before));
+    const ids = (tl: ReturnType<typeof authored>) =>
+      [...tl.tracks.video, ...tl.tracks.audio]
+        .flatMap((t) => t.items)
+        .filter((it) => it.kind === "clip")
+        .map((it) => (it as { id: string }).id)
+        .sort();
+    expect(ids(after)).toEqual(["intro", "lower-third", "narration", "payoff"]);
+    // And the ids are STABLE across the reload — not regenerated to producer${N}.
+    expect(ids(after)).toEqual(ids(before));
+  });
+
+  it("an id with XML-special characters is escaped + recovered intact", () => {
+    resetIds();
+    const tricky = timeline(VERTICAL, {
+      video: [videoTrack(colorClip(30, "red", { id: '{uuid-&-<weird>-"quote"}' }))],
+    });
+    const after = fromMlt(toMlt(tricky));
+    const clipItem = after.tracks.video[0]?.items[0] as { id: string };
+    expect(clipItem.id).toBe('{uuid-&-<weird>-"quote"}');
   });
 });
 

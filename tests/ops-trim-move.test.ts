@@ -35,7 +35,9 @@ import {
 import { VERTICAL } from "../src/ir/profile";
 import { toMlt } from "../src/ir/serialize";
 import type { Blank, Clip, Item, Timeline } from "../src/ir/types";
+import { apply } from "../src/ops/index";
 import { move } from "../src/ops/move";
+import { split } from "../src/ops/split";
 import { shiftAnimWindow, trimIn, trimOut } from "../src/ops/trim";
 import { type EditError, type OpResult, isEditError } from "../src/ops/types";
 
@@ -331,6 +333,62 @@ describe("trim — escape-hatch keyframe re-base on a head trim", () => {
   it("shiftAnimWindow drops keyframes outside the new window and passes non-animated values through", () => {
     expect(shiftAnimWindow("0=0;10=1;30=0", -10, 25)).toBe("0=1;20=0"); // 0→drop, 10→0, 30→drop
     expect(shiftAnimWindow("solid", 5, 100)).toBe("solid"); // no `=` → untouched
+  });
+});
+
+describe("split — escape-hatch keyframe re-base across the cut", () => {
+  // A file clip from source 0, 100 frames, carrying a brightness ramp authored in
+  // the clip's local window (0..99). Split at local frame 40.
+  function start(): Timeline {
+    resetIds();
+    return timeline(VERTICAL, {
+      video: [
+        videoTrack(
+          clip("/abs/scene.mp4", {
+            id: "x",
+            dur: 100,
+            filters: [filter("brightness", { level: "0=0;50=0.5;99=1" })],
+          }),
+        ),
+      ],
+    });
+  }
+
+  it("re-bases the TAIL half's keyframes by -localFrame and leaves the HEAD verbatim", () => {
+    const r = ok(split(start(), { uuid: "x", frame: 40 }));
+    const items = vItems(r.state);
+    const head = asClip(items[0]);
+    const tail = asClip(items[1]);
+    const lvl = (c: Clip) => c.filters.find((f) => f.service === "brightness")?.properties.level;
+    // HEAD [0,39]: origin unchanged → keyframes verbatim (melt clamps past frame 39;
+    // keeping them preserves the in-window gradient + the round-trip fixpoint).
+    expect(head.in).toBe(0);
+    expect(head.out).toBe(39);
+    expect(lvl(head)).toBe("0=0;50=0.5;99=1");
+    // TAIL [40,99]: origin moves +40, so every keyframe re-bases by -40; 0→drop,
+    // 50→10, 99→59 — anchored to the tail's own 0-based played window.
+    expect(tail.in).toBe(40);
+    expect(tail.out).toBe(99);
+    expect(lvl(tail)).toBe("10=0.5;59=1");
+  });
+
+  it("the two halves do NOT share a mutated filter object (deep-cloned per half)", () => {
+    const r = ok(split(start(), { uuid: "x", frame: 40 }));
+    const items = vItems(r.state);
+    const head = asClip(items[0]);
+    const tail = asClip(items[1]);
+    const hf = head.filters.find((f) => f.service === "brightness");
+    const tf = tail.filters.find((f) => f.service === "brightness");
+    expect(hf).not.toBe(tf); // distinct objects — re-basing the tail didn't touch the head
+    expect(hf?.properties.level).not.toBe(tf?.properties.level);
+  });
+
+  it("the inverse restores the original clip's keyframe string exactly (undo)", () => {
+    const s = start();
+    const r = ok(split(s, { uuid: "x", frame: 40 }));
+    const back = apply(r.inverse, r.state);
+    if (isEditError(back)) throw new Error("undo errored");
+    expect(back.state).toEqual(s);
   });
 });
 

@@ -99,12 +99,19 @@ exactly as we want" gate; everything stacks on it.
 
 ---
 
-## Move 1 — the edit algebra + diagnostics engine (headless)
+## Move 1 — the edit algebra + diagnostics engine (headless) ✅ COMPLETE
 
 The verbs and the shared diagnostic core. A closed set of pure operations plus a
 static diagnostics engine that can be reused by LSP, MCP, CLI, tests, and the
 future UI. The diagnostics engine is not itself the agent loop; it is the domain
 checker every surface calls.
+
+**Status: complete** (Move 1a + 1b, gated in `GATE-MOVE1A.md` / `GATE-MOVE1B.md`).
+The two remaining unchecked boxes below are *not* Move-1 deliverables: the
+end-to-end stitched script is Move 2's bridge deliverable (its pieces — edit,
+diagnose, the melt driver — all exist), and the Shotcut human spot-check needs
+Tejas at the GUI. Every agent-completable item is done; all six gates green,
+diagnostics zero-false-positive on the corpus, resolve/refs render-faithful.
 
 - [x] **(Move 1a)** Edit algebra as pure functions: `op(state) → {state',
       consequences, inverse}`. Mined the taxonomy from Shotcut `src/commands/`:
@@ -117,28 +124,65 @@ checker every surface calls.
       dissolve overlap once; dissolve-corrupting edits and cross-kind moves return
       typed `EditError`s (never throw, never an unserializable state). See
       `GATE-MOVE1A.md`. (Diagnostics/resolve/refs below remain Move 1b.)
-- [ ] Tier-1 (static) diagnostics: gaps/overlaps, in/out beyond source length,
-      keyframes outside clip bounds, dangling producer→file refs, orphaned
-      filters, insufficient transition overlap, asymmetric A/V trim, fps-mismatch
-      judder risk, upscaling >100%, colorspace mismatch, dial value out of range.
-- [ ] `resolve-value-at-frame`: resolve a param through clip → track → tractor →
-      transition keyframes (scope resolution — "go-to-definition for video").
-- [ ] `find-references`: clips using a source; readers/writers of a property;
-      adjacency/ripple set for a move.
-- [ ] CLI/debug surface: `edit`, `diagnose`, `resolve`, `refs`. `diagnose` is
-      for tests, CI, and manual inspection; it is **not** the required feedback
-      step after ordinary Claude Code edits.
+- [x] **(Move 1b)** Tier-1 (static) diagnostics ENGINE — the shared core in
+      `src/diagnostics/` (`collectDiagnostics(state)` → the FULL current set,
+      LSP-ready; pure, document-keyed). The in-IR-computable rules are LIVE:
+      in/out beyond source length, keyframes outside clip bounds, orphaned filters,
+      dissolve overlap exceeds neighbour, structurally-dangling resource. The rules
+      needing I/O (dangling FILE ref, upscaling >100%, colorspace mismatch) or a
+      future IR addition (asymmetric A/V trim, fps-mismatch judder, dial ranges) are
+      FINALIZED-signature checker stubs (`checks/{sync,media}.ts`) with `// TODO`
+      markers, each additive and held to the zero-false-positive bar. The registry
+      auto-covers new checkers. <!-- gaps/overlaps are structurally impossible in
+      the ordered-IR (gaps are explicit blanks, overlaps are dissolves), so that
+      rule is a no-op until the IR admits absolute positions. -->
+- [x] **(Move 1b)** `resolveValueAtFrame` (src/query/resolve.ts): the effective
+      value of a param at a frame, resolved through the nested scope chain (clip
+      keyframes → track filters → tractor filters → transition) + the resolution
+      PATH (which scope produced it). Full grammar: markers (discrete/linear/
+      Catmull-Rom smooth/Penner≈linear), %, rect + color component-wise, negative/
+      relative + timecode. The keyframe engine's `valueAtFrame` evaluator is its
+      core. (Track/tractor filters aren't first-class IR yet, so the resolver walks
+      + NAMES those scopes but they don't contribute until the IR grows them.) A
+      clip's fade anchors on its RENDERED span (playtime minus adjacent-dissolve
+      trim), not its source playtime — so a dissolve-headed clip's fadeOut lands on
+      the frames melt actually fades (pixel-verified against the corpus render),
+      not `trimHead` frames late past the end of the timeline. See `GATE-MOVE1B.md`.
+- [x] **(Move 1b)** `findReferences` (src/query/references.ts): clips using a
+      source; readers/writers of a property (with the animated flag); a clip's
+      adjacency/ripple set (same-track neighbours + cross-track reach under ripple).
+- [x] **(Move 1b)** CLI/debug surface: `edit` (1a), `diagnose`, `resolve`, `refs`
+      (1b — `scripts/{diagnose,resolve,refs}.ts`, wired in package.json). `diagnose`
+      is framed as a DEBUG/CI/manual-inspection verb (exit 1 on any error = a CI
+      gate); it is **not** the required feedback step after ordinary Claude Code
+      edits — that ambient loop is the `vean-lsp` push in Move 2.
 
 **Gate:**
 - [x] **(Move 1a)** Op-inverse invariant suite: `apply(op)` then `apply(inverse)`
       returns the original IR (undo correctness) — registry-driven across EVERY
       public op (purity + apply→inverse deep-equal + serialize Shotcut-clean +
       round-trip fixpoint per sample). 18/18 public ops covered, 0 pending/skipped.
-- [ ] Diagnostics fixtures: broken timelines emit the **exact** expected
-      diagnostic; clean timelines emit **zero** (no false positives).
-- [ ] `resolve` / `refs` golden tests on known timelines.
+- [x] **(Move 1b)** Diagnostics fixtures: broken timelines emit the **exact**
+      expected diagnostic (`tests/diagnostics-checks.test.ts` — each rule fires with
+      the exact code + severity); clean timelines emit **zero**
+      (`tests/diagnostics-harness.test.ts` — registry-driven SILENCE over EVERY
+      committed corpus file, per-checker, auto-covering checkers as they land — the
+      no-false-positive gate). 53 tests.
+- [x] **(Move 1b)** `resolve` / `refs` golden tests on known timelines
+      (`tests/query.test.ts` — 25 tests against the corpus: the V1 brightness fade
+      ~0→~1, the marked brightness ramp, the affine rect component-wise, the field
+      transition, and the source/property/adjacency reference sets). Plus the CLI
+      smoke tests (`tests/cli-lsp.test.ts` — 10 tests).
 - [ ] End-to-end script: load → apply N ops → diagnostics engine reports clean →
-      render → still.
+      render → still. <!-- the pieces exist (edit + diagnose + the melt driver);
+      the single stitched-together script lands with the Move 2 bridge, which is
+      where the op→ambient-diagnostics→render loop is the actual deliverable. -->
+- [x] **(Move 1b)** The 3 deferred items from Move 1a closed: the 5 keyframe-engine
+      gaps (timecode `:ff` subform, the opaque-value family, name-keyed fade
+      detection — `keyframes.ts`), `Clip.id` routed through `shotcut:uuid` (identity
+      survives the round-trip; goldens re-blessed), and the animated escape-hatch
+      filter window re-base across trim/split (`shiftAnimWindow` shared by both).
+      See `GATE-MOVE1B.md`.
 
 ---
 

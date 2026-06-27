@@ -116,6 +116,14 @@ function clipLen(c: { in: number; out: number }): number {
 // concrete <producer> so per-clip filters never collide on a shared producer.
 type Prod = {
   id: string;
+  /** The CLIP's stable id (`Clip.id`) — emitted as `shotcut:uuid` so identity
+   *  survives the round-trip (parse reads it straight back into `Clip.id`). The
+   *  internal XML `id` (above) stays the ephemeral `producer${N}` ref target. When
+   *  absent (the background producer, which has no clip), `shotcut:uuid` falls back
+   *  to the deterministic `{vean-<id>}` surrogate. A clip emitting through two
+   *  producers (a dissolve tail+head) carries the SAME uuid on both — the parser
+   *  stitches them into one clip, so the shared uuid is correct. */
+  uuid?: string;
   resource: string;
   service?: string;
   in: number;
@@ -302,7 +310,11 @@ function prodXml(p: Prod): string {
   }
   lines.push(`    <property name="resource">${esc(p.resource)}</property>`);
   if (p.shotcut) {
-    lines.push(`    <property name="shotcut:uuid">${esc(shotcutUuid(p.id))}</property>`);
+    // Route the CLIP's stable id through shotcut:uuid so identity survives the
+    // round-trip; the background producer (no clip) falls back to the derived
+    // `{vean-<id>}` surrogate. Either way it's deterministic → byte-stable.
+    const uuid = p.uuid ?? shotcutUuid(p.id);
+    lines.push(`    <property name="shotcut:uuid">${esc(uuid)}</property>`);
   }
   // Non-structural producer metadata (caption, eof, aspect_ratio, proxy hints, …),
   // preserved from parse in document order for a lossless round-trip. Emitted
@@ -422,6 +434,7 @@ function makeProd(
 ): Prod {
   const prod: Prod = {
     id,
+    uuid: c.id, // route Clip.id → shotcut:uuid (identity survives the round-trip)
     resource: c.resource,
     service: c.service,
     in: inn,

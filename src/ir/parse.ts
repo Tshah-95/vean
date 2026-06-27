@@ -340,8 +340,14 @@ function fadeFromKeyframes(level: string, playtime: number): Filter[] {
 
 // ─── Producer registry ─────────────────────────────────────────────────────
 function resolveProducer(node: Node): ResolvedProducer {
-  const id = attr(node, "id") ?? "";
   const props = readProperties(node);
+  // Identity is the routed `shotcut:uuid` (Clip.id round-trips through it). Fall
+  // back to the producer's XML `id` attribute when the uuid is absent (a bare
+  // melt producer, or an older file) so the clip still gets a stable id. The XML
+  // `id` attribute is an ephemeral ref target (`producer${N}`) and is NOT the
+  // clip identity — that is precisely what routing through shotcut:uuid fixes.
+  const xmlId = attr(node, "id") ?? "";
+  const id = props["shotcut:uuid"] ?? xmlId;
   const service = props.mlt_service;
   const resource = props.resource ?? "";
   const lengthRaw = props.length;
