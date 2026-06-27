@@ -50,11 +50,14 @@ Three layers. The agent-vs-UI ownership split falls out of them cleanly.
    dials schema, edit algebra, diagnostics, the `melt`/ffmpeg driver. The video
    equivalent of a language server + the engine driver. ~Agent-buildable,
    because it's well-specified (the spec is Shotcut's source).
-2. **The agent bridge.** A thin protocol surface (CLI and/or MCP) exposing the
-   core's verbs — `apply-op`, `diagnose`, `resolve-value-at-frame`,
-   `find-references`, `render`, `still` — plus skills that teach Claude
-   Code/Codex the vocabulary. Makes editing video *feel like* editing code with
-   a language server.
+2. **The agent bridge.** Two coordinated surfaces over the same core:
+   **`vean-lsp`** for ambient feedback (push diagnostics, code actions,
+   definitions/references/hover over the timeline document) and **MCP/CLI tools**
+   for domain actions (`apply-op`, `preview-op`, `undo`, `render`, `still`).
+   `diagnose` exists for CI/debug/manual inspection, but it is **not** the normal
+   agent loop. Agents should see adverse effects the same way they do in code:
+   edit/change happens, diagnostics are pushed without a separate "remember to
+   call diagnose" step.
 3. **The visualization layer.** A Conductor-style web app: project list,
    timeline drawn from the IR, the preview surface (`@remotion/player` slaved to
    a master clock + footage video), and the agent-orchestration UI (sessions,
@@ -62,9 +65,34 @@ Three layers. The agent-vs-UI ownership split falls out of them cleanly.
    *read + light nudge* at first.
 
 The payoff of the split: **human gestures and agent actions become the same
-operations** — both call `apply-op`, both get diagnostics, both get undo. That
-unification is only possible because we did not fork Shotcut's Qt-welded
-gestures/undo. Build the editing logic once.
+operations** — both call the edit algebra, both get undo, and both update the
+same document that `vean-lsp` watches. That unification is only possible because
+we did not fork Shotcut's Qt-welded gestures/undo. Build the editing logic once.
+
+## Agent feedback contract
+
+This is load-bearing. Do not regress it into manual lint/tool polling.
+
+- **Diagnostics engine is shared core.** `src/diagnostics/` owns domain rules
+  once: timeline validity, keyframe bounds, transition overlap, asset refs,
+  dial ranges, A/V hazards, and related locations. LSP, MCP, CLI, tests, and the
+  future UI all call this engine; none reimplement the rules.
+- **LSP is ambient truth.** `vean-lsp` publishes the current complete diagnostic
+  set for each open/project document after document changes. Like TypeScript,
+  Pyright, and rust-analyzer, it does not make agents ask for `diagnose` after
+  every edit. An empty diagnostic set clears prior diagnostics.
+- **MCP tools are domain actions, not the diagnostics source of truth.** Mutating
+  tools return `consequences`, `inverse`, touched URIs, and a compact health
+  summary (`errors`, `warnings`, and only new/blocking diagnostic details). They
+  do **not** dump the whole diagnostic set on every call; that is noisy and
+  belongs to the ambient LSP stream or explicit debug/CI commands.
+- **`diagnose` is a debug/CI verb.** It is allowed for gates, tests, one-off
+  inspection, and non-LSP clients. It must not be the required step that makes a
+  Claude Code edit loop safe.
+- **Code actions are fixes.** Diagnostics that have deterministic repairs should
+  expose LSP code actions and/or MCP safe-edit actions: shorten a transition,
+  relink/remove a dangling asset, remove an orphaned filter, or make a ripple
+  choice explicit.
 
 Because the entire edit state is **text** (IR/XML + Remotion `.tsx` + asset
 refs), `git worktrees` give parallel exploration for free — branch a project,
@@ -146,7 +174,7 @@ each Move lands, not guessed ahead. Until a skill exists, the method is in
 | serialize/parse `.mlt` | _(none yet — Move 0)_ | `src/ir/`, `tests/`, `corpus/` |
 | add/verify an edit operation | _(none yet — Move 1)_ | `src/ops/`, `tests/` |
 | add a diagnostic / lint | _(none yet — Move 1)_ | `src/diagnostics/` |
-| wire the agent bridge / a skill | _(none yet — Move 2)_ | `src/bridge/`, `.claude/skills/` |
+| wire the agent bridge / a skill | _(none yet — Move 2; monitor with `BUILD-MONITOR.md`)_ | `src/lsp/`, `src/bridge/`, `.claude/skills/` |
 | build the viz layer | _(none yet — Move 3)_ | `app/` (TBD) |
 
 ### Keeping the resolver healthy
@@ -171,6 +199,7 @@ corpus/        ← real .mlt files for round-trip + render-faithfulness gates (M
 .claude/skills/← CAPABILITY axis: methods, versioned (written as Moves land)
 app/           ← the reference visualization layer (Move 3, TBD)
 ROADMAP.md     ← the phases + their verification gates (the plan of record)
+BUILD-MONITOR.md ← 15-minute checkpoint/review protocol for active agent builds
 LICENSING.md   ← why AGPL-3.0 + CLA, and the no-linking nuance
 ```
 

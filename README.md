@@ -47,13 +47,17 @@ Three layers:
 
 1. **Core** (headless) — the typed document + serialize/parse + keyframes +
    edit algebra + diagnostics + the `melt`/ffmpeg driver.
-2. **Agent bridge** — a CLI/MCP surface (`apply-op`, `diagnose`,
-   `resolve-value-at-frame`, `find-references`, `render`, `still`) + skills.
+2. **Agent bridge** — `vean-lsp` for ambient diagnostics/navigation/code
+   actions, plus CLI/MCP tools for domain actions (`apply-op`, `preview-op`,
+   `undo`, `render`, `still`, `resolve-value-at-frame`, `find-references`) +
+   skills. `diagnose` remains a debug/CI command, not the normal agent safety
+   loop.
 3. **Visualization layer** — a Conductor-style web app (project list, timeline,
    live preview, agent orchestration with git-worktree exploration).
 
-Human gestures and agent actions are the *same* operations — both get
-diagnostics, both get undo.
+Human gestures and agent actions are the *same* operations — both update the
+same document, both get undo, and `vean-lsp` pushes diagnostics as ambient
+feedback the way coding agents expect from TypeScript/Pyright/rust-analyzer.
 
 ## Relationship to MLT, Shotcut, and Remotion
 

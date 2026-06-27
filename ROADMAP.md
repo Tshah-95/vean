@@ -99,10 +99,12 @@ exactly as we want" gate; everything stacks on it.
 
 ---
 
-## Move 1 — the edit algebra + diagnostics (the LSP, headless)
+## Move 1 — the edit algebra + diagnostics engine (headless)
 
-The verbs and the type-checker. A closed set of pure operations and a static
-diagnostics engine, driven from a CLI.
+The verbs and the shared diagnostic core. A closed set of pure operations plus a
+static diagnostics engine that can be reused by LSP, MCP, CLI, tests, and the
+future UI. The diagnostics engine is not itself the agent loop; it is the domain
+checker every surface calls.
 
 - [x] **(Move 1a)** Edit algebra as pure functions: `op(state) → {state',
       consequences, inverse}`. Mined the taxonomy from Shotcut `src/commands/`:
@@ -123,7 +125,9 @@ diagnostics engine, driven from a CLI.
       transition keyframes (scope resolution — "go-to-definition for video").
 - [ ] `find-references`: clips using a source; readers/writers of a property;
       adjacency/ripple set for a move.
-- [ ] CLI surface: `edit`, `diagnose`, `resolve`, `refs`.
+- [ ] CLI/debug surface: `edit`, `diagnose`, `resolve`, `refs`. `diagnose` is
+      for tests, CI, and manual inspection; it is **not** the required feedback
+      step after ordinary Claude Code edits.
 
 **Gate:**
 - [x] **(Move 1a)** Op-inverse invariant suite: `apply(op)` then `apply(inverse)`
@@ -133,25 +137,45 @@ diagnostics engine, driven from a CLI.
 - [ ] Diagnostics fixtures: broken timelines emit the **exact** expected
       diagnostic; clean timelines emit **zero** (no false positives).
 - [ ] `resolve` / `refs` golden tests on known timelines.
-- [ ] End-to-end script: load → apply N ops → diagnose (expect clean) → render →
-      still.
+- [ ] End-to-end script: load → apply N ops → diagnostics engine reports clean →
+      render → still.
 
 ---
 
-## Move 2 — the agent bridge + skill
+## Move 2 — ambient LSP + diagnostic-aware agent bridge
 
-Make editing video feel like editing code with a language server.
+Make editing video feel like editing code with a language server: Claude should
+see timeline errors after changes without being instructed to call a separate
+diagnose tool, while domain tools still expose consequences and undo.
 
-- [ ] Wrap the core as a tight CLI and/or MCP server (the verbs above).
-- [ ] Write the first real skill: the editing method — when to consult
-      diagnostics (before + after every op), how to read a consequence report,
-      the render→still inspection loop.
+- [ ] Ship `vean-lsp` over stdio with document sync for project documents
+      (`.mlt` and/or the canonical vean project JSON), `publishDiagnostics`,
+      definitions/references/hover for clips/assets/properties, and code actions
+      for deterministic repairs.
+- [ ] Ship a Claude Code plugin config that registers `vean-lsp` with
+      diagnostics enabled by default, so diagnostic feedback is pushed into
+      Claude's context after file/project changes.
+- [ ] Wrap the core as MCP/CLI domain tools: `apply-op`, `preview-op`, `undo`,
+      `render`, `still`, `resolve-value-at-frame`, `find-references`. Tools
+      return consequences, inverse, touched URIs, and compact diagnostic health
+      summaries (`errors`, `warnings`, and new/blocking details only). They do
+      not dump full diagnostics on every call.
+- [ ] Write the first real skill: the editing method — rely on ambient LSP for
+      diagnostics, use MCP tools for domain actions, read consequence reports,
+      and run the render→still inspection loop for perceptual verification.
 - [ ] Seed a fixture project an agent can edit end-to-end.
 
 **Gate:**
+- [ ] Ambient feedback eval: Claude Code edits/applies an op that creates one
+      known timeline defect; `vean-lsp` pushes the diagnostic into context
+      without a manual `diagnose` call. Claude then fixes it, and the pushed
+      diagnostic set clears.
+- [ ] Tool ergonomics eval: `apply-op` returns the expected consequences,
+      inverse, touched URIs, and compact health summary without flooding full
+      diagnostic payloads.
 - [ ] Behavioral eval: Claude Code, given a natural request ("tighten the gap
-      before the payoff clip"), calls the right ops, consults diagnostics, renders
-      — output IR/diff matches expected.
+      before the payoff clip"), calls the right ops, receives ambient diagnostic
+      feedback, renders — output IR/diff matches expected.
 - [ ] Skill checklist verified on ≥2 seeded tasks; human reviews the stills.
 
 ---
