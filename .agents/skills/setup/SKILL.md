@@ -81,7 +81,8 @@ Default choices when the user does not answer and continuing is safe:
   `bun run setup:cli` from the repo root. That delegates to `bun link`, using the
   package `bin.vean` entry so future calls can use `vean ...` instead of an
   absolute path. Ensure `~/.bun/bin` is on PATH for login shells, then verify
-  with `vean doctor --surface cli-lsp`.
+  with `vean doctor --surface cli-lsp`, `vean discover --json`, and
+  `vean timeline ops list --json`.
 - **CLI only**: same CLI registration branch, then verify with
   `bun run doctor --surface cli`.
 - **MCP+LSP**: verify with `bun run doctor --surface mcp-lsp`. Use this when the
@@ -133,6 +134,8 @@ State gate:
 bun run project:init
 vean state status
 vean jobs list
+vean discover --json
+vean timeline ops list --json
 ```
 
 Surface-specific gates:

@@ -376,6 +376,11 @@ keeping canonical edit state in `.mlt` files.
       <!-- `vean media root add/list/remove`, `vean media scan/list/find`, and
       `vean route set/list/resolve` all call `executeAction`; setup beyond doctor
       and config remain future work. -->
+- [x] Add structured discovery for humans and agents:
+      `vean discover --json`, `vean discover <query> --kind ... --json`,
+      enriched `vean action describe`, and timeline op catalog commands
+      (`vean timeline ops list/describe/examples`). Aliases are searchable
+      metadata and CLI conveniences, never duplicate action ids or MCP tools.
 - [ ] Add ergonomic Commander commands for the next action families:
       `setup` beyond doctor and `config`.
 - [ ] Define global options consistently: `--project <id-or-path>`,
@@ -385,9 +390,11 @@ keeping canonical edit state in `.mlt` files.
 - [ ] Standardize output modes: human-readable by default, stable JSON under
       `--json`, newline-delimited JSON only for watch/streaming commands, and
       nonzero exit codes for typed failures.
-- [ ] Add CLI contract tests that assert every action is either exposed by a
+- [x] Add CLI contract tests that assert every action is either exposed by a
       first-class command or intentionally hidden from CLI, and that every CLI
-      command maps to a registered action.
+      command maps to a registered action. <!-- tests/actions-registry.test.ts
+      and tests/cli-actions.test.ts cover canonical command discovery and action
+      parity. -->
 
 ### 3D. Project selection and routing
 
@@ -412,7 +419,9 @@ keeping canonical edit state in `.mlt` files.
       role instead of long paths: `timeline:main`, `media:raw`, `media:proxy`,
       `renders:review`, `stills:latest`, `transcripts:source`, etc.
       <!-- Initial route table/actions landed for arbitrary aliases plus
-      automatic `media:<role>` aliases when adding media roots. Timeline/render/
+      automatic `media:<role>` aliases when adding media roots. Timeline
+      commands now use `timeline:main` for omitted-URI editing and accept
+      path/file URI/route targets with one alias-to-alias indirection. Render/
       still/transcript route families are the next consumers. -->
 - [ ] Make every path-bearing action report resolved paths and touched URIs.
       Agents should never have to infer where a render, still, transcript, proxy,
@@ -452,7 +461,8 @@ keeping canonical edit state in `.mlt` files.
       policy source and not the ambient diagnostics source.
       <!-- `src/bridge/mcp/server.ts` now loops action descriptors with MCP
       metadata and registers tools from the canonical Zod-backed action inputs.
-      `bun run doctor --surface mcp-lsp` starts the server and lists 17 tools. -->
+      tests/mcp-registration.test.ts verifies discovery/timeline tools and that
+      op aliases do not become duplicate MCP tools. -->
 - [ ] Generate Tauri invoke-command descriptors/capability inputs from action
       metadata for the Move-4 app. The app may add presentation-specific code,
       but not duplicate domain logic.
@@ -479,7 +489,7 @@ keeping canonical edit state in `.mlt` files.
 **Gate:**
 - [ ] Registry parity: every Move-2 tool/CLI behavior is now action-backed; tests
       prove old entrypoints and action entrypoints produce the same output.
-- [ ] CLI parity: every registered public action is available through either an
+- [x] CLI parity: every registered public action is available through either an
       ergonomic Commander command or `vean action run`; hidden actions have an
       explicit reason in metadata.
 - [ ] Policy projection: at least one read, preview, timeline write, render,

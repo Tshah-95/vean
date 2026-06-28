@@ -338,10 +338,13 @@ Mostly **planned** — implemented per Move. See [ROADMAP.md](ROADMAP.md).
 | Test / typecheck / lint | `bun run test` · `bun run typecheck` · `bun run lint` | now |
 | Round-trip a `.mlt` (parse→IR→serialize) | `bun run roundtrip <file.mlt>` | Move 0 |
 | Render-faithfulness gate over the corpus | `bun run verify:corpus` | Move 0 |
-| Apply an edit op | `bun run edit <op> …` | Move 1 |
-| Diagnose a timeline | `bun run diagnose <file>` | Move 1 |
-| Resolve a param's value at a frame | `bun run resolve <param> <frame>` | Move 1 |
-| Render headless / inspect a frame | `bun run render <file>` · `bun run still <file> <frame>` | Move 0–1 |
+| Discover commands/actions/ops | `vean discover --json` · `vean discover <query> --kind op --json` | Move 3 |
+| Discover timeline ops | `vean timeline ops list --json` · `vean timeline ops describe <op-or-alias> --json` | Move 3 |
+| Select/current timeline | `vean timeline use <path-or-alias> --json` · `vean timeline current --json` | Move 3 |
+| Apply/preview an edit op | `vean timeline apply-op <op-or-alias> --args-json '<json>' --json` · `vean timeline preview-op <op-or-alias> --args-json '<json>' --json` | Move 3 |
+| Diagnose a timeline | `vean timeline diagnose [file] --json` | Move 3 |
+| Resolve a param's value at a frame | `vean timeline resolve-value-at-frame <frame> --target-json '<json>' --json` | Move 3 |
+| Render headless / inspect a frame | `vean render video <file> --out <path>` · `vean render still <file> <frame> --out <path>` | Move 3 |
 | Verify local setup / host integration | `bun run doctor` | Move 2 |
 | Register the CLI on PATH | `bun run setup:cli` then `vean doctor --surface cli-lsp` | Move 2 |
 | Initialize local state | `bun run state:init` · `bun run project:init` | now |

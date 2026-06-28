@@ -18,8 +18,8 @@ design exists to prevent.
 | Surface | What it is | What it's for | How you reach it |
 |---|---|---|---|
 | **`vean-lsp`** | ambient feedback | *seeing* — pushes the FULL current diagnostic set after every document change | runs in your editor/host; you read its diagnostics, you don't call it |
-| **`vean-mcp` tools** | domain actions | *doing* — apply/preview/undo an op, resolve a value, find references, render, still | MCP tools, or the `bun run …` CLI twins |
-| **`diagnose`** | a debug verb | a deliberate full report (CI gate, sanity sweep) — **not** the per-edit loop | the `diagnose` tool / `bun run diagnose <file>` |
+| **`vean-mcp` tools** | domain actions | *doing* — apply/preview/undo an op, resolve a value, find references, render, still | MCP tools, or the `vean ...` CLI |
+| **`diagnose`** | a debug verb | a deliberate full report (CI gate, sanity sweep) — **not** the per-edit loop | the `diagnose` tool / `vean timeline diagnose` |
 
 ## The mental model
 
@@ -41,8 +41,34 @@ so "the diagnostics are clean" never gets mistaken for "the cut looks right."
 
 ## The loop, step by step
 
-1. **Mutate with an op, never by hand-editing XML.** The only legal mutation path
-   is an op through the edit algebra (`apply-op` tool, or `bun run edit`). An op
+1. **Discover before guessing.** If you do not already know the exact operation
+   and argument shape, start with structured discovery:
+
+   ```bash
+   vean discover "crossfade clips" --kind op --json
+   vean timeline ops list --json
+   vean timeline ops describe crossfade --json
+   vean timeline ops examples volume --json
+   ```
+
+   Aliases are ergonomic only. `crossfade` resolves to canonical `dissolve`,
+   `volume` resolves to `gain`, and `trim-out` resolves to `trimOut`; durable
+   identity in results, inverses, registry ids, MCP tools, and undo stays
+   canonical.
+
+2. **Set or confirm the active timeline.** Prefer a project-local
+   `timeline:main` route over repeating absolute paths:
+
+   ```bash
+   vean timeline current --json
+   vean timeline use timelines/main.mlt --json
+   ```
+
+   Once `timeline:main` exists, timeline commands may omit the URI. Use
+   `--timeline <path|file://uri|route-alias>` when you need an explicit target.
+
+3. **Mutate with an op, never by hand-editing XML.** The only legal mutation path
+   is an op through the edit algebra (`apply-op` tool, or `vean timeline apply-op`). An op
    is `{ op, args }` — e.g. `{ op: "trimIn", args: { uuid: "<clip-uuid>", delta: 10 } }`,
    `{ op: "gain", args: { uuid: "<clip-uuid>", db: -6 } }`, `{ op: "dissolve",
    args: { leftUuid, rightUuid, frames: 20 } }`. Hand-editing the `.mlt` desyncs
@@ -51,7 +77,7 @@ so "the diagnostics are clean" never gets mistaken for "the cut looks right."
    - **Refer to a clip by its stable uuid, not its index.** Indices are ephemeral;
      a uuid is the identity that survives the edit and that the inverse names.
 
-2. **Read the ToolResult before you render.** Every mutating tool returns the
+4. **Read the ToolResult before you render.** Every mutating tool returns the
    mutation facts — read them in this order:
    - **`consequences`** — the structured "what changed": which clips trimmed/moved,
      whether a ripple shifted downstream clips, the duration delta, any warnings.
@@ -66,7 +92,7 @@ so "the diagnostics are clean" never gets mistaken for "the cut looks right."
      blocking error diagnostics. Clean edits omit it entirely. If it is present,
      fix the error or undo before rendering.
 
-3. **Let the LSP show you the rest — don't poll `diagnose`.** After the edit
+5. **Let the LSP show you the rest — don't poll `diagnose`.** After the edit
    writes the file, `vean-lsp` re-publishes the complete current diagnostic set for
    that document. New adverse effects appear in your context *ambiently*, the same
    way a type error does after you save a `.ts` file. **Calling `diagnose` after an
@@ -75,7 +101,7 @@ so "the diagnostics are clean" never gets mistaken for "the cut looks right."
    safety step that makes an edit loop OK. Tool `alerts` only tell you what this
    mutation newly broke; the ambient set from the LSP is the full picture.
 
-4. **Prefer `preview-op` when you're unsure or comparing.** `preview-op` returns
+6. **Prefer `preview-op` when you're unsure or comparing.** `preview-op` returns
    the *same* consequences + inverse + optional alerts a real edit would produce,
    **without** writing the document. Reach for it when:
    - the op might fail a precondition and you want to see the typed error first;
@@ -87,7 +113,7 @@ so "the diagnostics are clean" never gets mistaken for "the cut looks right."
    the rendered frame next anyway — undo is exact, so a wrong `apply-op` is cheap
    to reverse.
 
-5. **SEE the frame — non-negotiable for anything perceptual.** A clean diagnostic
+7. **SEE the frame — non-negotiable for anything perceptual.** A clean diagnostic
    set is the type-checker passing; it is **not** proof the cut *looks* right.
    `render` the document to an MP4, then `still` the exact 0-based frame at the
    moment you changed (both return the produced file in `touchedUris` — read that
@@ -95,8 +121,8 @@ so "the diagnostics are clean" never gets mistaken for "the cut looks right."
    the transition so you see the arc, not a single instant. Judge feel from the
    pixels, not from the absence of diagnostics.
 
-6. **Undo is free and exact.** Pass a prior result's `inverse` to the `undo` tool
-   (or `bun run undo`); it restores the prior IR deep-equal and re-publishes the
+8. **Undo is free and exact.** Pass a prior result's `inverse` to the `undo` tool
+   (or `vean timeline undo`); it restores the prior IR deep-equal and re-publishes the
    cleared diagnostics. This is what makes exploration cheap — try the tighter cut,
    render it, keep it or undo it. (One caveat: an op that *mints* a new uuid —
    `split`'s left half — names that in-session uuid in its inverse, so undo it
@@ -168,23 +194,27 @@ trim pushed a clip past its source, the result would include `alerts: [...]`; fi
 that or undo before rendering. Existing warnings and standing health belong to the
 ambient LSP and deliberate `diagnose`, not every mutation response.
 
-## CLI twins (when there's no MCP host)
+## CLI surface (when there's no MCP host)
 
-Every MCP tool has a `bun run` twin for scripting or a non-LSP context. Note:
+Every MCP tool is projected from the same action registry as the Commander CLI.
+Note:
 without an LSP host you lose the ambient push — the CLI prints the consequence +
-inverse, and you reach for `bun run diagnose <file>` *deliberately* for the full
+inverse, and you reach for `vean timeline diagnose <file>` *deliberately* for the full
 set (this is the legitimate non-LSP use of `diagnose`, not per-edit polling).
 
 | Tool | CLI |
 |---|---|
-| apply-op | `bun run edit <in.mlt> <op> <json-args> [out.mlt]` |
-| preview-op | `bun run preview-op <file.mlt> <op> <json-args>` |
-| undo | `bun run undo <in.mlt> <op> <json-args>` |
-| render | `bun run render <file>` |
-| still | `bun run still <file> <frame>` |
-| resolve-value-at-frame | `bun run resolve …` |
-| find-references | `bun run refs …` |
-| diagnose (debug only) | `bun run diagnose <file>` |
+| discover | `vean discover [query] --json` |
+| op catalog | `vean timeline ops list/describe/examples --json` |
+| active timeline | `vean timeline use <path-or-alias> --json` |
+| apply-op | `vean timeline apply-op <op-or-alias> --args-json '<json>' --json` |
+| preview-op | `vean timeline preview-op <op-or-alias> --args-json '<json>' --json` |
+| undo | `vean timeline undo --inverse-json '<json>' --json` |
+| render | `vean render video <file> --out <path> --json` |
+| still | `vean render still <file> <frame> --out <path> --json` |
+| resolve-value-at-frame | `vean timeline resolve-value-at-frame <frame> --target-json '<json>' --json` |
+| find-references | `vean timeline find-references --query-json '<json>' --json` |
+| diagnose (debug only) | `vean timeline diagnose [file] --json` |
 
 ## Host setup
 

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { cpSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -12,6 +12,7 @@ function run(args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv } 
     cwd: options.cwd ?? repo,
     env: { ...process.env, ...options.env },
     encoding: "utf8",
+    maxBuffer: 10 * 1024 * 1024,
   });
   if (result.status !== 0) {
     throw new Error(
@@ -99,5 +100,84 @@ describe("action-backed CLI", () => {
     expect(preview.touchedUris).toContain(fixture);
     expect(preview.health).toBeUndefined();
     expect(preview.diagnostics).toBeUndefined();
+  });
+
+  it("keeps old explicit-uri apply-op form and new discovery commands action-backed", () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "vean-action-parity-project-"));
+    const configHome = mkdtempSync(join(tmpdir(), "vean-action-parity-config-"));
+    const neutralCwd = mkdtempSync(join(tmpdir(), "vean-action-parity-cwd-"));
+    const env = { VEAN_CONFIG_HOME: configHome };
+    const fixture = resolve(repo, "corpus", "vean-multitrack.mlt");
+    const doc = join(projectRoot, "main.mlt");
+    cpSync(fixture, doc);
+
+    json(["project", "init", "--repo", projectRoot, "--json"], { env });
+
+    const applied = json<{
+      ok: true;
+      invocation: { op: string };
+      touchedUris: string[];
+      health?: unknown;
+      diagnostics?: unknown;
+    }>(
+      ["timeline", "apply-op", doc, "gain", "--args-json", '{"uuid":"clip-5","db":-6}', "--json"],
+      { env },
+    );
+    expect(applied.ok).toBe(true);
+    expect(applied.invocation.op).toBe("gain");
+    expect(applied.touchedUris).toEqual([doc]);
+    expect(applied.health).toBeUndefined();
+    expect(applied.diagnostics).toBeUndefined();
+
+    const discoverCli = json<{ results: Array<{ canonicalOp?: string }> }>(
+      ["discover", "duck audio", "--kind", "op", "--json"],
+      { env },
+    );
+    const discoverAction = json<{
+      ok: true;
+      output: { results: Array<{ canonicalOp?: string }> };
+    }>(
+      [
+        "action",
+        "run",
+        "discover.search",
+        "--input-json",
+        '{"query":"duck audio","kind":"op","limit":10}',
+      ],
+      { env },
+    );
+    expect(discoverCli.results.map((result) => result.canonicalOp)).toEqual(
+      discoverAction.output.results.map((result) => result.canonicalOp),
+    );
+
+    const opsCli = json<{ operations: Array<{ op: string }> }>(
+      ["timeline", "ops", "list", "--json"],
+      { env },
+    );
+    const opsAction = json<{ ok: true; output: { operations: Array<{ op: string }> } }>(
+      ["action", "run", "timeline.ops.list", "--input-json", "{}"],
+      { env },
+    );
+    expect(opsCli.operations.map((op) => op.op)).toEqual(
+      opsAction.output.operations.map((op) => op.op),
+    );
+
+    const useCli = json<{ activeTimeline: { resolvedPath: string } }>(
+      ["--cwd", neutralCwd, "timeline", "use", doc, "--json"],
+      { env },
+    );
+    const currentCli = json<{ activeTimeline: { resolvedPath: string } }>(
+      ["--cwd", neutralCwd, "timeline", "current", "--json"],
+      { env },
+    );
+    const currentAction = json<{
+      ok: true;
+      output: { activeTimeline: { resolvedPath: string } };
+    }>(["--cwd", neutralCwd, "action", "run", "timeline.current", "--input-json", "{}"], {
+      env,
+    });
+    expect(useCli.activeTimeline.resolvedPath).toBe(doc);
+    expect(currentCli.activeTimeline.resolvedPath).toBe(doc);
+    expect(currentAction.output.activeTimeline.resolvedPath).toBe(doc);
   });
 });

@@ -46,4 +46,11 @@ describe("op catalog", () => {
     expect(() => describeOp("_unlift")).toThrow(/unknown op/);
     expect(searchOps("_unlift")).toEqual([]);
   });
+
+  it("returns deterministic near-match suggestions for likely alias typos", () => {
+    expect(searchOps("crossfdae")[0]).toMatchObject({
+      canonicalOp: "dissolve",
+      reason: "alias near match",
+    });
+  });
 });

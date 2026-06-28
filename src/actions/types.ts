@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import type { ResolvedProject } from "../project/context";
+import type { SchemaSummary } from "./schema-summary";
 
 export type ActionScope =
   | "timeline:read"
@@ -55,6 +56,9 @@ export type ActionDefinition<I = unknown, O = unknown> = {
   id: string;
   title: string;
   description: string;
+  aliases?: string[];
+  examples?: Array<{ name: string; input: unknown; prompt?: string }>;
+  relatedDiscovery?: string[];
   input: z.ZodType<I>;
   output: z.ZodType<O>;
   scopes: ActionScope[];
@@ -69,6 +73,11 @@ export type ActionDescriptor = {
   description: string;
   scopes: ActionScope[];
   effect: ActionEffect;
+  inputSummary: SchemaSummary;
+  outputSummary: SchemaSummary;
+  aliases: string[];
+  examples: Array<{ name: string; input: unknown; prompt?: string }>;
+  relatedDiscovery?: string[];
   surfaces: ActionSurfaces;
   mcpAnnotations: {
     readOnlyHint: boolean;

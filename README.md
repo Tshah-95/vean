@@ -166,10 +166,39 @@ future action families.
 The Commander CLI is now backed by the seeded action registry:
 
 ```bash
+vean discover --json
+vean discover "duck audio" --kind op --json
 vean action list
 vean action describe timeline.previewOp
 vean action run state.status --input-json '{}'
 ```
+
+Timeline operations are discoverable before you edit:
+
+```bash
+vean timeline ops list --json
+vean timeline ops describe crossfade --json
+vean timeline ops examples volume --json
+```
+
+Aliases such as `crossfade`, `volume`, and `trim-out` are accepted for CLI and
+search ergonomics, but durable identity stays canonical: `dissolve`, `gain`,
+`trimOut`, and action ids like `timeline.applyOp`.
+
+Set the active timeline once per project, then omit repeated file paths:
+
+```bash
+vean timeline use timelines/main.mlt --json
+vean timeline current --json
+vean timeline preview-op gain --args-json '{"uuid":"clip-5","db":-6}' --json
+vean timeline apply-op volume --args-json '{"uuid":"clip-5","db":-6}' --json
+```
+
+For explicit routing, every path-bearing timeline command also accepts
+`--timeline <path|file://uri|route-alias>` or the old
+`vean timeline preview-op <file.mlt> <op>` form. `timeline:main` is stored as a
+project-local route alias in `.vean/vean.db`; the `.mlt` file remains the
+canonical edit document.
 
 The local Mac app scaffold lives in `app/`. Verify the scaffold, Tauri config,
 capabilities, sidecar manifest, and action-registry linkage with:

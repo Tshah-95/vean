@@ -273,9 +273,32 @@ function scoreDescriptor(
       if (score > best.score) best = { score, reason: `${field} exact match` };
     } else if (text.includes(q) || q.split(/\s+/).every((part) => text.includes(part))) {
       if (weight > best.score) best = { score: weight, reason: `${field} match` };
+    } else if ((field === "op" || field === "alias") && isNearMiss(q, text)) {
+      const score = Math.max(1, weight - 70);
+      if (score > best.score) best = { score, reason: `${field} near match` };
     }
   }
   return best;
+}
+
+function isNearMiss(query: string, candidate: string): boolean {
+  if (query.length < 4 || candidate.length < 4) return false;
+  const distance = levenshtein(query, candidate);
+  return distance <= (Math.max(query.length, candidate.length) <= 8 ? 2 : 3);
+}
+
+function levenshtein(a: string, b: string): number {
+  const prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  const curr = Array.from({ length: b.length + 1 }, () => 0);
+  for (let i = 1; i <= a.length; i += 1) {
+    curr[0] = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const substitution = (prev[j - 1] ?? 0) + (a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1);
+      curr[j] = Math.min((prev[j] ?? 0) + 1, (curr[j - 1] ?? 0) + 1, substitution);
+    }
+    for (let j = 0; j <= b.length; j += 1) prev[j] = curr[j] ?? 0;
+  }
+  return prev[b.length] ?? 0;
 }
 
 export function searchOps(query: string): OpSearchResult[] {

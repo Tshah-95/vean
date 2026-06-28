@@ -37,6 +37,11 @@ function outputIsToolError(output: unknown): boolean {
   );
 }
 
+function mcpDescription(description: string): string {
+  if (/^use this when/i.test(description)) return description;
+  return `Use this when ${description.charAt(0).toLowerCase()}${description.slice(1)}`;
+}
+
 /** Register every MCP-exposed vean action on a server. */
 export function registerTools(server: McpServer): void {
   for (const action of listActions()) {
@@ -46,10 +51,16 @@ export function registerTools(server: McpServer): void {
     server.registerTool(
       mcp.name ?? action.id,
       {
-        description: action.description,
+        title: action.title,
+        description: mcpDescription(action.description),
         inputSchema: objectShape(action.input),
         annotations: descriptor.mcpAnnotations,
-      },
+        _meta: {
+          "vean/actionId": action.id,
+          "vean/aliases": descriptor.aliases,
+          "vean/relatedDiscovery": descriptor.relatedDiscovery ?? [],
+        },
+      } as never,
       async (input) => {
         const envelope = await executeAction(
           action.id,

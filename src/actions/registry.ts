@@ -1,11 +1,14 @@
 import { resolve } from "node:path";
 import { z } from "zod";
+import { describeOp, listOpDescriptors, searchOps } from "../ops/catalog";
 import {
   projectConfigPath,
   resolveProject,
   resolveProjectReference,
   setActiveProject,
 } from "../project/context";
+import type { ResolvedProject } from "../project/context";
+import { summarizeSchema } from "./schema-summary";
 import type {
   ActionContext,
   ActionDefinition,
@@ -29,6 +32,8 @@ const jsonString = z
 const repoInput = z.object({ repo: z.string().optional() });
 const projectInput = z.object({ project: z.string().optional() });
 const emptyInput = z.object({}).strict();
+const discoverKind = z.enum(["all", "command", "action", "op", "route"]).default("all");
+const discoverLimit = z.coerce.number().int().positive().max(50).default(10);
 
 function uriToPath(uri: string): string {
   return uri.startsWith("file://") ? decodeURIComponent(uri.slice("file://".length)) : uri;
@@ -94,6 +99,156 @@ function action<I, O>(definition: ActionDefinition<I, O>): ActionDefinition<I, O
   return definition;
 }
 
+function repoFor(ctx: ActionContext, repo?: string): string {
+  return repo ?? ctx.project?.rootPath ?? ctx.cwd;
+}
+
+function projectFor(ctx: ActionContext, repo?: string): ResolvedProject {
+  const root = repoFor(ctx, repo);
+  return (
+    resolveProject({ project: root, cwd: ctx.cwd, env: ctx.env }) ?? {
+      rootPath: root,
+      source: "explicit",
+      stateDbPath: "",
+    }
+  );
+}
+
+type SearchResult = {
+  kind: "command" | "action" | "op" | "route";
+  canonicalId?: string;
+  canonicalOp?: string;
+  title: string;
+  aliases: string[];
+  command?: string;
+  actionId?: string;
+  describeCommand?: string;
+  rank: number;
+  score: number;
+  reason: string;
+};
+
+function textScore(
+  query: string,
+  fields: Array<[field: string, value: string | undefined, weight: number]>,
+): { score: number; reason: string } {
+  const q = query.toLowerCase().trim();
+  let best = { score: 0, reason: "" };
+  for (const [field, value, weight] of fields) {
+    if (!value) continue;
+    const text = value.toLowerCase();
+    if (text === q) {
+      const score = weight + 20;
+      if (score > best.score) best = { score, reason: `${field} exact match` };
+    } else if (text.includes(q) || q.split(/\s+/).every((part) => text.includes(part))) {
+      if (weight > best.score) best = { score: weight, reason: `${field} match` };
+    }
+  }
+  return best;
+}
+
+function commandDescriptors() {
+  return listActions()
+    .filter((entry) => entry.surfaces.cli && !("hidden" in entry.surfaces.cli))
+    .map((entry) => {
+      const cli = entry.surfaces.cli as { command?: string };
+      return {
+        kind: "command" as const,
+        command: cli.command ?? entry.id,
+        actionId: entry.id,
+        title: entry.title,
+        description: entry.description,
+        aliases: entry.aliases ?? [],
+      };
+    });
+}
+
+function searchRegistry(
+  query: string,
+  kind: z.infer<typeof discoverKind>,
+  limit: number,
+  routes: Array<{ alias: string; target: string }> = [],
+): SearchResult[] {
+  const results: SearchResult[] = [];
+  if (kind === "all" || kind === "op") results.push(...searchOps(query));
+  if (kind === "all" || kind === "action") {
+    for (const entry of listActions()) {
+      const scored = textScore(query, [
+        ["id", entry.id, 100],
+        ["title", entry.title, 70],
+        ["description", entry.description, 40],
+        ...(entry.aliases ?? []).map((alias) => ["alias", alias, 90] as [string, string, number]),
+      ]);
+      if (scored.score > 0) {
+        results.push({
+          kind: "action",
+          canonicalId: entry.id,
+          actionId: entry.id,
+          title: entry.title,
+          aliases: entry.aliases ?? [],
+          describeCommand: `vean action describe ${entry.id} --json`,
+          rank: 0,
+          score: scored.score,
+          reason: scored.reason,
+        });
+      }
+    }
+  }
+  if (kind === "all" || kind === "command") {
+    for (const command of commandDescriptors()) {
+      const scored = textScore(query, [
+        ["command", command.command, 100],
+        ["title", command.title, 70],
+        ["description", command.description, 40],
+      ]);
+      if (scored.score > 0) {
+        results.push({
+          kind: "command",
+          canonicalId: command.command,
+          actionId: command.actionId,
+          title: command.title,
+          aliases: command.aliases,
+          command: `vean ${command.command} --json`,
+          rank: 0,
+          score: scored.score,
+          reason: scored.reason,
+        });
+      }
+    }
+  }
+  if (kind === "all" || kind === "route") {
+    for (const route of routes) {
+      const scored = textScore(query, [
+        ["alias", route.alias, 100],
+        ["target", route.target, 50],
+      ]);
+      if (scored.score > 0) {
+        results.push({
+          kind: "route",
+          canonicalId: route.alias,
+          title: route.alias,
+          aliases: [],
+          command: `vean route resolve ${route.alias} --json`,
+          rank: 0,
+          score: scored.score,
+          reason: scored.reason,
+        });
+      }
+    }
+  }
+  return results
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        a.kind.localeCompare(b.kind) ||
+        (a.canonicalId ?? a.canonicalOp ?? a.title).localeCompare(
+          b.canonicalId ?? b.canonicalOp ?? b.title,
+        ),
+    )
+    .slice(0, limit)
+    .map((result, index) => ({ ...result, rank: index + 1 }));
+}
+
 export function createActionContext(options: {
   cwd?: string;
   surface?: ActionContext["surface"];
@@ -112,11 +267,158 @@ export function createActionContext(options: {
 
 const actions = [
   action({
+    id: "discover.manifest",
+    title: "Discover Vean Surface",
+    description: "Use this when an agent or human needs the current vean command/action/op map.",
+    input: emptyInput,
+    output: z.unknown(),
+    scopes: ["state:read"],
+    effect: baseEffects.stateRead,
+    surfaces: { cli: { command: "discover" }, mcp: { name: "discover-manifest" } },
+    async execute(ctx) {
+      const project = ctx.project ?? null;
+      const { activeTimeline, routeAliases } = project
+        ? await (async () => {
+            const { currentTimeline } = await import("../state/timeline");
+            const { listRouteAliases } = await import("../state/media");
+            return {
+              activeTimeline: currentTimeline(project.rootPath, project),
+              routeAliases: listRouteAliases(project.rootPath),
+            };
+          })()
+        : { activeTimeline: null, routeAliases: [] };
+      const active =
+        activeTimeline && !("ok" in activeTimeline) ? activeTimeline.activeTimeline : null;
+      const opFamilies = listOpDescriptors().reduce(
+        (acc, descriptor) => {
+          const group = acc.find((entry) => entry.category === descriptor.category);
+          if (group) group.ops.push(descriptor.op);
+          else acc.push({ category: descriptor.category, ops: [descriptor.op] });
+          return acc;
+        },
+        [] as Array<{ category: string; ops: string[] }>,
+      );
+      return {
+        project,
+        activeTimeline: active,
+        commands: commandDescriptors(),
+        actions: listActions().map(describeAction),
+        opFamilies,
+        routes: [
+          { namespace: "timeline", examples: ["timeline:main"] },
+          { namespace: "media", examples: ["media:raw", "media:proxy"] },
+          { namespace: "renders", examples: ["renders:review"] },
+        ],
+        routeAliases,
+        next: [
+          "vean timeline ops list --json",
+          "vean timeline current --json",
+          "vean discover <query> --json",
+        ],
+      };
+    },
+  }),
+  action({
+    id: "discover.search",
+    title: "Search Vean Surface",
+    description:
+      "Use this when mapping an editing intent to a canonical vean command, action, or op.",
+    input: z.object({
+      query: z.string().trim().min(1),
+      kind: discoverKind,
+      limit: discoverLimit,
+    }),
+    output: z.unknown(),
+    scopes: ["state:read"],
+    effect: baseEffects.stateRead,
+    surfaces: { cli: { command: "discover" }, mcp: { name: "discover-search" } },
+    async execute(ctx, input) {
+      const { listRouteAliases } = await import("../state/media");
+      const routes = ctx.project ? listRouteAliases(ctx.project.rootPath) : [];
+      const results = searchRegistry(input.query, input.kind ?? "all", input.limit ?? 10, routes);
+      const ambiguous =
+        input.query.toLowerCase().trim() === "delete" &&
+        results.some((result) => result.canonicalOp === "lift") &&
+        results.some((result) => result.canonicalOp === "remove");
+      return {
+        query: input.query,
+        kind: input.kind ?? "all",
+        limit: input.limit ?? 10,
+        ambiguous,
+        results,
+      };
+    },
+  }),
+  action({
+    id: "timeline.ops.list",
+    title: "List Timeline Operations",
+    description:
+      "Use this when discovering the public edit operations available for .mlt timelines.",
+    input: z.object({ category: z.string().optional() }),
+    output: z.unknown(),
+    scopes: ["timeline:read"],
+    effect: baseEffects.read,
+    surfaces: { cli: { command: "timeline ops list" }, mcp: { name: "timeline-ops-list" } },
+    execute(_ctx, input) {
+      const operations = listOpDescriptors().filter(
+        (descriptor) => !input.category || descriptor.category === input.category,
+      );
+      const publicOperations = operations.map(({ input: _input, ...descriptor }) => descriptor);
+      const groups = publicOperations.reduce(
+        (acc, descriptor) => {
+          const group = acc.find((entry) => entry.category === descriptor.category);
+          if (group) group.ops.push(descriptor.op);
+          else acc.push({ category: descriptor.category, ops: [descriptor.op] });
+          return acc;
+        },
+        [] as Array<{ category: string; ops: string[] }>,
+      );
+      return { operations: publicOperations, groups };
+    },
+  }),
+  action({
+    id: "timeline.ops.describe",
+    title: "Describe Timeline Operation",
+    description: "Use this when an agent needs an edit op's arguments, aliases, and examples.",
+    input: z.object({ op: z.string() }),
+    output: z.unknown(),
+    scopes: ["timeline:read"],
+    effect: baseEffects.read,
+    surfaces: {
+      cli: { command: "timeline ops describe" },
+      mcp: { name: "timeline-ops-describe" },
+    },
+    execute(_ctx, input) {
+      const { descriptor, canonicalOp, resolvedFrom } = describeOp(input.op);
+      const { input: _schema, ...publicDescriptor } = descriptor;
+      return { canonicalOp, resolvedFrom, descriptor: publicDescriptor };
+    },
+  }),
+  action({
+    id: "timeline.ops.examples",
+    title: "Timeline Operation Examples",
+    description: "Use this when an agent needs concrete valid JSON args for a timeline operation.",
+    input: z.object({ op: z.string() }),
+    output: z.unknown(),
+    scopes: ["timeline:read"],
+    effect: baseEffects.read,
+    surfaces: {
+      cli: { command: "timeline ops examples" },
+      mcp: { name: "timeline-ops-examples" },
+    },
+    execute(_ctx, input) {
+      const { descriptor, canonicalOp, resolvedFrom } = describeOp(input.op);
+      return { canonicalOp, resolvedFrom, examples: descriptor.examples };
+    },
+  }),
+  action({
     id: "timeline.applyOp",
     title: "Apply Timeline Operation",
     description: "Apply an edit operation to a .mlt document and persist the result.",
+    relatedDiscovery: ["timeline.ops.list", "timeline.ops.describe"],
     input: z.object({
-      uri: z.string(),
+      uri: z.string().optional(),
+      timeline: z.string().optional(),
       op: z.string(),
       args: z.record(z.string(), z.unknown()).default({}),
     }),
@@ -134,22 +436,59 @@ const actions = [
       audit: "full-input",
     },
     surfaces: { cli: { command: "timeline apply-op" }, mcp: { name: "apply-op" } },
-    async execute(_ctx, input) {
+    async execute(ctx, input) {
       const { parseDoc, serializeDoc } = await import("../bridge/tools/core");
       const { mutate } = await import("../bridge/tools/mutate");
       const { isToolError } = await import("../bridge/tools/types");
-      const state = parseDoc(await readDoc(input.uri));
-      const { outcome, newState } = mutate(state, { op: input.op, args: input.args }, input.uri);
-      if (!isToolError(outcome) && newState) await writeDoc(input.uri, serializeDoc(newState));
-      return outcome;
+      const { resolveTimelineTarget } = await import("../state/timeline");
+      if (input.op.startsWith("_")) {
+        return { ok: false, kind: "non-public-op", detail: `op is not public: ${input.op}` };
+      }
+      let resolvedOp: { canonicalOp: string; resolvedFrom?: string };
+      try {
+        const { resolveOpName } = await import("../ops/catalog");
+        resolvedOp = resolveOpName(input.op);
+      } catch {
+        const { searchOps } = await import("../ops/catalog");
+        return {
+          ok: false,
+          kind: "unknown-op",
+          detail: `unknown op: ${input.op}`,
+          suggestions: searchOps(input.op).slice(0, 5),
+          command: "vean timeline ops list --json",
+        };
+      }
+      const project = projectFor(ctx);
+      const timeline = resolveTimelineTarget(
+        project.rootPath,
+        project,
+        input.timeline ?? input.uri,
+      );
+      if ("ok" in timeline) return timeline;
+      const state = parseDoc(await readDoc(timeline.uri));
+      const { outcome, newState } = mutate(
+        state,
+        { op: resolvedOp.canonicalOp, args: input.args },
+        timeline.uri,
+      );
+      if (!isToolError(outcome) && newState) await writeDoc(timeline.uri, serializeDoc(newState));
+      return {
+        ...outcome,
+        invocation: { op: resolvedOp.canonicalOp, resolvedFrom: resolvedOp.resolvedFrom },
+        uri: timeline.uri,
+        resolvedPath: timeline.resolvedPath,
+        project: timeline.project,
+      };
     },
   }),
   action({
     id: "timeline.previewOp",
     title: "Preview Timeline Operation",
     description: "Preview an edit operation without changing the document.",
+    relatedDiscovery: ["timeline.ops.list", "timeline.ops.describe"],
     input: z.object({
-      uri: z.string(),
+      uri: z.string().optional(),
+      timeline: z.string().optional(),
       op: z.string(),
       args: z.record(z.string(), z.unknown()).default({}),
     }),
@@ -167,11 +506,47 @@ const actions = [
       audit: "full-input",
     },
     surfaces: { cli: { command: "timeline preview-op" }, mcp: { name: "preview-op" } },
-    async execute(_ctx, input) {
+    async execute(ctx, input) {
       const { parseDoc } = await import("../bridge/tools/core");
       const { preview } = await import("../bridge/tools/mutate");
-      const state = parseDoc(await readDoc(input.uri));
-      return preview(state, { op: input.op, args: input.args }, input.uri);
+      const { resolveTimelineTarget } = await import("../state/timeline");
+      if (input.op.startsWith("_")) {
+        return { ok: false, kind: "non-public-op", detail: `op is not public: ${input.op}` };
+      }
+      let resolvedOp: { canonicalOp: string; resolvedFrom?: string };
+      try {
+        const { resolveOpName } = await import("../ops/catalog");
+        resolvedOp = resolveOpName(input.op);
+      } catch {
+        const { searchOps } = await import("../ops/catalog");
+        return {
+          ok: false,
+          kind: "unknown-op",
+          detail: `unknown op: ${input.op}`,
+          suggestions: searchOps(input.op).slice(0, 5),
+          command: "vean timeline ops list --json",
+        };
+      }
+      const project = projectFor(ctx);
+      const timeline = resolveTimelineTarget(
+        project.rootPath,
+        project,
+        input.timeline ?? input.uri,
+      );
+      if ("ok" in timeline) return timeline;
+      const state = parseDoc(await readDoc(timeline.uri));
+      const outcome = preview(
+        state,
+        { op: resolvedOp.canonicalOp, args: input.args },
+        timeline.uri,
+      );
+      return {
+        ...outcome,
+        invocation: { op: resolvedOp.canonicalOp, resolvedFrom: resolvedOp.resolvedFrom },
+        uri: timeline.uri,
+        resolvedPath: timeline.resolvedPath,
+        project: timeline.project,
+      };
     },
   }),
   action({
@@ -179,7 +554,8 @@ const actions = [
     title: "Undo Timeline Operation",
     description: "Undo an edit by applying a prior result's inverse invocation.",
     input: z.object({
-      uri: z.string(),
+      uri: z.string().optional(),
+      timeline: z.string().optional(),
       inverse: z.object({ op: z.string(), args: z.record(z.string(), z.unknown()) }),
     }),
     output: z.unknown(),
@@ -196,28 +572,61 @@ const actions = [
       audit: "full-input",
     },
     surfaces: { cli: { command: "timeline undo" }, mcp: { name: "undo" } },
-    async execute(_ctx, input) {
+    async execute(ctx, input) {
       const { parseDoc, serializeDoc } = await import("../bridge/tools/core");
       const { undoTool } = await import("../bridge/tools/mutate");
       const { isToolError } = await import("../bridge/tools/types");
-      const state = parseDoc(await readDoc(input.uri));
-      const { outcome, newState } = undoTool(state, input.inverse, input.uri);
-      if (!isToolError(outcome) && newState) await writeDoc(input.uri, serializeDoc(newState));
-      return outcome;
+      const { resolveTimelineTarget } = await import("../state/timeline");
+      const project = projectFor(ctx);
+      const timeline = resolveTimelineTarget(
+        project.rootPath,
+        project,
+        input.timeline ?? input.uri,
+      );
+      if ("ok" in timeline) return timeline;
+      const inverse = input.inverse.op.startsWith("_")
+        ? input.inverse
+        : {
+            ...input.inverse,
+            op: (await import("../ops/catalog")).resolveOpName(input.inverse.op).canonicalOp,
+          };
+      const state = parseDoc(await readDoc(timeline.uri));
+      const { outcome, newState } = undoTool(state, inverse, timeline.uri);
+      if (!isToolError(outcome) && newState) await writeDoc(timeline.uri, serializeDoc(newState));
+      return {
+        ...outcome,
+        uri: timeline.uri,
+        resolvedPath: timeline.resolvedPath,
+        project: timeline.project,
+      };
     },
   }),
   action({
     id: "timeline.diagnose",
     title: "Diagnose Timeline",
     description: "Debug/CI verb that returns the full diagnostic set for a document.",
-    input: z.object({ uri: z.string() }),
+    input: z.object({ uri: z.string().optional(), timeline: z.string().optional() }),
     output: z.unknown(),
     scopes: ["timeline:read", "fs:read"],
     effect: baseEffects.read,
     surfaces: { cli: { command: "timeline diagnose" }, mcp: { name: "diagnose" } },
-    async execute(_ctx, input) {
+    async execute(ctx, input) {
       const { diagnoseTool, parseDoc } = await import("../bridge/tools/core");
-      return diagnoseTool(parseDoc(await readDoc(input.uri)));
+      const { resolveTimelineTarget } = await import("../state/timeline");
+      const project = projectFor(ctx);
+      const timeline = resolveTimelineTarget(
+        project.rootPath,
+        project,
+        input.timeline ?? input.uri,
+      );
+      if ("ok" in timeline) return timeline;
+      return {
+        ok: true,
+        ...diagnoseTool(parseDoc(await readDoc(timeline.uri))),
+        uri: timeline.uri,
+        resolvedPath: timeline.resolvedPath,
+        project: timeline.project,
+      };
     },
   }),
   action({
@@ -225,7 +634,8 @@ const actions = [
     title: "Resolve Value At Frame",
     description: "Resolve a parameter's effective value at a timeline frame.",
     input: z.object({
-      uri: z.string(),
+      uri: z.string().optional(),
+      timeline: z.string().optional(),
       frame: z.number().int().nonnegative(),
       target: z.record(z.string(), z.unknown()),
     }),
@@ -236,10 +646,23 @@ const actions = [
       cli: { command: "timeline resolve-value-at-frame" },
       mcp: { name: "resolve-value-at-frame" },
     },
-    async execute(_ctx, input) {
+    async execute(ctx, input) {
       const { parseDoc } = await import("../bridge/tools/core");
       const { resolveTool } = await import("../bridge/tools/read");
-      return resolveTool(parseDoc(await readDoc(input.uri)), input.frame, input.target as never);
+      const { resolveTimelineTarget } = await import("../state/timeline");
+      const project = projectFor(ctx);
+      const timeline = resolveTimelineTarget(
+        project.rootPath,
+        project,
+        input.timeline ?? input.uri,
+      );
+      if ("ok" in timeline) return timeline;
+      return {
+        ...resolveTool(parseDoc(await readDoc(timeline.uri)), input.frame, input.target as never),
+        uri: timeline.uri,
+        resolvedPath: timeline.resolvedPath,
+        project: timeline.project,
+      };
     },
   }),
   action({
@@ -247,17 +670,76 @@ const actions = [
     title: "Find References",
     description: "Find references in the timeline graph.",
     input: z.object({
-      uri: z.string(),
+      uri: z.string().optional(),
+      timeline: z.string().optional(),
       query: z.record(z.string(), z.unknown()),
     }),
     output: z.unknown(),
     scopes: ["timeline:read", "fs:read"],
     effect: baseEffects.read,
     surfaces: { cli: { command: "timeline find-references" }, mcp: { name: "find-references" } },
-    async execute(_ctx, input) {
+    async execute(ctx, input) {
       const { parseDoc } = await import("../bridge/tools/core");
       const { referencesTool } = await import("../bridge/tools/read");
-      return referencesTool(parseDoc(await readDoc(input.uri)), input.query as never);
+      const { resolveTimelineTarget } = await import("../state/timeline");
+      const project = projectFor(ctx);
+      const timeline = resolveTimelineTarget(
+        project.rootPath,
+        project,
+        input.timeline ?? input.uri,
+      );
+      if ("ok" in timeline) return timeline;
+      return {
+        ...referencesTool(parseDoc(await readDoc(timeline.uri)), input.query as never),
+        uri: timeline.uri,
+        resolvedPath: timeline.resolvedPath,
+        project: timeline.project,
+      };
+    },
+  }),
+  action({
+    id: "timeline.current",
+    title: "Current Timeline",
+    description: "Use this when resolving the active timeline:main route for the current project.",
+    input: repoInput,
+    output: z.unknown(),
+    scopes: ["timeline:read", "state:read"],
+    effect: baseEffects.stateRead,
+    surfaces: { cli: { command: "timeline current" }, mcp: { name: "timeline-current" } },
+    async execute(ctx, input) {
+      const { currentTimeline } = await import("../state/timeline");
+      const project = projectFor(ctx, input.repo);
+      return currentTimeline(project.rootPath, project);
+    },
+  }),
+  action({
+    id: "timeline.use",
+    title: "Use Timeline",
+    description: "Use this when setting the project active timeline:main route.",
+    input: z.object({ repo: z.string().optional(), target: z.string() }),
+    output: z.unknown(),
+    scopes: ["timeline:read", "state:write"],
+    effect: baseEffects.stateWrite,
+    surfaces: { cli: { command: "timeline use" }, mcp: { name: "timeline-use" } },
+    async execute(ctx, input) {
+      const { useTimeline } = await import("../state/timeline");
+      const project = projectFor(ctx, input.repo);
+      return useTimeline(project.rootPath, project, input.target);
+    },
+  }),
+  action({
+    id: "timeline.list",
+    title: "List Timelines",
+    description: "Use this when listing cataloged and routed .mlt timelines for a project.",
+    input: repoInput,
+    output: z.unknown(),
+    scopes: ["timeline:read", "state:read"],
+    effect: baseEffects.stateRead,
+    surfaces: { cli: { command: "timeline list" }, mcp: { name: "timeline-list" } },
+    async execute(ctx, input) {
+      const { listTimelines } = await import("../state/timeline");
+      const project = projectFor(ctx, input.repo);
+      return listTimelines(project.rootPath, project);
     },
   }),
   action({
@@ -729,6 +1211,11 @@ export function describeAction(action: ActionDefinition): ActionDescriptor {
     description: action.description,
     scopes: action.scopes,
     effect: action.effect,
+    inputSummary: summarizeSchema(action.input),
+    outputSummary: summarizeSchema(action.output),
+    aliases: action.aliases ?? [],
+    examples: action.examples ?? [],
+    relatedDiscovery: action.relatedDiscovery,
     surfaces: action.surfaces,
     mcpAnnotations: {
       readOnlyHint: action.effect.mutates.length === 0,

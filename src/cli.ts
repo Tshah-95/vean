@@ -65,13 +65,31 @@ async function runAction(actionId: string, input: unknown) {
   return envelope.output;
 }
 
+function isSemanticFailure(output: unknown): output is { ok: false; kind: string; detail: string } {
+  return (
+    typeof output === "object" &&
+    output !== null &&
+    "ok" in output &&
+    (output as { ok?: unknown }).ok === false
+  );
+}
+
 async function printActionOutput(
   actionId: string,
   input: unknown,
   json?: boolean,
 ): Promise<unknown> {
-  const output = await runAction(actionId, input);
+  const envelope = await executeAction(actionId, input, context());
+  if (!envelope.ok) {
+    if (json) {
+      printJson(envelope);
+      process.exit(1);
+    }
+    throw new Error(`${envelope.kind}: ${envelope.detail}`);
+  }
+  const output = envelope.output;
   if (json) printJson(output);
+  if (isSemanticFailure(output)) process.exit(1);
   return output;
 }
 
@@ -191,86 +209,213 @@ actionsCommand
     }
   });
 
+program
+  .command("discover [query]")
+  .description("Discover vean commands, actions, timeline ops, and routes")
+  .option("--kind <kind>", "all, command, action, op, or route", "all")
+  .option("--limit <n>", "maximum results", "10")
+  .option("--json", "emit JSON")
+  .action(
+    async (query: string | undefined, opts: { kind: string; limit: string; json?: boolean }) => {
+      const actionId = query ? "discover.search" : "discover.manifest";
+      const input = query ? { query, kind: opts.kind, limit: opts.limit } : {};
+      const output = await printActionOutput(actionId, input, opts.json);
+      if (!opts.json) printJson(output);
+    },
+  );
+
 const timeline = program.command("timeline").description("Inspect and edit .mlt timelines");
 
-timeline
-  .command("apply-op <uri> <op>")
-  .description("Apply an edit operation to a .mlt document")
-  .option("--args-json <json>", "operation arguments JSON", assertJson, "{}")
+const timelineOps = timeline.command("ops").description("Discover public timeline edit operations");
+
+timelineOps
+  .command("list")
+  .description("List public timeline operations")
+  .option("--category <category>", "filter by op category")
   .option("--json", "emit JSON")
-  .action(async (uri: string, op: string, opts: { argsJson: string; json?: boolean }) => {
-    const output = await printActionOutput(
-      "timeline.applyOp",
-      { uri, op, args: parseJson(opts.argsJson) },
-      opts.json,
-    );
+  .action(async (opts: { category?: string; json?: boolean }) => {
+    const output = await printActionOutput("timeline.ops.list", opts, opts.json);
+    if (!opts.json) printJson(output);
+  });
+
+timelineOps
+  .command("describe <op>")
+  .description("Describe a public timeline operation")
+  .option("--json", "emit JSON")
+  .action(async (op: string, opts: { json?: boolean }) => {
+    const output = await printActionOutput("timeline.ops.describe", { op }, opts.json);
+    if (!opts.json) printJson(output);
+  });
+
+timelineOps
+  .command("examples <op>")
+  .description("Show valid example args for a timeline operation")
+  .option("--json", "emit JSON")
+  .action(async (op: string, opts: { json?: boolean }) => {
+    const output = await printActionOutput("timeline.ops.examples", { op }, opts.json);
     if (!opts.json) printJson(output);
   });
 
 timeline
-  .command("preview-op <uri> <op>")
-  .description("Preview an edit operation without mutating the document")
-  .option("--args-json <json>", "operation arguments JSON", assertJson, "{}")
+  .command("list")
+  .description("List cataloged and routed .mlt timelines")
+  .option("--repo <path>", "project repo path")
   .option("--json", "emit JSON")
-  .action(async (uri: string, op: string, opts: { argsJson: string; json?: boolean }) => {
-    const output = await printActionOutput(
-      "timeline.previewOp",
-      { uri, op, args: parseJson(opts.argsJson) },
-      opts.json,
-    );
+  .action(async (opts: { repo?: string; json?: boolean }) => {
+    const output = await printActionOutput("timeline.list", opts, opts.json);
     if (!opts.json) printJson(output);
   });
 
 timeline
-  .command("undo <uri>")
+  .command("use <target>")
+  .description("Set timeline:main to a .mlt path, file:// URI, or route alias")
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(async (target: string, opts: { repo?: string; json?: boolean }) => {
+    const output = await printActionOutput("timeline.use", { ...opts, target }, opts.json);
+    if (!opts.json) printJson(output);
+  });
+
+timeline
+  .command("current")
+  .description("Resolve the active timeline:main route")
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(async (opts: { repo?: string; json?: boolean }) => {
+    const output = await printActionOutput("timeline.current", opts, opts.json);
+    if (!opts.json) printJson(output);
+  });
+
+function timelineEditInput(
+  opOrUri: string,
+  maybeOp: string | undefined,
+  opts: { timeline?: string; argsJson: string },
+) {
+  if (maybeOp) return { uri: opOrUri, op: maybeOp, args: parseJson(opts.argsJson) };
+  return { timeline: opts.timeline, op: opOrUri, args: parseJson(opts.argsJson) };
+}
+
+timeline
+  .command("apply-op <op-or-uri> [op-or-alias]")
+  .description("Apply an edit operation to a .mlt document; omit URI to use timeline:main")
+  .option("--timeline <uri-or-route>", "timeline path, file:// URI, or route alias")
+  .option("--args-json <json>", "operation arguments JSON", assertJson, "{}")
+  .option("--json", "emit JSON")
+  .action(
+    async (
+      opOrUri: string,
+      maybeOp: string | undefined,
+      opts: { timeline?: string; argsJson: string; json?: boolean },
+    ) => {
+      const output = await printActionOutput(
+        "timeline.applyOp",
+        timelineEditInput(opOrUri, maybeOp, opts),
+        opts.json,
+      );
+      if (!opts.json) printJson(output);
+    },
+  );
+
+timeline
+  .command("preview-op <op-or-uri> [op-or-alias]")
+  .description(
+    "Preview an edit operation without mutating the document; omit URI to use timeline:main",
+  )
+  .option("--timeline <uri-or-route>", "timeline path, file:// URI, or route alias")
+  .option("--args-json <json>", "operation arguments JSON", assertJson, "{}")
+  .option("--json", "emit JSON")
+  .action(
+    async (
+      opOrUri: string,
+      maybeOp: string | undefined,
+      opts: { timeline?: string; argsJson: string; json?: boolean },
+    ) => {
+      const output = await printActionOutput(
+        "timeline.previewOp",
+        timelineEditInput(opOrUri, maybeOp, opts),
+        opts.json,
+      );
+      if (!opts.json) printJson(output);
+    },
+  );
+
+timeline
+  .command("undo [uri]")
   .description("Undo an edit by applying a prior inverse invocation")
+  .option("--timeline <uri-or-route>", "timeline path, file:// URI, or route alias")
   .requiredOption("--inverse-json <json>", "inverse invocation JSON", assertJson)
   .option("--json", "emit JSON")
-  .action(async (uri: string, opts: { inverseJson: string; json?: boolean }) => {
+  .action(
+    async (
+      uri: string | undefined,
+      opts: { timeline?: string; inverseJson: string; json?: boolean },
+    ) => {
+      const output = await printActionOutput(
+        "timeline.undo",
+        { uri, timeline: opts.timeline, inverse: parseJson(opts.inverseJson) },
+        opts.json,
+      );
+      if (!opts.json) printJson(output);
+    },
+  );
+
+timeline
+  .command("diagnose [uri]")
+  .description("Return the full diagnostic set for a .mlt document")
+  .option("--timeline <uri-or-route>", "timeline path, file:// URI, or route alias")
+  .option("--json", "emit JSON")
+  .action(async (uri: string | undefined, opts: { timeline?: string; json?: boolean }) => {
     const output = await printActionOutput(
-      "timeline.undo",
-      { uri, inverse: parseJson(opts.inverseJson) },
+      "timeline.diagnose",
+      { uri, timeline: opts.timeline },
       opts.json,
     );
     if (!opts.json) printJson(output);
   });
 
 timeline
-  .command("diagnose <uri>")
-  .description("Return the full diagnostic set for a .mlt document")
-  .option("--json", "emit JSON")
-  .action(async (uri: string, opts: { json?: boolean }) => {
-    const output = await printActionOutput("timeline.diagnose", { uri }, opts.json);
-    if (!opts.json) printJson(output);
-  });
-
-timeline
-  .command("resolve-value-at-frame <uri> <frame>")
+  .command("resolve-value-at-frame <frame-or-uri> [frame]")
   .description("Resolve a parameter's effective value at a timeline frame")
+  .option("--timeline <uri-or-route>", "timeline path, file:// URI, or route alias")
   .requiredOption("--target-json <json>", "ResolveTarget JSON", assertJson)
   .option("--json", "emit JSON")
-  .action(async (uri: string, frame: string, opts: { targetJson: string; json?: boolean }) => {
-    const output = await printActionOutput(
-      "timeline.resolveValueAtFrame",
-      { uri, frame: parseInteger(frame), target: parseJson(opts.targetJson) },
-      opts.json,
-    );
-    if (!opts.json) printJson(output);
-  });
+  .action(
+    async (
+      frameOrUri: string,
+      frame: string | undefined,
+      opts: { timeline?: string; targetJson: string; json?: boolean },
+    ) => {
+      const input = frame
+        ? { uri: frameOrUri, frame: parseInteger(frame), target: parseJson(opts.targetJson) }
+        : {
+            timeline: opts.timeline,
+            frame: parseInteger(frameOrUri),
+            target: parseJson(opts.targetJson),
+          };
+      const output = await printActionOutput("timeline.resolveValueAtFrame", input, opts.json);
+      if (!opts.json) printJson(output);
+    },
+  );
 
 timeline
-  .command("find-references <uri>")
+  .command("find-references [uri]")
   .description("Find references in a .mlt document")
+  .option("--timeline <uri-or-route>", "timeline path, file:// URI, or route alias")
   .requiredOption("--query-json <json>", "ReferenceQuery JSON", assertJson)
   .option("--json", "emit JSON")
-  .action(async (uri: string, opts: { queryJson: string; json?: boolean }) => {
-    const output = await printActionOutput(
-      "timeline.findReferences",
-      { uri, query: parseJson(opts.queryJson) },
-      opts.json,
-    );
-    if (!opts.json) printJson(output);
-  });
+  .action(
+    async (
+      uri: string | undefined,
+      opts: { timeline?: string; queryJson: string; json?: boolean },
+    ) => {
+      const output = await printActionOutput(
+        "timeline.findReferences",
+        { uri, timeline: opts.timeline, query: parseJson(opts.queryJson) },
+        opts.json,
+      );
+      if (!opts.json) printJson(output);
+    },
+  );
 
 const renderCommand = program.command("render").description("Render or inspect timeline artifacts");
 
