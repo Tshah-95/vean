@@ -5,6 +5,7 @@ export {
   getAction,
   listActions,
 } from "./registry";
+export { summarizeSchema } from "./schema-summary";
 export type {
   ActionContext,
   ActionDefinition,
@@ -14,3 +15,4 @@ export type {
   ActionScope,
   ActionSurfaces,
 } from "./types";
+export type { SchemaSummary } from "./schema-summary";

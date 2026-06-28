@@ -245,8 +245,8 @@ export type ReplaceArgs = z.infer<typeof replaceArgs>;
 /** trimIn / trimOut — resize a clip's in/out by `delta` frames. */
 export const trimArgs = z.object({
   uuid: z.string().min(1),
-  /** Signed frames. trimIn: + trims the head (later start). trimOut: + extends
-   *  the tail (later end). The neighbouring blank absorbs the change non-ripple. */
+  /** Signed frames. trimIn: + trims the head (later start). trimOut: + shortens
+   *  the tail (earlier end). Negative deltas extend when neighbouring space allows. */
   delta: z.number().int(),
   rippleAllTracks: rippleAll,
 });
