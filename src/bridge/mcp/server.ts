@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 // vean-mcp — the stdio MCP server binding.
 //
 // MCP is an adapter over the action registry. Product behavior is defined once in

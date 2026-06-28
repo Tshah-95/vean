@@ -66,21 +66,22 @@ Default choices when the user does not answer and continuing is safe:
 
 - **Local state**: run `bun run project:init` to create `.vean/vean.db`, apply
   Drizzle migrations, and register the repo root in the `projects` table. Use
-  `bun src/cli.ts state status` to inspect without mutating. `.vean/` must stay
-  gitignored.
+  `vean state status` to inspect without mutating after CLI registration.
+  `.vean/` must stay gitignored.
 - **Media routing**: after local state exists, add a media root with
-  `bun src/cli.ts media root add <path> --role raw --json`, scan it with
-  `bun src/cli.ts media scan --json`, and verify the generated route with
-  `bun src/cli.ts route resolve media:raw --json`. This only catalogs
-  lightweight path/kind/size/mtime metadata; transcription, labels, proxies,
-  and model-backed inference are later action families.
+  `vean media root add <path> --role raw --json`, scan it with
+  `vean media scan --json`, and verify the generated route with
+  `vean route resolve media:raw --json`. This only catalogs lightweight
+  path/kind/size/mtime metadata; transcription, labels, proxies, and
+  model-backed inference are later action families.
 - **LSP only**: verify with `bun run doctor --surface lsp`. This starts
   `vean-lsp` unless `--no-probe` is passed. This is the safe first-pass check
   before CLI PATH registration.
 - **CLI+LSP primary**: ask before registering a user PATH entry, then run
   `bun run setup:cli` from the repo root. That delegates to `bun link`, using the
   package `bin.vean` entry so future calls can use `vean ...` instead of an
-  absolute path. Verify with `bun run doctor --surface cli-lsp`.
+  absolute path. Ensure `~/.bun/bin` is on PATH for login shells, then verify
+  with `vean doctor --surface cli-lsp`.
 - **CLI only**: same CLI registration branch, then verify with
   `bun run doctor --surface cli`.
 - **MCP+LSP**: verify with `bun run doctor --surface mcp-lsp`. Use this when the
@@ -130,8 +131,8 @@ State gate:
 
 ```bash
 bun run project:init
-bun src/cli.ts state status
-bun src/cli.ts jobs list
+vean state status
+vean jobs list
 ```
 
 Surface-specific gates:

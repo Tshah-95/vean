@@ -123,8 +123,12 @@ first:
 
 ```bash
 bun run setup:cli
-bun run doctor --surface cli-lsp
+vean doctor --surface cli-lsp
 ```
+
+`bun run setup:cli` writes the package bins (`vean`, `vean-lsp`, `vean-mcp`) to
+Bun's global bin directory. Make sure `~/.bun/bin` is on PATH for login shells;
+after that, prefer `vean ...` over `bun src/cli.ts ...`.
 
 `claude plugin validate` currently warns that root `CLAUDE.md` is not plugin
 context; that is expected for this layout. Plugin-visible context lives in
@@ -139,18 +143,18 @@ future UI coordination. It is ignored by git. The canonical timeline remains the
 
 ```bash
 bun run project:init
-bun src/cli.ts state status
-bun src/cli.ts jobs list
+vean state status
+vean jobs list
 ```
 
 The first media-routing slice is action-backed and exposed through Commander and
 MCP:
 
 ```bash
-bun src/cli.ts media root add /path/to/media --role raw --json
-bun src/cli.ts media scan --json
-bun src/cli.ts media find interview --json
-bun src/cli.ts route resolve media:raw --json
+vean media root add /path/to/media --role raw --json
+vean media scan --json
+vean media find interview --json
+vean route resolve media:raw --json
 ```
 
 This catalogs lightweight path/kind/size/mtime metadata only. Transcription,
@@ -162,9 +166,9 @@ future action families.
 The Commander CLI is now backed by the seeded action registry:
 
 ```bash
-bun src/cli.ts action list
-bun src/cli.ts action describe timeline.previewOp
-bun src/cli.ts action run state.status --input-json '{}'
+vean action list
+vean action describe timeline.previewOp
+vean action run state.status --input-json '{}'
 ```
 
 The local Mac app scaffold lives in `app/`. Verify the scaffold, Tauri config,

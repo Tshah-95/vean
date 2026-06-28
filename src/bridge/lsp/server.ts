@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 import { TextDocument } from "vscode-languageserver-textdocument";
 // vean-lsp — the stdio Language Server binding.
 //
