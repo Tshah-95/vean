@@ -66,6 +66,17 @@ function Viewer({ route }: { route: string | undefined }) {
     };
   }, [data, route]);
 
+  // Reflect the active timeline route into the URL so each tab is stable and
+  // shareable — open multiple timelines in multiple browsers via ?route=<path|alias>.
+  useEffect(() => {
+    if (!data) return;
+    const params = new URLSearchParams(window.location.search);
+    if (!params.get("route") && data.route) {
+      params.set("route", data.route);
+      window.history.replaceState(null, "", `?${params.toString()}`);
+    }
+  }, [data]);
+
   // Best-effort diagnostics badge.
   useEffect(() => {
     if (!data) return;
