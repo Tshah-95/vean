@@ -38,6 +38,7 @@ function Viewer({ route }: { route: string | undefined }) {
   const [diag, setDiag] = useState<{ errors: number; warnings: number } | null>(null);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
+  const [sinkId, setSinkId] = useState("");
 
   // Load the timeline IR + configure the clock.
   useEffect(() => {
@@ -141,6 +142,7 @@ function Viewer({ route }: { route: string | undefined }) {
         overlayDuration={overlay.duration}
         volume={volume}
         muted={muted}
+        sinkId={sinkId}
         {...(overlay.props ? { overlayProps: overlay.props } : {})}
       />
       <Transport
@@ -148,6 +150,8 @@ function Viewer({ route }: { route: string | undefined }) {
         muted={muted}
         onVolumeChange={setVolume}
         onMutedChange={setMuted}
+        sinkId={sinkId}
+        onSinkChange={setSinkId}
       />
       <TimelineStrip timeline={data.timeline} totalFrames={data.totalFrames} />
     </div>

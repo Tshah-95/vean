@@ -29,6 +29,8 @@ export interface PreviewPaneProps {
   volume: number;
   /** Mute the footage-proxy audio. */
   muted: boolean;
+  /** Output device id for setSinkId ("" = system default). */
+  sinkId: string;
 }
 
 export function PreviewPane({
@@ -40,6 +42,7 @@ export function PreviewPane({
   overlayProps,
   volume,
   muted,
+  sinkId,
 }: PreviewPaneProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const clock = useClock();
@@ -53,6 +56,15 @@ export function PreviewPane({
     video.volume = Math.min(1, Math.max(0, volume));
     video.muted = muted;
   }, [volume, muted, proxyUrl]);
+
+  // Route audio to the chosen output device (setSinkId; "" = system default).
+  useEffect(() => {
+    const video = videoRef.current as (HTMLVideoElement & { setSinkId?: (id: string) => Promise<void> }) | null;
+    if (!video || typeof video.setSinkId !== "function") return;
+    video.setSinkId(sinkId).catch(() => {
+      /* device may have vanished or permission denied — fall back to default */
+    });
+  }, [sinkId, proxyUrl]);
 
   // Audio-unlock: browsers gate play() on an UNMUTED element to a user gesture,
   // and our clock-driven play() runs from an effect (detached from the click),

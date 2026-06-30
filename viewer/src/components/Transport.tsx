@@ -1,8 +1,12 @@
 // Transport: play/pause, a frame scrubber, and the timecode readout. Every
 // control writes through the master clock (clock.play/pause/seekTo) — the clock
 // is the only writer of currentFrame; the <video> and <Player> follow.
+import { useEffect, useState } from "react";
 import { useClock, useClockInstance } from "../ClockProvider";
 import type { Fps } from "../types";
+
+const SINK_SUPPORTED =
+  typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype;
 
 /** HH:MM:SS:FF timecode from an integer frame at a rational fps. */
 export function timecode(frame: number, fps: Fps): string {
@@ -23,12 +27,48 @@ export interface TransportProps {
   muted: boolean;
   onVolumeChange: (v: number) => void;
   onMutedChange: (m: boolean) => void;
+  /** Selected audio output device id ("" = system default). */
+  sinkId: string;
+  onSinkChange: (id: string) => void;
 }
 
-export function Transport({ volume, muted, onVolumeChange, onMutedChange }: TransportProps) {
+export function Transport({
+  volume,
+  muted,
+  onVolumeChange,
+  onMutedChange,
+  sinkId,
+  onSinkChange,
+}: TransportProps) {
   const clock = useClock();
   const instance = useClockInstance();
   const lastFrame = Math.max(0, clock.totalFrames - 1);
+
+  // Enumerate audio OUTPUT devices for the sink picker. Labels may be generic
+  // until the user grants media permission (browser privacy) — fall back to a
+  // numbered name so the picker is still usable.
+  const [outputs, setOutputs] = useState<Array<{ id: string; label: string }>>([]);
+  useEffect(() => {
+    if (!SINK_SUPPORTED || !navigator.mediaDevices?.enumerateDevices) return;
+    let cancelled = false;
+    const refresh = () =>
+      navigator.mediaDevices
+        .enumerateDevices()
+        .then((devs) => {
+          if (cancelled) return;
+          const outs = devs
+            .filter((d) => d.kind === "audiooutput")
+            .map((d, i) => ({ id: d.deviceId, label: d.label || `Output ${i + 1}` }));
+          setOutputs(outs);
+        })
+        .catch(() => {});
+    refresh();
+    navigator.mediaDevices.addEventListener?.("devicechange", refresh);
+    return () => {
+      cancelled = true;
+      navigator.mediaDevices.removeEventListener?.("devicechange", refresh);
+    };
+  }, []);
 
   return (
     <div
@@ -127,6 +167,33 @@ export function Transport({ volume, muted, onVolumeChange, onMutedChange }: Tran
         title="Volume"
         style={{ width: 88, accentColor: "#c7ae7a", cursor: "pointer" }}
       />
+
+      {SINK_SUPPORTED && outputs.length > 0 && (
+        <select
+          value={sinkId}
+          onChange={(e) => onSinkChange(e.target.value)}
+          aria-label="Audio output device"
+          title="Audio output device"
+          style={{
+            height: 30,
+            maxWidth: 150,
+            borderRadius: 6,
+            border: "1px solid #2a2e3a",
+            background: "#161922",
+            color: "#c7c9d1",
+            fontSize: 12,
+            padding: "0 6px",
+            cursor: "pointer",
+          }}
+        >
+          <option value="">System default</option>
+          {outputs.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      )}
     </div>
   );
 }
