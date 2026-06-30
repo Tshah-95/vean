@@ -37,6 +37,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun src/cli.ts state init",
     "roundtrip": "bun scripts/roundtrip.ts",
+    "dials:generate": "bun scripts/dials-generate.ts",
     "edit": "bun scripts/edit.ts",
     "preview-op": "bun scripts/preview-op.ts",
     "undo": "bun scripts/undo.ts",
