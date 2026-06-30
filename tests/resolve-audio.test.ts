@@ -190,9 +190,37 @@ describe("resolveAudio: placement + gain/fade", () => {
     expect(edgeB?.mediaOffset).toBe(0);
   });
 
-  it("ignores video tracks (audio resolver reads only audio tracks)", () => {
+  it("sources embedded audio from video-track footage clips (melt mixes them on render)", () => {
+    // A normal MP4 on a video track is video+audio together; the preview must source
+    // its audio (it was silent before — the bug that made the editor look broken).
     const t = tl([], [videoTrack("V1", [clip("v", "footage.mov", 0, 30)])]);
+    const { clips, trackIds } = resolveAudio(t);
+    expect(trackIds).toEqual(["V1"]);
+    expect(clips).toHaveLength(1);
+    const c = one(clips);
+    expect(c.uuid).toBe("v");
+    expect(c.trackId).toBe("V1");
+    expect(c.resource).toBe("footage.mov");
+    expect(c.timelineStart).toBe(0);
+    expect(c.timelineEnd).toBe(30);
+    expect(c.mediaOffset).toBe(0);
+  });
+
+  it("skips graphic (Remotion overlay) + color clips on video tracks", () => {
+    // Graphic overlays are visual; their baked .mov audio is silent/incidental.
+    const graphic = clip("g", "proj/.vean/cache/remotion/chat.mov", 0, 30);
+    const color = clip("bg", "#ff0000", 0, 30, { service: "color" });
+    const t = tl([], [videoTrack("V2", [graphic, color])]);
     expect(resolveAudio(t).clips).toHaveLength(0);
-    expect(resolveAudio(t).trackIds).toEqual([]);
+  });
+
+  it("mixes audio-track and video-track clips into one schedule", () => {
+    const t = tl(
+      [audioTrack("A1", [clip("bed", "tone.wav", 0, 30)])],
+      [videoTrack("V1", [clip("v", "footage.mov", 0, 30)])],
+    );
+    const { clips, trackIds } = resolveAudio(t);
+    expect(trackIds).toEqual(["A1", "V1"]);
+    expect([...clips].map((c) => c.uuid).sort()).toEqual(["bed", "v"]);
   });
 });

@@ -27,7 +27,7 @@
 // `linearRampToValueAtTime` on the clip's gain node. This is the audio analog of
 // `resolveLayers`' `resolveClipVisual` (which does the SAME for visual opacity).
 import { isAnimated, parseAnim, scalarOf, valueAtFrame } from "./keyframes";
-import type { ClipFilter, ClipItem, Item, Timeline, Track } from "./types";
+import { type ClipFilter, type ClipItem, type Item, type Timeline, type Track, isGraphicClip } from "./types";
 
 /** The fade-sentinel filter services the builder emits (mirror `resolveLayers.ts`
  *  / `src/ir/builder.ts`). On an AUDIO clip a fade compiles to a `volume`/`gain`
@@ -191,6 +191,14 @@ function gainAt(points: GainPoint[], frame: number): number {
   return last.value;
 }
 
+/** Options for `placeAudioTrack`. On a VIDEO track we source the clips' EMBEDDED
+ *  audio (a footage clip is video+audio together — melt mixes a video track's audio
+ *  on render), but skip graphic (Remotion overlay) clips via `skipGraphic`. Audio
+ *  tracks pass no opts (every non-color clip is audible). */
+interface PlaceOpts {
+  skipGraphic?: boolean;
+}
+
 /** Walk ONE audio track into placed clips, mirroring `walkTrack`'s dissolve-trimming
  *  placement EXACTLY (a same-track audio dissolve trims `d` frames off each
  *  neighbour and occupies `d` frames itself — the `mix` cross-fade).
@@ -200,7 +208,7 @@ function gainAt(points: GainPoint[], frame: number): number {
  *  audio track `hide="video"` — its video is hidden, it plays audio). So an audio
  *  track is ALWAYS audible here; we must NOT skip it for `hidden`. (`resolveAudio`
  *  only ever passes audio tracks to this function.) */
-function placeAudioTrack(track: Track, out: AudioClip[]): void {
+function placeAudioTrack(track: Track, out: AudioClip[], opts: PlaceOpts = {}): void {
   const items = track.items;
   let cursor = 0;
   for (let i = 0; i < items.length; i++) {
@@ -217,7 +225,7 @@ function placeAudioTrack(track: Track, out: AudioClip[]): void {
       // schedule BOTH neighbours through the overlap (their gain ramps approximate
       // the equal-power-ish `mix`), so we do not emit a separate dissolve clip —
       // the trimmed neighbours already cover [start, start+d). Advance the cursor.
-      placeDissolveEdges(items, i, cursor, out, track.id);
+      placeDissolveEdges(items, i, cursor, out, track.id, opts);
       cursor += it.frames;
       continue;
     }
@@ -238,6 +246,10 @@ function placeAudioTrack(track: Track, out: AudioClip[]): void {
     const start = cursor;
     cursor += segLen;
     if (isColorClip(it)) continue; // a color clip carries no audio
+    // On a VIDEO track, skip graphic (Remotion overlay) clips — they are visual
+    // overlays; any baked audio in their .mov is silent/incidental, and fetching a
+    // large overlay .mov to decode it is wasteful. Audio tracks pass skipGraphic=false.
+    if (opts.skipGraphic && isGraphicClip(it)) continue;
     const { baseGain, automation } = resolveClipGain(it, segLen);
     out.push({
       trackId: track.id,
@@ -262,6 +274,7 @@ function placeDissolveEdges(
   start: number,
   out: AudioClip[],
   trackId: string,
+  opts: PlaceOpts = {},
 ): void {
   const prev = items[dissolveIndex - 1];
   const next = items[dissolveIndex + 1];
@@ -269,8 +282,9 @@ function placeDissolveEdges(
   if (!d || d.kind !== "dissolve") return;
   const frames = d.frames;
   if (frames <= 0) return;
+  const audible = (c: ClipItem) => !isColorClip(c) && !(opts.skipGraphic && isGraphicClip(c));
   // The OUTGOING edge: prev's last `frames` source frames, fading 1→0.
-  if (prev?.kind === "clip" && !isColorClip(prev)) {
+  if (prev?.kind === "clip" && audible(prev)) {
     const fromSrc = prev.out - frames + 1;
     out.push({
       trackId,
@@ -290,7 +304,7 @@ function placeDissolveEdges(
     });
   }
   // The INCOMING edge: next's first `frames` source frames, fading 0→1.
-  if (next?.kind === "clip" && !isColorClip(next)) {
+  if (next?.kind === "clip" && audible(next)) {
     out.push({
       trackId,
       uuid: next.id,
@@ -326,10 +340,21 @@ export function resolveAudio(timeline: Timeline): ResolvedAudio {
   // audio-track MARKER (MLT `hide="video"`), not a mute (see `placeAudioTrack`). So
   // we do NOT skip on `hidden` here — that would silence ALL audio (the parser flags
   // every audio track hidden). We read `timeline.tracks.audio`, which the parser
-  // already separated from the video tracks, so there is no video to mistakenly mix.
+  // already separated from the video tracks.
   for (const track of timeline.tracks.audio) {
     trackIds.push(track.id);
     placeAudioTrack(track, clips);
+  }
+  // VIDEO tracks ALSO carry their clips' EMBEDDED audio. A normal MP4 on a video
+  // track is video+audio together (the Shotcut model), and melt mixes a video
+  // track's clip audio on export (the track is not muted). Sourcing it here makes
+  // the live preview match the render instead of being silent — the gap that made
+  // the editor look broken (no sound for footage on V1). Graphic (Remotion overlay)
+  // clips are skipped; a clip with no audio stream is dropped at decode (loadBuffer
+  // returns null), so this never adds phantom sources.
+  for (const track of timeline.tracks.video) {
+    trackIds.push(track.id);
+    placeAudioTrack(track, clips, { skipGraphic: true });
   }
   return { clips, trackIds };
 }
