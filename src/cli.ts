@@ -595,6 +595,43 @@ renderCommand
     if (!opts.json) printJson(output);
   });
 
+program
+  .command("preview")
+  .alias("serve")
+  .description(
+    "Launch the local 127.0.0.1 web viewer: timeline strip + footage-proxy/Remotion-overlay composited preview on one master clock",
+  )
+  .option("--timeline <uri-or-route>", "timeline path, file:// URI, or route alias")
+  .option("--port <n>", "port to bind on 127.0.0.1", parseInteger, 5174)
+  .option("--no-open", "do not open the browser")
+  .option("--dev", "reverse-proxy the Vite dev server instead of serving viewer/dist")
+  .option("--repo <path>", "project repo path")
+  .action(
+    async (opts: {
+      timeline?: string;
+      port: number;
+      open?: boolean;
+      dev?: boolean;
+      repo?: string;
+    }) => {
+      // Print the URL up front (the action then blocks until Ctrl-C).
+      console.error(`vean preview serving on http://127.0.0.1:${opts.port}`);
+      console.error(
+        opts.dev
+          ? "  mode: vite dev proxy (run `bun run viewer:dev` alongside)"
+          : "  mode: viewer/dist",
+      );
+      console.error("  press Ctrl-C to stop");
+      await runAction("preview.serve", {
+        timeline: opts.timeline,
+        port: opts.port,
+        open: opts.open !== false,
+        dev: opts.dev ?? false,
+        repo: opts.repo,
+      });
+    },
+  );
+
 const remotionCommand = program
   .command("remotion")
   .description("Drive the Remotion producer (arm's-length subprocess)");

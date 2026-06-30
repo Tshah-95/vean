@@ -1,0 +1,87 @@
+#!/usr/bin/env bun
+// A standalone Bun helper that boots the preview server detached against a
+// fixture project (timeline:main → a corpus .mlt) and probes the READ endpoints,
+// printing a single JSON result line. Run under `bun` (so `bun:sqlite` resolves);
+// `tests/preview-serve.test.ts` spawns it via spawnSync and asserts on the JSON.
+// This keeps the HTTP integration check out of the Node/Vitest process while
+// still gating it in `bun run test` (the test spawns this).
+//
+// Usage: bun scripts/preview-serve-probe.ts
+import { copyFileSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { createActionContext, executeAction } from "../src/actions";
+
+const REPO = resolve(import.meta.dir, "..");
+
+async function main() {
+  const projectRoot = mkdtempSync(join(tmpdir(), "vean-preview-probe-"));
+  const configHome = mkdtempSync(join(tmpdir(), "vean-preview-probe-config-"));
+  const mlt = join(projectRoot, "main.mlt");
+  copyFileSync(join(REPO, "corpus", "shotcut-multitrack.mlt"), mlt);
+
+  const ctx = createActionContext({
+    cwd: projectRoot,
+    env: { ...process.env, VEAN_CONFIG_HOME: configHome },
+    surface: "test",
+  });
+  await executeAction("project.init", { repo: projectRoot }, ctx);
+  await executeAction("timeline.use", { repo: projectRoot, target: mlt }, ctx);
+
+  const served = await executeAction(
+    "preview.serve",
+    { repo: projectRoot, port: 0, open: false, detached: true },
+    ctx,
+  );
+  if (!served.ok) throw new Error(`preview.serve failed: ${JSON.stringify(served)}`);
+  const out = served.output as { url: string; _stop: () => void };
+
+  const getJson = async (path: string) => {
+    const res = await fetch(`${out.url}${path}`);
+    return { status: res.status, body: await res.json().catch(() => null) };
+  };
+
+  try {
+    const health = await getJson("/api/health");
+    const timeline = await getJson("/api/timeline");
+    const timelines = await getJson("/api/timelines");
+    const diagnostics = await getJson("/api/diagnostics");
+    const bad = await fetch(`${out.url}/api/nope`);
+
+    const result = {
+      ok: true,
+      url: out.url,
+      isLocal: out.url.startsWith("http://127.0.0.1:"),
+      health: { status: health.status, ok: health.body?.ok, repo: health.body?.repo },
+      timeline: {
+        status: timeline.status,
+        ok: timeline.body?.ok,
+        fps: timeline.body?.fps,
+        totalFrames: timeline.body?.totalFrames,
+        videoTracks: timeline.body?.timeline?.tracks?.video?.length,
+        audioTracks: timeline.body?.timeline?.tracks?.audio?.length,
+      },
+      timelines: {
+        status: timelines.status,
+        ok: timelines.body?.ok,
+        count: timelines.body?.timelines?.length,
+      },
+      diagnostics: {
+        status: diagnostics.status,
+        ok: diagnostics.body?.ok,
+        clean: diagnostics.body?.health?.clean,
+      },
+      badEndpointStatus: bad.status,
+    };
+    console.log(JSON.stringify(result));
+  } finally {
+    out._stop();
+  }
+}
+
+main()
+  .then(() => process.exit(0))
+  .catch((error) => {
+    console.error(JSON.stringify({ ok: false, error: String(error?.message ?? error) }));
+    process.exit(1);
+  });

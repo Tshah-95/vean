@@ -22,11 +22,40 @@ export type RenderResult = {
   stderr: string;
 };
 
+/** A downscaled render canvas. melt renders the timeline onto THIS profile, so
+ *  the output is `width×height` at the SAME rational fps + sample aspect as the
+ *  source. We scale via a profile, NOT a consumer `s=`/`width=`/`height=` arg:
+ *  on melt 7.38 the avformat consumer's own rescale stalls at 99% and emits a
+ *  truncated, moov-less file (bisected against the corpus — see the proxy
+ *  builder). Profile-based scaling is the supported, terminating path. */
+export type ScaleProfile = {
+  /** Target output width in pixels. */
+  width: number;
+  /** Target output height in pixels. */
+  height: number;
+  /** Rational fps `[num, den]` of the SOURCE — kept exact so the proxy stays
+   *  frame-aligned with the canonical timeline (never a float fps). */
+  fps: [number, number];
+  /** Source sample-aspect numerator (default 1 — square pixels). */
+  sampleAspectNum?: number;
+  /** Source sample-aspect denominator (default 1). */
+  sampleAspectDen?: number;
+};
+
 export type RenderOpts = {
   /** Override the video codec (default libx264). */
   vcodec?: string;
   /** Override the pixel format (default yuv420p). */
   pixFmt?: string;
+  /** Hard frame bound: append `frames=<n>` so the render TERMINATES after `n`
+   *  frames regardless of producer length. Without it a render relies entirely
+   *  on every producer being finite — a `length=0`/unbounded color producer (a
+   *  synthetic timeline) would never reach EOF and the render would hang. Pass
+   *  the timeline's total frame count to bound it exactly. */
+  frames?: number;
+  /** Render onto a downscaled profile (the proxy path). Mutually compatible with
+   *  `frames`. See {@link ScaleProfile} for why this is a profile, not `s=`. */
+  scaleProfile?: ScaleProfile;
   /** Extra raw `melt` consumer args, appended verbatim. */
   extraArgs?: string[];
 };
@@ -84,11 +113,41 @@ async function run(bin: string, args: string[]): Promise<{ stdout: string; stder
 
 // ─── render ─────────────────────────────────────────────────────────────────
 
+/** Build the body of a temp MLT `.profile` file for a downscaled render canvas.
+ *  Square-pixel by default (sample aspect 1:1 → display aspect == width:height),
+ *  carrying the SOURCE's exact rational fps so the proxy stays frame-aligned. */
+function scaleProfileText(p: ScaleProfile): string {
+  const san = p.sampleAspectNum ?? 1;
+  const sad = p.sampleAspectDen ?? 1;
+  return [
+    "description=vean-render-scale",
+    `width=${p.width}`,
+    `height=${p.height}`,
+    "progressive=1",
+    `sample_aspect_num=${san}`,
+    `sample_aspect_den=${sad}`,
+    `display_aspect_num=${p.width * san}`,
+    `display_aspect_den=${p.height * sad}`,
+    `frame_rate_num=${p.fps[0]}`,
+    `frame_rate_den=${p.fps[1]}`,
+    "colorspace=709",
+    "",
+  ].join("\n");
+}
+
 /** Render a `.mlt` document headless to a video file via `melt`.
  *
  *  `real_time=-N` lets melt use as many worker threads as it wants for a
  *  headless (non-realtime) render — the negative form is "use N threads but
- *  drop frames is OFF", the standard headless throughput flag. */
+ *  drop frames is OFF", the standard headless throughput flag.
+ *
+ *  Two bounding/scaling controls keep a render TERMINATING and correctly sized:
+ *   • `opts.frames` appends `frames=<n>` so melt stops after exactly `n` frames
+ *     even if a producer is unbounded (a synthetic `length=0` color timeline has
+ *     no natural EOF — without a bound the render never returns).
+ *   • `opts.scaleProfile` renders onto a temp downscaled `.profile` (passed with
+ *     `-profile`) instead of a consumer `s=`/`width=`/`height=` rescale, which
+ *     stalls melt 7.38 at 99% and writes a truncated, unplayable file. */
 export async function render(
   mltPath: string,
   outPath: string,
@@ -96,17 +155,39 @@ export async function render(
 ): Promise<RenderResult> {
   const vcodec = opts.vcodec ?? "libx264";
   const pixFmt = opts.pixFmt ?? "yuv420p";
+
+  // A downscaled render uses a temp profile written beside the output (cleaned
+  // up after melt exits, success or failure).
+  let profilePath: string | undefined;
+  if (opts.scaleProfile) {
+    profilePath = `${outPath}.${process.pid}.${Date.now()}.profile`;
+    await Bun.write(profilePath, scaleProfileText(opts.scaleProfile));
+  }
+
   const args = [
+    ...(profilePath ? ["-profile", profilePath] : []),
     mltPath,
     "-consumer",
     `avformat:${outPath}`,
     `vcodec=${vcodec}`,
     `pix_fmt=${pixFmt}`,
     "real_time=-1",
+    ...(opts.frames != null ? [`frames=${Math.max(1, Math.trunc(opts.frames))}`] : []),
     ...(opts.extraArgs ?? []),
   ];
-  const { stderr } = await run("melt", args);
-  return { outPath, code: 0, stderr };
+
+  try {
+    const { stderr } = await run("melt", args);
+    return { outPath, code: 0, stderr };
+  } finally {
+    if (profilePath) {
+      try {
+        await Bun.file(profilePath).delete();
+      } catch {
+        // best-effort temp cleanup; a stray .profile is harmless and gitignored
+      }
+    }
+  }
 }
 
 // ─── still ────────────────────────────────────────────────────────────────────

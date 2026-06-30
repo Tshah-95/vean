@@ -813,6 +813,92 @@ const actions = [
     },
   }),
   action({
+    id: "preview.serve",
+    title: "Serve Preview",
+    description:
+      "Start a local 127.0.0.1 web viewer: a frame-accurate timeline strip and a footage-proxy + Remotion-overlay composited preview slaved to one master clock. Stays in the foreground until interrupted.",
+    relatedDiscovery: ["timeline.current", "remotion.render", "timeline.addGraphic"],
+    input: z.object({
+      repo: z.string().optional(),
+      timeline: z.string().optional(),
+      // 0 = let the OS pick a free ephemeral port (used by tests/CI).
+      port: z.number().int().nonnegative().default(5174),
+      open: z.boolean().default(true),
+      dev: z.boolean().default(false),
+      /** When true (tests/CI), start the server and return immediately instead
+       *  of blocking the process; the caller stops it. */
+      detached: z.boolean().default(false),
+    }),
+    output: z.unknown(),
+    scopes: [
+      "state:read",
+      "timeline:read",
+      "render:execute",
+      "process:execute",
+      "fs:read",
+      "fs:write",
+    ],
+    effect: {
+      kind: "execute",
+      mutates: ["process"],
+      openWorld: false,
+      destructive: false,
+      idempotency: "non-idempotent",
+      reversibility: "none-needed",
+      dryRun: "none",
+      approval: "ask",
+      audit: "metadata",
+      job: { mode: "inline", cancellable: true, retrySafe: false },
+    },
+    surfaces: { cli: { command: "preview" }, mcp: { hidden: true } },
+    async execute(ctx, input) {
+      const { startPreviewServer } = await import("../preview/server");
+      const repo = repoFor(ctx, input.repo);
+      const handle = startPreviewServer({
+        repo,
+        ...(input.timeline ? { timeline: input.timeline } : {}),
+        port: input.port ?? 5174,
+        dev: input.dev ?? false,
+      });
+      // Detached mode (tests/CI): return the handle's URL and a stop hook so the
+      // caller can probe endpoints and shut it down. Default mode keeps the server
+      // alive (the CLI command awaits an unresolved promise) and opens a browser.
+      if (input.detached) {
+        return {
+          ok: true,
+          detached: true,
+          url: handle.url,
+          port: handle.port,
+          repo,
+          _stop: handle.stop,
+        };
+      }
+      if (input.open !== false) {
+        try {
+          const opener =
+            process.platform === "darwin"
+              ? "open"
+              : process.platform === "win32"
+                ? "explorer"
+                : "xdg-open";
+          Bun.spawn([opener, handle.url], { stdout: "ignore", stderr: "ignore" });
+        } catch {
+          // best-effort: a failed browser open is not fatal
+        }
+      }
+      // Keep the process alive until interrupted (Ctrl-C). The CLI prints the URL.
+      await new Promise<void>((resolve) => {
+        const shutdown = () => {
+          handle.stop();
+          resolve();
+        };
+        process.on("SIGINT", shutdown);
+        process.on("SIGTERM", shutdown);
+      });
+      return { ok: true, url: handle.url, port: handle.port, repo, stopped: true };
+    },
+  }),
+  action({
     id: "remotion.render",
     title: "Render Remotion Composition",
     description:
