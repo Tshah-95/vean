@@ -221,11 +221,15 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
       // (left-half, right-half) flush at the grabbed boundary:
       //   • left edge  → seam between leftClip (left half) and this clip (right half)
       //   • right edge → seam between this clip (left half) and rightClip (right half)
+      // A clip's OWN edge always trims THAT clip — even when butted against a
+      // neighbour. ROLL (the shared cut) is opt-in via Cmd/Meta with a flush
+      // same-track neighbour on that side, so head/tail trimming a butted clip
+      // works by default (the common case the old auto-roll broke).
       let tool: Tool;
       let seamLeft: PlacedItem | null = null;
       let seamRight: PlacedItem | null = null;
       if (zone === "left-edge") {
-        if (leftClip) {
+        if (mods.meta && leftClip) {
           tool = "roll";
           seamLeft = leftClip;
           seamRight = placed;
@@ -233,7 +237,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
           tool = "trimIn";
         }
       } else if (zone === "right-edge") {
-        if (rightClip) {
+        if (mods.meta && rightClip) {
           tool = "roll";
           seamLeft = placed;
           seamRight = rightClip;

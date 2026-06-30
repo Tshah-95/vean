@@ -4,10 +4,14 @@
 // owns the "zone × modifier → tool → op" mapping.
 //
 // Zones (in clip-local px, where the clip spans [0, widthPx)):
-//   • within EDGE_PX of the left edge  → trim the clip's IN  (head)
-//   • within EDGE_PX of the right edge → trim the clip's OUT (tail)
-//   • the seam zone straddling the boundary with an adjacent same-track clip → ROLL
-//   • anything else (the body)         → move / slip / slide (by modifier)
+//   • within the edge zone of the left edge  → trim the clip's IN  (head)
+//   • within the edge zone of the right edge → trim the clip's OUT (tail)
+//   • anything else (the body)               → move / slip / slide (by modifier)
+//
+// A clip's OWN edge ALWAYS trims THAT clip — even when it's butted against a
+// neighbour. ROLL (moving a shared cut point) is the rarer op, so it is opt-in
+// via Cmd, never the default for an edge grab (the old auto-roll made it
+// impossible to head-trim a butted clip — you'd silently roll the cut instead).
 //
 // Modifiers refine the body + edge tools:
 //   • body, no modifier      → MOVE  (op: move, toPosition from pixel delta)
@@ -15,14 +19,17 @@
 //   • body + Cmd/Meta        → SLIDE (op: slide, delta from pixel delta)
 //   • edge, no modifier      → TRIM  (op: trimIn / trimOut)
 //   • edge + Alt             → RIPPLE TRIM (rippleAllTracks: true)
+//   • edge + Cmd/Meta        → ROLL  (the shared cut with the flush neighbour)
 //
 // All deltas are computed in INTEGER FRAMES from a pixel delta at the current
 // scale — frame-exact, never a float. The op invocation is built fresh on
 // pointerup from the committed frame delta.
 import type { OpInvocation, PlacedItem, TrackAddr } from "./types";
 
-/** How close (px) to a clip edge counts as an edge grab. */
-export const EDGE_PX = 8;
+/** How close (px) to a clip edge counts as an edge grab. Generous enough to hit
+ *  reliably (8px was torture); capped per-clip in resolveGesture so a narrow clip
+ *  still keeps a draggable body. */
+export const EDGE_PX = 14;
 /** How close (px) to the boundary between two adjacent clips counts as a seam. */
 export const SEAM_PX = 7;
 
@@ -72,8 +79,12 @@ export function resolveGesture(
   widthPx: number,
   mods: Modifiers,
 ): { zone: Zone; bodyTool: "move" | "slip" | "slide" } {
-  const nearLeft = localX <= EDGE_PX;
-  const nearRight = localX >= widthPx - EDGE_PX;
+  // Cap the edge zone to a third of the clip so a narrow clip keeps a body to
+  // grab for move/slip/slide (otherwise the two edge zones would meet and you
+  // could never grab the middle).
+  const edge = Math.min(EDGE_PX, widthPx / 3);
+  const nearLeft = localX <= edge;
+  const nearRight = localX >= widthPx - edge;
   const bodyTool: "move" | "slip" | "slide" = mods.alt ? "slip" : mods.meta ? "slide" : "move";
   if (nearLeft) return { zone: "left-edge", bodyTool };
   if (nearRight) return { zone: "right-edge", bodyTool };
