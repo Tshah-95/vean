@@ -8,6 +8,7 @@ import {
   getAction,
   listActions,
 } from "./actions";
+import { buildConfigCommand } from "./cli/config";
 import { type DoctorHost, type DoctorSurface, formatDoctorReport } from "./cli/doctor";
 
 const program = new Command();
@@ -1075,6 +1076,8 @@ jobsCommand
       console.log(`Failed ${job.id}`);
     }
   });
+
+program.addCommand(buildConfigCommand());
 
 program.parseAsync().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));

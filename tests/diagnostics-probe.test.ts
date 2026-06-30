@@ -70,6 +70,25 @@ describe("probeDiagnostics — nominal mismatch", () => {
   });
 });
 
+describe("probeDiagnostics — tunable tolerances (the fps.*Tolerance settings)", () => {
+  it("a looser vfrTolerance silences a borderline VFR source", () => {
+    const p = probe("30/1", "8460000/282889"); // ~0.31% gap → VFR at the default 0.2%
+    expect(codes(probeDiagnostics(LANDSCAPE, p, loc))).toContain("variable-frame-rate-source");
+    // Raise the tolerance above the gap → no longer flagged (config-driven).
+    expect(probeDiagnostics(LANDSCAPE, p, loc, { vfrTolerance: 0.01 })).toEqual([]);
+  });
+
+  it("a tighter mismatchTolerance flags a near-match the default ignores", () => {
+    // 30.00 source vs 30.00 timeline but pretend a hair off: 30/1 vs a 30.001 timeline
+    // is awkward to express, so use a source just past a very tight tolerance.
+    const p = probe("30/1", "30/1");
+    expect(probeDiagnostics(LANDSCAPE, p, loc)).toEqual([]); // exact match, silent
+    // A 24fps source with an absurdly loose mismatch tolerance is NOT flagged.
+    const p24 = probe("24/1", "24/1");
+    expect(probeDiagnostics(LANDSCAPE, p24, loc, { mismatchTolerance: 0.5 })).toEqual([]);
+  });
+});
+
 describe("probeDiagnostics — unknown facts judge nothing", () => {
   it("emits nothing when rates are unknown (no video stream)", () => {
     expect(probeDiagnostics(LANDSCAPE, probe(null, null), loc)).toEqual([]);

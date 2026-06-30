@@ -286,6 +286,7 @@ export function createPreviewHandler(
       try {
         probe = await collectProbeDiagnostics(read.timeline, {
           baseDir: dirname(read.resolvedPath),
+          repo, // honor the project's fps.*Tolerance settings
         });
       } catch {
         probe = [];

@@ -9,16 +9,35 @@
 // Boundary: this lives in `src/driver` (it does I/O); it imports the pure RULE from
 // `src/diagnostics` (types are erased, no runtime coupling) — never the reverse.
 import { isAbsolute, resolve } from "node:path";
+import { type ProbeThresholds, probeDiagnostics } from "../diagnostics/probe";
 import type { Diagnostic } from "../diagnostics/types";
-import { probeDiagnostics } from "../diagnostics/probe";
 import type { Clip, Timeline } from "../ir/types";
+import { getSettingValue } from "../state/settingsStore";
 import { probeSource } from "./probe";
 
 export type ProbeDiagnosticsOpts = {
   /** Directory to resolve RELATIVE clip resources against (the .mlt's own dir).
    *  Absolute resources are probed as-is; omit for absolute-only timelines. */
   baseDir?: string;
+  /** Project root — when given, the `fps.*Tolerance` SETTINGS are read from its
+   *  `.vean/vean.db` and applied, so the diagnostics honor `vean config set`.
+   *  Omit (or an uninitialized project) → the registry-default tolerances. */
+  repo?: string;
 };
+
+/** Read the tunable tolerances from the project's settings, falling back to the
+ *  rule's built-in defaults if no repo is given or the read fails. */
+function thresholdsFor(repo: string | undefined): ProbeThresholds {
+  if (!repo) return {};
+  try {
+    return {
+      vfrTolerance: Number(getSettingValue(repo, "fps.vfrTolerance")),
+      mismatchTolerance: Number(getSettingValue(repo, "fps.mismatchTolerance")),
+    };
+  } catch {
+    return {};
+  }
+}
 
 /** A clip is probeable for fps iff it points at a real media FILE — not a generator
  *  (`color`) and not a Remotion graphic overlay (those are CFR by construction and
@@ -58,12 +77,13 @@ export async function collectProbeDiagnostics(
 
   const resolvePath = (resource: string): string =>
     isAbsolute(resource) || !opts.baseDir ? resource : resolve(opts.baseDir, resource);
+  const thresholds = thresholdsFor(opts.repo);
 
   const perClip = await Promise.all(
     targets.map(async ({ clip, trackId }) => {
       const probe = await probeSource(resolvePath(clip.resource));
       if (!probe) return [];
-      return probeDiagnostics(profile, probe, { clip: clip.id, track: trackId });
+      return probeDiagnostics(profile, probe, { clip: clip.id, track: trackId }, thresholds);
     }),
   );
 

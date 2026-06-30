@@ -30,6 +30,11 @@ export const VFR_TOLERANCE = 0.002;
 /** Location to anchor the diagnostics on (the clip + track ids). */
 export type ProbeDiagLocation = { clip: string; track: string };
 
+/** Tunable thresholds — supplied by the orchestrator from the `fps.*Tolerance`
+ *  settings, defaulting to the constants above when omitted (so the pure rule and
+ *  its tests need no settings/DB). */
+export type ProbeThresholds = { mismatchTolerance?: number; vfrTolerance?: number };
+
 /**
  * The fps rule for one source. Emits up to two diagnostics:
  *   • `variable-frame-rate-source` — the source's nominal and average rates diverge
@@ -45,7 +50,10 @@ export function probeDiagnostics(
   profile: Profile,
   probe: SourceProbe,
   loc: ProbeDiagLocation,
+  thresholds: ProbeThresholds = {},
 ): DiagnosticInput[] {
+  const vfrTol = thresholds.vfrTolerance ?? VFR_TOLERANCE;
+  const mismatchTol = thresholds.mismatchTolerance ?? FPS_MISMATCH_TOLERANCE;
   const out: DiagnosticInput[] = [];
   const timelineFps = rationalToFps({ num: profile.fps[0], den: profile.fps[1] });
   if (!(timelineFps > 0)) return out;
@@ -54,7 +62,7 @@ export function probeDiagnostics(
   if (probe.rFrameRate && probe.avgFrameRate) {
     const nominal = rationalToFps(probe.rFrameRate);
     const average = rationalToFps(probe.avgFrameRate);
-    if (nominal > 0 && Math.abs(nominal - average) / nominal > VFR_TOLERANCE) {
+    if (nominal > 0 && Math.abs(nominal - average) / nominal > vfrTol) {
       out.push(
         diag({
           code: "variable-frame-rate-source",
@@ -75,7 +83,7 @@ export function probeDiagnostics(
   // Nominal mismatch: the source's claimed CFR rate vs the timeline rate.
   if (probe.rFrameRate) {
     const nominal = rationalToFps(probe.rFrameRate);
-    if (Math.abs(nominal - timelineFps) / timelineFps > FPS_MISMATCH_TOLERANCE) {
+    if (Math.abs(nominal - timelineFps) / timelineFps > mismatchTol) {
       out.push(
         diag({
           code: "source-fps-mismatch",
