@@ -1,0 +1,87 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://vean.studio/schemas/skill.schema.json",
+  "title": "vean skills catalog",
+  "description": "The contract for the productized vean skills catalog (`.agents/skills/catalog.json`) and the frontmatter every `SKILL.md` carries. A skill's CAPABILITY (the method) lives in `.agents/skills/<id>/SKILL.md`; this schema is the metadata index over those files. Validated in `tests/skills-catalog.test.ts`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "version", "skills"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Self-reference to this schema, so editors lint the catalog."
+    },
+    "version": {
+      "type": "string",
+      "description": "Catalog format version (semver).",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "skills": {
+      "type": "array",
+      "description": "Every repo-local skill, in stable id order.",
+      "items": { "$ref": "#/$defs/entry" }
+    }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "description": "One catalog row. `id`/`title`/`description` mirror the skill's SKILL.md frontmatter (`name` -> `id`); `path` is the repo-relative SKILL.md; `version` lets a host detect an updated skill.",
+      "additionalProperties": false,
+      "required": ["id", "title", "description", "version", "path"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable skill id; matches the SKILL.md frontmatter `name`. Lowercase kebab.",
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Human-readable one-liner shown in `skills list`.",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string",
+          "description": "The skill's trigger/usage blurb — copied from SKILL.md frontmatter `description`.",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "description": "Skill content version (semver). Bump when the method changes materially.",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "path": {
+          "type": "string",
+          "description": "Repo-relative path to the skill's SKILL.md (the canonical capability file).",
+          "pattern": "^\\.agents/skills/[a-z][a-z0-9-]*/SKILL\\.md$"
+        },
+        "tags": {
+          "type": "array",
+          "description": "Optional discovery tags (e.g. \"setup\", \"editing\", \"ui\").",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "surfaces": {
+          "type": "array",
+          "description": "Optional: which product surfaces the skill is most relevant to.",
+          "items": { "enum": ["cli", "mcp", "lsp", "tauri", "agent"] }
+        }
+      }
+    },
+    "frontmatter": {
+      "type": "object",
+      "description": "The required YAML frontmatter at the top of every `<id>/SKILL.md`. The install/sync flow and host discovery (Claude `.claude/skills`, Codex `~/.agents/skills`, Cursor `.cursor/skills`) all key off `name`.",
+      "required": ["name", "description"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The skill id (must equal the catalog `id` and the directory name).",
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "description": {
+          "type": "string",
+          "description": "What the skill does + when to use it (the trigger). One paragraph.",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

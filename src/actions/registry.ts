@@ -9,6 +9,8 @@ import {
 } from "../project/context";
 import type { ResolvedProject } from "../project/context";
 import { defaultPolicyLevel, evaluatePolicy } from "./policy";
+// S5 (skills catalog) — uncomment to register skills.list / skills.install.
+// import { skillActions } from "./skills";
 import { summarizeSchema } from "./schema-summary";
 import type {
   ActionContext,
@@ -1995,6 +1997,13 @@ const actions = [
       return failJob(input.repo ?? ctx.project?.rootPath ?? ctx.cwd, input.id, input.error) ?? null;
     },
   }),
+  // ── S5 skills catalog (roadmap T8) ──────────────────────────────────────────
+  // The `skills.list` / `skills.install` actions live in `./skills` as a typed
+  // ActionDefinition[] (so this shared file stays a single-line registration).
+  // To wire them: uncomment the `skillActions` import above and the spread below.
+  // They project to CLI (`vean skills list|install`) + MCP (skills-list|install);
+  // adding the ergonomic Commander subcommands in `src/cli.ts` is the lead's call.
+  // ...skillActions,
 ];
 
 const registry = new Map<string, ActionDefinition>(
