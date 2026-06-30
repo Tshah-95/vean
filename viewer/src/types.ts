@@ -44,6 +44,11 @@ export interface ClipItem {
    *  subset (§7) and flags the rest `approximate`. */
   filters?: ClipFilter[];
   label?: string;
+  /** Remotion-overlay identity — present iff this clip is a baked alpha .mov from
+   *  a Remotion composition. A clip is a Remotion overlay (FOOTAGE-composited by
+   *  the WebGL compositor, distinct from the legacy `isGraphicClip` @remotion/player
+   *  path) iff this field is set. Mirrors `Clip.composition` in src/ir/types.ts. */
+  composition?: { id: string; props?: Record<string, unknown> };
 }
 
 export interface BlankItem {
@@ -220,4 +225,14 @@ export function isGraphicClip(item: Item): boolean {
   if (item.kind !== "clip") return false;
   if (item.label && /^graphic\b/i.test(item.label)) return true;
   return /cache\/remotion\//.test(item.resource.replace(/\\/g, "/"));
+}
+
+/** Is this clip a Remotion OVERLAY — a baked alpha .mov carrying `composition`
+ *  metadata? A clip is a Remotion overlay iff it has that metadata. UNLIKE the legacy
+ *  `isGraphicClip` (the @remotion/player live-player path), a Remotion overlay is
+ *  FOOTAGE-composited: its alpha .mov is decoded + drawn by the WebGL compositor, so
+ *  it must NEVER route to the hardcoded LowerThird OverlayPlayer nor be excluded from
+ *  the footage compositor. Mirrors `Clip.composition` in src/ir/types.ts. */
+export function isRemotionOverlay(item: Item): boolean {
+  return item.kind === "clip" && !!item.composition;
 }

@@ -27,7 +27,15 @@
 // `linearRampToValueAtTime` on the clip's gain node. This is the audio analog of
 // `resolveLayers`' `resolveClipVisual` (which does the SAME for visual opacity).
 import { isAnimated, parseAnim, scalarOf, valueAtFrame } from "./keyframes";
-import { type ClipFilter, type ClipItem, type Item, type Timeline, type Track, isGraphicClip } from "./types";
+import {
+  type ClipFilter,
+  type ClipItem,
+  type Item,
+  type Timeline,
+  type Track,
+  isGraphicClip,
+  isRemotionOverlay,
+} from "./types";
 
 /** The fade-sentinel filter services the builder emits (mirror `resolveLayers.ts`
  *  / `src/ir/builder.ts`). On an AUDIO clip a fade compiles to a `volume`/`gain`
@@ -246,10 +254,10 @@ function placeAudioTrack(track: Track, out: AudioClip[], opts: PlaceOpts = {}): 
     const start = cursor;
     cursor += segLen;
     if (isColorClip(it)) continue; // a color clip carries no audio
-    // On a VIDEO track, skip graphic (Remotion overlay) clips — they are visual
+    // On a VIDEO track, skip graphic clips AND Remotion overlays — both are visual
     // overlays; any baked audio in their .mov is silent/incidental, and fetching a
     // large overlay .mov to decode it is wasteful. Audio tracks pass skipGraphic=false.
-    if (opts.skipGraphic && isGraphicClip(it)) continue;
+    if (opts.skipGraphic && (isGraphicClip(it) || isRemotionOverlay(it))) continue;
     const { baseGain, automation } = resolveClipGain(it, segLen);
     out.push({
       trackId: track.id,
@@ -282,7 +290,8 @@ function placeDissolveEdges(
   if (!d || d.kind !== "dissolve") return;
   const frames = d.frames;
   if (frames <= 0) return;
-  const audible = (c: ClipItem) => !isColorClip(c) && !(opts.skipGraphic && isGraphicClip(c));
+  const audible = (c: ClipItem) =>
+    !isColorClip(c) && !(opts.skipGraphic && (isGraphicClip(c) || isRemotionOverlay(c)));
   // The OUTGOING edge: prev's last `frames` source frames, fading 1→0.
   if (prev?.kind === "clip" && audible(prev)) {
     const fromSrc = prev.out - frames + 1;

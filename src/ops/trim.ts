@@ -1,4 +1,4 @@
-import type { Clip, Filter, Item, Track } from "../ir/types";
+import type { Clip, Filter, Item, Timeline, Track } from "../ir/types";
 // trimIn / trimOut — resize a clip's in/out window by `delta` frames. Both trim
 // verbs live in one file (they share validation, the neighbour-blank math, and
 // the keyframe-window shift) and are registered separately ("trimIn"/"trimOut").
@@ -224,11 +224,58 @@ function doTrim(
     if (err) return err;
   }
 
+  // Keep an over-composite field transition IN SYNC with the overlay clip it
+  // brackets — the trim twin of move's `syncBracketingTransition`. A graphic/overlay
+  // clip (e.g. a Remotion-baked alpha .mov on an upper track) is composited over the
+  // footage by a `qtblend` `Transition` scoped to the clip's [in,out] span. When you
+  // RESIZE that clip, the transition must resize WITH it or the overlay keeps
+  // compositing over the wrong span. A trim changes exactly one edge of the clip's
+  // timeline span: trimIn moves the start by +delta (head shorter ⇒ start later;
+  // the END is invariant, downstream stays put); trimOut moves the end by −delta
+  // (tail shorter; the START is invariant). Re-span any transition whose bTrack is
+  // this clip's track and whose span matches the clip's OLD placement. The match is
+  // exact-span, so a plain clip with no bracketing composite is untouched; the
+  // inverse trim (delta −delta) re-spans it back, so trim stays its own inverse.
+  if (loc.trackKind === "video") {
+    syncBracketingTransition(next, 1 + loc.trackIndex, loc.position, len, side, delta);
+  }
+
   return {
     state: next,
     consequences: c,
     inverse: { op: side === "in" ? "trimIn" : "trimOut", args: { ...args, delta: -delta } },
   };
+}
+
+/** Re-span an over-composite transition that BRACKETS the trimmed overlay clip so
+ *  it keeps covering the clip after a resize. A transition "brackets" the clip when
+ *  its `bTrack` is the clip's track (`bTrackIndex`, a main-tractor index where the
+ *  background producer is 0) AND its span exactly matches the clip's OLD placement
+ *  (`[oldStart, oldStart+oldLen-1]`). A trimIn moves the matched edge's `in` by
+ *  +delta (start later/earlier); a trimOut moves its `out` by −delta (end
+ *  earlier/later) — the same one-edge change the clip's own span undergoes. Mutates
+ *  `next.transitions` in place; a no-op when nothing matches (a plain clip with no
+ *  over-composite is untouched). */
+function syncBracketingTransition(
+  next: Timeline,
+  bTrackIndex: number,
+  oldStart: number,
+  oldLen: number,
+  side: Side,
+  delta: number,
+): void {
+  if (delta === 0) return;
+  const oldIn = oldStart;
+  const oldOut = oldStart + oldLen - 1;
+  for (const t of next.transitions) {
+    if (t.bTrack === bTrackIndex && t.in === oldIn && t.out === oldOut) {
+      if (side === "in") {
+        t.in = oldIn + delta; // head edge moved (+delta later, −delta earlier); out fixed
+      } else {
+        t.out = oldOut - delta; // tail edge moved (−delta earlier, +delta later); in fixed
+      }
+    }
+  }
 }
 
 /** An identity (delta=0) trim: a valid no-change result whose inverse is itself.
@@ -365,7 +412,6 @@ export { trimArgs };
 import { clip, colorClip, filter, resetIds, timeline, videoTrack } from "../ir/builder";
 import { blank } from "../ir/builder";
 import { VERTICAL } from "../ir/profile";
-import type { Timeline } from "../ir/types";
 import type { OpSample } from "./types";
 
 export const samplesTrimIn: OpSample<TrimArgs>[] = [

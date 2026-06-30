@@ -831,3 +831,72 @@ describe("move: an over-composite transition follows the overlay clip it bracket
     ]);
   });
 });
+
+describe("trim: an over-composite transition resizes with the overlay clip it brackets", () => {
+  // The trim twin of the move block above. Same addGraphic shape: footage on V1
+  // (main-tractor index 1), an alpha overlay on V2 (index 2) after a leading blank,
+  // and a `qtblend` compositing V2 over V1 for the overlay's exact span. Resizing
+  // the overlay (trimIn/trimOut) must resize the qtblend with it, or the composite
+  // keeps covering the OLD span and the overlay shows over the wrong frames after a
+  // trim. A trim moves exactly one edge: trimIn the start (head), trimOut the end
+  // (tail).
+  function overlayTimeline(): Timeline {
+    resetIds();
+    return timeline(
+      VERTICAL,
+      {
+        video: [
+          videoTrack(clip("/abs/footage.mp4", { id: "base", dur: 400 })),
+          videoTrack(blank(100), clip("/abs/overlay.mov", { id: "ovl", dur: 60 })),
+        ],
+      },
+      // qtblend a=1 (footage) b=2 (overlay) over the overlay's span [100,159].
+      { transitions: [transition("qtblend", 1, 2, 100, 159)] },
+    );
+  }
+
+  it("trimIn moves the bracketing qtblend's IN with the head; the inverse restores it", () => {
+    const tl = overlayTimeline();
+    // trimIn +20: the overlay's head shortens (the left blank grows 100→120, so the
+    // clip's screen start moves 100→120); its end (159) is invariant.
+    const r = ok(trimIn(tl, { uuid: "ovl", delta: 20, rippleAllTracks: false }));
+    const t = r.state.transitions[0];
+    expect(t).toBeDefined();
+    expect([t?.in, t?.out]).toEqual([120, 159]); // in followed the head, out fixed
+    expect([t?.aTrack, t?.bTrack, t?.service]).toEqual([1, 2, "qtblend"]); // identity unchanged
+    // Source IR was not mutated (purity).
+    expect(tl.transitions[0]?.in).toBe(100);
+
+    // The inverse (trimIn −20) re-grows the head and restores the original span.
+    const back = ok(apply(r.inverse, r.state));
+    expect([back.state.transitions[0]?.in, back.state.transitions[0]?.out]).toEqual([100, 159]);
+  });
+
+  it("trimOut moves the bracketing qtblend's OUT with the tail; the inverse restores it", () => {
+    const tl = overlayTimeline();
+    // trimOut +20: the overlay's tail shortens (out 159→139); its start (100) is
+    // invariant.
+    const r = ok(trimOut(tl, { uuid: "ovl", delta: 20, rippleAllTracks: false }));
+    const t = r.state.transitions[0];
+    expect(t).toBeDefined();
+    expect([t?.in, t?.out]).toEqual([100, 139]); // out followed the tail, in fixed
+    expect([t?.aTrack, t?.bTrack, t?.service]).toEqual([1, 2, "qtblend"]); // identity unchanged
+    expect(tl.transitions[0]?.out).toBe(159); // source IR untouched
+
+    // The inverse (trimOut −20) re-grows the tail and restores the original span.
+    const back = ok(apply(r.inverse, r.state));
+    expect([back.state.transitions[0]?.in, back.state.transitions[0]?.out]).toEqual([100, 159]);
+  });
+
+  it("leaves a non-bracketing transition untouched (only an exact span match resizes)", () => {
+    const tl = overlayTimeline();
+    // A qtblend whose span does NOT match the overlay (a fixed-range blend).
+    tl.transitions.push(transition("qtblend", 1, 2, 0, 50));
+    const r = ok(trimIn(tl, { uuid: "ovl", delta: 20, rippleAllTracks: false }));
+    // The bracketing one resized; the unrelated [0,50] one did not.
+    expect(r.state.transitions.map((t) => [t.in, t.out])).toEqual([
+      [120, 159],
+      [0, 50],
+    ]);
+  });
+});

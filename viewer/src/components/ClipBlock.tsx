@@ -7,7 +7,7 @@
 // and an optional live readout (the slip in/out, DaVinci-style). Blanks + dissolves
 // stay inert (no selection, no gesture).
 import type { Diagnostic, PlacedItem } from "../types";
-import { isGraphicClip } from "../types";
+import { isGraphicClip, isRemotionOverlay } from "../types";
 
 export interface ClipBlockProps {
   placed: PlacedItem;
@@ -85,8 +85,9 @@ export function ClipBlock({
     );
   }
 
-  // clip
-  const graphic = isGraphicClip(item);
+  // clip — a Remotion overlay (composition-baked .mov) reads like a graphic clip in
+  // the strip (purple gradient + ◆ marker), even though it composites as footage.
+  const graphic = isGraphicClip(item) || isRemotionOverlay(item);
   const bg = graphic
     ? "linear-gradient(180deg, #3a2f5e, #2c244a)"
     : kind === "audio"

@@ -107,6 +107,17 @@ export const clipSchema = z.object({
   extraProps: z.record(z.string(), propertyValue).optional(),
   /** Optional human label, for legibility when the .mlt is read/diffed. */
   label: z.string().optional(),
+  /** Remotion-overlay identity — present iff this clip is a baked alpha .mov
+   *  produced from a Remotion composition. `id` names the composition; `props`
+   *  carries the inputs it was rendered with. Round-trips through the
+   *  `vean:composition` / `vean:compositionProps` producer properties. A clip is
+   *  a Remotion overlay (FOOTAGE-composited) iff this field is set. */
+  composition: z
+    .object({
+      id: z.string().min(1),
+      props: z.record(z.string(), z.unknown()).optional(),
+    })
+    .optional(),
 });
 export type Clip = z.infer<typeof clipSchema>;
 

@@ -214,6 +214,18 @@ describe("resolveAudio: placement + gain/fade", () => {
     expect(resolveAudio(t).clips).toHaveLength(0);
   });
 
+  it("skips Remotion overlays (composition-baked .mov) on video tracks", () => {
+    // A Remotion overlay (a clip carrying `composition` metadata) is FOOTAGE-composited
+    // visually, but its baked alpha .mov audio is silent/incidental — fetching the
+    // large .mov to decode it is wasteful, so it is skipped for audio (mirrors the
+    // graphic-clip skip).
+    const overlay = clip("o", "proj/.vean/cache/overlay-x.mov", 0, 30, {
+      composition: { id: "X" },
+    });
+    const t = tl([], [videoTrack("V2", [overlay])]);
+    expect(resolveAudio(t).clips).toHaveLength(0);
+  });
+
   it("mixes audio-track and video-track clips into one schedule", () => {
     const t = tl(
       [audioTrack("A1", [clip("bed", "tone.wav", 0, 30)])],

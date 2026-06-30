@@ -135,6 +135,10 @@ type Prod = {
    *  …) preserved from parse, in document order — re-emitted verbatim so the
    *  round-trip is lossless. Empty/absent for vean's own emissions. */
   extraProps?: Record<string, PropertyValue>;
+  /** Remotion-overlay identity (`Clip.composition`) — emitted as the
+   *  `vean:composition` / `vean:compositionProps` producer properties so the
+   *  overlay's composition id + render props survive the round-trip. */
+  composition?: { id: string; props?: Record<string, unknown> };
   /** Emit the Shotcut identity/audio hints (true for real timeline producers;
    *  false would be a bare melt producer — we always emit a doc, so always true
    *  except the background, which sets its own). */
@@ -316,6 +320,19 @@ function prodXml(p: Prod): string {
     const uuid = p.uuid ?? shotcutUuid(p.id);
     lines.push(`    <property name="shotcut:uuid">${esc(uuid)}</property>`);
   }
+  // Remotion-overlay identity, right after shotcut:uuid (a deterministic, stable
+  // slot the parser re-captures structurally). `vean:compositionProps` is emitted
+  // ONLY when props are present AND non-empty, so a propless overlay stays minimal
+  // and byte-stable. JSON.stringify with the object's own key order is
+  // deterministic for the IR we construct.
+  if (p.composition) {
+    lines.push(`    <property name="vean:composition">${esc(p.composition.id)}</property>`);
+    if (p.composition.props && Object.keys(p.composition.props).length > 0) {
+      lines.push(
+        `    <property name="vean:compositionProps">${esc(JSON.stringify(p.composition.props))}</property>`,
+      );
+    }
+  }
   // Non-structural producer metadata (caption, eof, aspect_ratio, proxy hints, …),
   // preserved from parse in document order for a lossless round-trip. Emitted
   // after the structural props + uuid, before the filters — a stable position the
@@ -447,6 +464,9 @@ function makeProd(
   // EVERY producer minted from it (solo, dissolve tail/head) so it survives the
   // round-trip regardless of which window the clip emits through.
   if (c.extraProps && Object.keys(c.extraProps).length > 0) prod.extraProps = c.extraProps;
+  // Carry the Remotion-overlay identity onto every producer minted from the clip
+  // (solo, dissolve tail/head) so the composition survives the round-trip.
+  if (c.composition) prod.composition = c.composition;
   return prod;
 }
 

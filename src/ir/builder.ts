@@ -98,6 +98,9 @@ type ClipOpts = {
   filters?: Filter[];
   /** Optional human label for the .mlt. */
   label?: string;
+  /** Remotion-overlay identity — set when this clip is a baked alpha .mov from a
+   *  Remotion composition. Flows verbatim onto `Clip.composition`. */
+  composition?: { id: string; props?: Record<string, unknown> };
 };
 
 // Fades are stored as a marker filter the serializer resolves into the proven
@@ -137,6 +140,7 @@ function baseClip(
     gain: opts.gain,
     filters: [...fadeFilters(opts), ...(opts.filters ?? [])],
     label: opts.label,
+    composition: opts.composition,
   };
 }
 

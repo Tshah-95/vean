@@ -203,12 +203,25 @@ type ResolvedProducer = {
    *  aspect_ratio, proxy hints, …), in document order — preserved for a lossless
    *  round-trip. */
   extraProps?: Record<string, PropertyValue>;
+  /** Remotion-overlay identity recovered from `vean:composition` /
+   *  `vean:compositionProps` — present iff the producer is a baked Remotion
+   *  overlay. Routed onto `Clip.composition`. */
+  composition?: { id: string; props?: Record<string, unknown> };
 };
 
 /** Producer `<property>` names the serializer carries STRUCTURALLY (modeled by a
  *  dedicated field or regenerated on emit). They must NOT be captured as
  *  extra-properties, or they would double-emit / fight their structural field. */
-const STRUCTURAL_PRODUCER_PROPS = new Set(["mlt_service", "resource", "length", "shotcut:uuid"]);
+const STRUCTURAL_PRODUCER_PROPS = new Set([
+  "mlt_service",
+  "resource",
+  "length",
+  "shotcut:uuid",
+  // The Remotion-overlay identity, carried structurally into `Clip.composition`
+  // (not re-emitted as a data prop, or it would double-emit / fight its field).
+  "vean:composition",
+  "vean:compositionProps",
+]);
 
 /** Playlist `<property>` names the serializer carries STRUCTURALLY (the Shotcut
  *  track kind + display name, regenerated on emit). Everything else (shotcut:lock,
@@ -357,6 +370,18 @@ function resolveProducer(node: Node): ResolvedProducer {
     const n = Number(dotDecimal(lengthRaw));
     if (Number.isFinite(n)) out.length = Math.round(n);
   }
+  // Recover the Remotion-overlay identity. `vean:composition` is the composition
+  // id; `vean:compositionProps` (when present) is the JSON-encoded render props —
+  // omitted from `composition` when the prop is absent, so a propless overlay
+  // round-trips with no `props` key.
+  const compId = props["vean:composition"];
+  if (compId != null && compId !== "") {
+    out.composition = { id: compId };
+    const compProps = props["vean:compositionProps"];
+    if (compProps != null && compProps !== "") {
+      out.composition.props = JSON.parse(compProps) as Record<string, unknown>;
+    }
+  }
   // Preserve every non-structural producer property (caption, eof, aspect_ratio,
   // proxy hints, …) in document order, so the round-trip is genuinely lossless.
   const extraProps: Record<string, PropertyValue> = {};
@@ -454,6 +479,7 @@ function buildClip(
   };
   if (prod.service != null && prod.service !== "") clip.service = prod.service;
   if (prod.extraProps != null) clip.extraProps = prod.extraProps;
+  if (prod.composition != null) clip.composition = prod.composition;
   // A color producer's authored window is always 0-based; its `length` is the
   // played count (the serializer regenerates it). Keep an explicit `length` when
   // present and meaningful (it's required for color in the IR? — optional there,
