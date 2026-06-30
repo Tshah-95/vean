@@ -16,6 +16,7 @@
 // pushing this set after each change; no flow should depend on "remember to run
 // diagnose". The CLI help + docstrings frame it that way.
 import type { Timeline } from "../ir/types";
+import { dials } from "./checks/dials";
 import { media } from "./checks/media";
 import { structural } from "./checks/structural";
 import { sync } from "./checks/sync";
@@ -30,6 +31,7 @@ export const CHECKERS: CheckerEntry[] = [
   { name: "structural", check: structural },
   { name: "sync", check: sync },
   { name: "media", check: media },
+  { name: "dials", check: dials },
 ];
 
 /** The names of every registered checker (for the harness + a `--only` filter). */
@@ -101,3 +103,4 @@ export { diag } from "./types";
 export { structural } from "./checks/structural";
 export { sync } from "./checks/sync";
 export { media } from "./checks/media";
+export { dials } from "./checks/dials";
