@@ -4,6 +4,7 @@ import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { resolveBin } from "../driver/melt";
 
 export type DoctorHost = "all" | "claude-code" | "codex";
 export type DoctorSurface = "all" | "cli" | "lsp" | "mcp" | "cli-lsp" | "mcp-lsp";
@@ -443,11 +444,32 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorRepo
 
   checks.push(check("repo", existsSync(join(repo, "package.json")) ? "pass" : "fail", repo));
   checks.push(commandCheck("bun", "bun", ["--version"], "Bun runtime is required"));
+  // Renderer binaries honor the VEAN_MELT/VEAN_FFMPEG/VEAN_FFPROBE overrides (via
+  // resolveBin), so doctor reports the bundled-sidecar path inside the Mac app and
+  // the system binary on the CLI/Homebrew path.
   checks.push(
-    commandCheck("ffmpeg", "ffmpeg", ["-version"], "ffmpeg is required for render/still"),
+    commandCheck(
+      "ffmpeg",
+      resolveBin("ffmpeg"),
+      ["-version"],
+      "ffmpeg is required for render/still (set VEAN_FFMPEG to override)",
+    ),
   );
   checks.push(
-    commandCheck("melt", "melt", ["-version"], "melt (MLT) is required for render/still"),
+    commandCheck(
+      "ffprobe",
+      resolveBin("ffprobe"),
+      ["-version"],
+      "ffprobe is required for media probe/contact-sheet (set VEAN_FFPROBE to override)",
+    ),
+  );
+  checks.push(
+    commandCheck(
+      "melt",
+      resolveBin("melt"),
+      ["-version"],
+      "melt (MLT) is required for render/still (set VEAN_MELT to override)",
+    ),
   );
   checks.push(
     check(

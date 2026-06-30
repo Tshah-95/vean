@@ -88,13 +88,35 @@ function indent(s: string): string {
     .join("\n");
 }
 
+/** Resolve a renderer binary name to its executable path. The signed Mac app sets
+ *  these to its bundled subprocess sidecars (`Contents/MacOS/…`); unset, they fall
+ *  back to the bare name resolved on `PATH` — the source / CLI / Homebrew path,
+ *  which treats `melt`/`ffmpeg`/`ffprobe` as system deps. Documented overrides:
+ *  `VEAN_MELT`, `VEAN_FFMPEG`, `VEAN_FFPROBE` (the `*_BIN` spelling is also
+ *  accepted). The MLT module / profile / data directories are handed to the
+ *  subprocess through inherited `MLT_*` env (`Bun.spawn` inherits the parent env),
+ *  so the driver needs no extra wiring for them — only the binary path. */
+export function resolveBin(name: string): string {
+  const env = process.env;
+  switch (name) {
+    case "melt":
+      return env.VEAN_MELT ?? env.VEAN_MELT_BIN ?? name;
+    case "ffmpeg":
+      return env.VEAN_FFMPEG ?? env.VEAN_FFMPEG_BIN ?? name;
+    case "ffprobe":
+      return env.VEAN_FFPROBE ?? env.VEAN_FFPROBE_BIN ?? name;
+    default:
+      return name;
+  }
+}
+
 /** Spawn `bin args`, drain stdout/stderr to strings, await exit. Returns the
  *  exit code + captured stderr — the caller decides whether nonzero throws. */
 async function spawnCapture(
   bin: string,
   args: string[],
 ): Promise<{ code: number; stdout: string; stderr: string }> {
-  const proc = Bun.spawn([bin, ...args], { stdout: "pipe", stderr: "pipe" });
+  const proc = Bun.spawn([resolveBin(bin), ...args], { stdout: "pipe", stderr: "pipe" });
   // Read both pipes concurrently so a large stream can't deadlock the buffer.
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),
