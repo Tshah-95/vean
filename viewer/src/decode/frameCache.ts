@@ -112,6 +112,35 @@ export class FrameCache {
   }
 
   /**
+   * The decoded frame for `uuid` whose source frame is CLOSEST to `sourceFrame`,
+   * within `maxDistance` frames — or null if nothing for this clip is that close.
+   * This is the PLAYBACK HOLD lever: during real-time multi-source playback the
+   * decode pool can lag a layer's exact frame, and dropping that layer (showing the
+   * layer below / black through it) makes the composite FLICKER between subsets of
+   * the z-stack. Holding the nearest already-decoded frame for the clip instead
+   * keeps every covering layer on screen (a few frames stale at worst, replaced the
+   * instant the exact frame lands) — stable beats frame-exact for a moving playhead.
+   * Bumps recency (the held frame is in active use). O(resident frames), and the
+   * cache is byte-bounded (~tens of 1080p frames), so this is cheap per composite.
+   */
+  getNearest(uuid: string, sourceFrame: number, maxDistance: number): ImageBitmap | null {
+    let best: CachedFrame | null = null;
+    let bestDist = maxDistance + 1;
+    for (const e of this.cache.values()) {
+      if (e.uuid !== uuid) continue;
+      const dist = Math.abs(e.sourceFrame - sourceFrame);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = e;
+        if (dist === 0) break;
+      }
+    }
+    if (!best) return null;
+    best.lastUsed = ++this.tick;
+    return best.bitmap;
+  }
+
+  /**
    * Insert (or replace) the decoded frame for `(uuid, sourceFrame)`. The cache
    * TAKES OWNERSHIP of `bitmap` and is responsible for `close()`ing it on evict or
    * replace (§8.3). Inserting evicts the least-recently-used frames until the new

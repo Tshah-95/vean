@@ -178,3 +178,31 @@ describe("FrameCache — decode-ahead missing-set (§5)", () => {
     expect(missing.every((f) => f >= 0 && f <= 4)).toBe(true);
   });
 });
+
+describe("FrameCache — getNearest (the playback HOLD primitive)", () => {
+  it("returns the closest decoded frame for the clip within maxDistance", () => {
+    const c = new FrameCache();
+    const b18 = fakeBitmap();
+    const b25 = fakeBitmap();
+    c.set("u", 18, b18);
+    c.set("u", 25, b25);
+    // Exact frame 22 is not resident; 25 is dist 3, 18 is dist 4 — so 25 wins.
+    expect(c.getNearest("u", 22, 90)).toBe(b25);
+    // Frame 20: 18 (dist 2) beats 25 (dist 5).
+    expect(c.getNearest("u", 20, 90)).toBe(b18);
+    // An exact hit returns itself (dist 0 short-circuits).
+    expect(c.getNearest("u", 18, 90)).toBe(b18);
+  });
+
+  it("respects maxDistance and clip identity (no cross-clip hold, no over-stale hold)", () => {
+    const c = new FrameCache();
+    c.set("u", 10, fakeBitmap());
+    c.set("other", 50, fakeBitmap());
+    // The only "u" frame is at 10 (dist 40 from 50) — beyond maxDistance 30 → no hold.
+    expect(c.getNearest("u", 50, 30)).toBeNull();
+    // Within maxDistance it holds.
+    expect(c.getNearest("u", 50, 50)).not.toBeNull();
+    // Never returns ANOTHER clip's frame, and a clip with nothing decoded holds null.
+    expect(c.getNearest("missing", 50, 90)).toBeNull();
+  });
+});

@@ -86,6 +86,17 @@ const MAX_EDGE = 2048;
  *  pool's queue (the on-demand current-frame decode always goes first). */
 const MAX_PRELOAD_PER_TICK = 6;
 
+/** PLAYBACK HOLD window (frames): when a layer's exact frame isn't decoded yet, the
+ *  compositor holds the nearest decoded frame for the clip within this many frames
+ *  rather than dropping the layer (the multi-track flicker). Generous — a stale hold
+ *  reads as a tiny temporal lag on one layer, far better than a vanishing layer. */
+const NEAREST_HOLD_FRAMES = 90;
+
+/** Decode-ahead BACKPRESSURE threshold: skip warming when the pool already has more
+ *  than this many requests queued, so the queue drains and the current frame's
+ *  on-demand decode isn't stuck behind a flood of warm work. */
+const MAX_QUEUE_DEPTH = 8;
+
 /** The measured perf snapshot published on `window.__veanPerf` for the Tier-2a
  *  gate (§6 Tier 2): composite fps + cache/decoder stats, read headlessly via
  *  `agent-browser` to assert steady fps + bounded GPU memory across a scrub. */
@@ -239,7 +250,15 @@ export function FootageStage({
       const hit = cache.current.get(layer.uuid, layer.sourceFrame);
       if (hit) return hit;
       requestDecode(layer.uuid, layer.resource, layer.sourceFrame);
-      return null;
+      // HOLD the layer with the nearest already-decoded frame for this clip instead
+      // of returning null (which DROPS the layer → reveals black/the layer below).
+      // Dropping a layer for one composite is the multi-track PLAYBACK FLICKER: at
+      // 30fps the pool can't keep two sources' EXACT frames ready, so each frame
+      // would show whichever subset decoded (keyboard-only, then scrim-over-black,
+      // then both). Holding keeps every covering layer on screen — a few frames
+      // stale at worst, replaced the instant the exact frame lands. Only when the
+      // clip has NOTHING decoded yet does the layer fall through to null.
+      return cache.current.getNearest(layer.uuid, layer.sourceFrame, NEAREST_HOLD_FRAMES);
     },
     [requestDecode],
   );
@@ -254,6 +273,13 @@ export function FootageStage({
     (frame: number) => {
       const dec = decoder.current;
       if (!dec) return;
+      // BACKPRESSURE: if the pool is already backed up, don't pile on more
+      // decode-ahead work this tick. Flooding the queue is what let the playhead
+      // outrun the decoder (measured queue depth ~27, 39% miss) — the current
+      // frame's on-demand decode then waits behind a wall of warm work, so the
+      // exact frame never catches up and the held frame stays stale. Skipping warm
+      // until the queue drains keeps the CURRENT frame first in line.
+      if (dec.getStats().queued > MAX_QUEUE_DEPTH) return;
       const resolved = resolveLayers(timeline, frame);
       let dispatched = 0;
       const footage: FootageLayer[] = [];
