@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { writeSync } from "node:fs";
 import { Command, InvalidArgumentError } from "commander";
 import {
   createActionContext,
@@ -53,8 +54,32 @@ function context() {
   return createActionContext({ cwd: opts.cwd, project: opts.project, surface: "cli" });
 }
 
+/** Write the whole buffer to fd 1, draining backpressure synchronously. When
+ *  vean's stdout is a pipe (a test's spawnSync, a shell pipeline) the fd is
+ *  often non-blocking, so a large write (the discover manifest is >64KB, past
+ *  the OS pipe buffer) returns a SHORT count or throws EAGAIN once the buffer
+ *  fills. Bun's `console.log` hits the same wall (it writes async and the
+ *  process can exit before the reader drains, truncating at 64KB). We loop over
+ *  partial writes AND retry on EAGAIN — the reader drains continuously, so each
+ *  retry makes progress — until every byte is handed off. This guarantees a
+ *  piped reader receives the complete JSON. */
+function writeAllSync(text: string): void {
+  const buf = Buffer.from(text, "utf8");
+  let offset = 0;
+  while (offset < buf.length) {
+    try {
+      offset += writeSync(1, buf, offset, buf.length - offset);
+    } catch (err) {
+      // The pipe is momentarily full (non-blocking fd). Retry the same offset;
+      // the consumer is draining, so the next write will accept more bytes.
+      if ((err as NodeJS.ErrnoException)?.code === "EAGAIN") continue;
+      throw err;
+    }
+  }
+}
+
 function printJson(value: unknown): void {
-  console.log(JSON.stringify(value, null, 2));
+  writeAllSync(`${JSON.stringify(value, null, 2)}\n`);
 }
 
 async function runAction(actionId: string, input: unknown) {
@@ -286,6 +311,133 @@ timeline
     if (!opts.json) printJson(output);
   });
 
+timeline
+  .command("new <out>")
+  .description("Create a blank .mlt timeline from a profile preset")
+  .option(
+    "--profile <name>",
+    "vertical, square, landscape, landscape-2997, landscape-23976",
+    "vertical",
+  )
+  .option("--title <title>", "timeline title", "vean timeline")
+  .option("--video-tracks <n>", "number of empty video tracks", parseInteger, 1)
+  .option("--audio-tracks <n>", "number of empty audio tracks", parseInteger, 1)
+  .option("--no-use", "do not set timeline:main to the new file")
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(
+    async (
+      out: string,
+      opts: {
+        profile: string;
+        title: string;
+        videoTracks: number;
+        audioTracks: number;
+        use?: boolean;
+        repo?: string;
+        json?: boolean;
+      },
+    ) => {
+      const output = await printActionOutput(
+        "timeline.new",
+        {
+          out,
+          profile: opts.profile,
+          title: opts.title,
+          videoTracks: opts.videoTracks,
+          audioTracks: opts.audioTracks,
+          use: opts.use !== false,
+          repo: opts.repo,
+        },
+        opts.json,
+      );
+      if (!opts.json) printJson(output);
+    },
+  );
+
+timeline
+  .command("add-graphic")
+  .description("Composite a pre-rendered alpha graphic clip over the footage on an upper track")
+  .requiredOption("--clip-path <mov>", "absolute path to the rendered alpha .mov")
+  .requiredOption("--position <frame>", "timeline frame the overlay starts at", parseInteger)
+  .requiredOption("--duration <frames>", "overlay duration in frames", parseInteger)
+  .option("--new-track", "force a fresh top GFX video track")
+  .option("--blend-service <service>", "cross-track blend service", "qtblend")
+  .option("--label <label>", "clip label")
+  .option("--timeline <uri-or-route>", "timeline path, file:// URI, or route alias")
+  .option("--json", "emit JSON")
+  .action(
+    async (opts: {
+      clipPath: string;
+      position: number;
+      duration: number;
+      newTrack?: boolean;
+      blendService: string;
+      label?: string;
+      timeline?: string;
+      json?: boolean;
+    }) => {
+      const output = await printActionOutput(
+        "timeline.addGraphic",
+        {
+          clipPath: opts.clipPath,
+          position: opts.position,
+          durationFrames: opts.duration,
+          newTrack: opts.newTrack ?? false,
+          blendService: opts.blendService,
+          label: opts.label,
+          timeline: opts.timeline,
+        },
+        opts.json,
+      );
+      if (!opts.json) printJson(output);
+    },
+  );
+
+timeline
+  .command("add-audio")
+  .description(
+    "Append an audio clip (music/voiceover) to an audio track, with optional gain and fades",
+  )
+  .requiredOption("--resource <path>", "absolute path to the audio file")
+  .requiredOption("--duration <frames>", "clip duration in frames", parseInteger)
+  .option("--in <frame>", "source in-point", parseInteger, 0)
+  .option("--gain-db <db>", "gain in decibels", (v) => Number.parseFloat(v))
+  .option("--fade-in <frames>", "fade-in length in frames", parseInteger)
+  .option("--fade-out <frames>", "fade-out length in frames", parseInteger)
+  .option("--track-id <id>", "target audio track id")
+  .option("--timeline <uri-or-route>", "timeline path, file:// URI, or route alias")
+  .option("--json", "emit JSON")
+  .action(
+    async (opts: {
+      resource: string;
+      duration: number;
+      in: number;
+      gainDb?: number;
+      fadeIn?: number;
+      fadeOut?: number;
+      trackId?: string;
+      timeline?: string;
+      json?: boolean;
+    }) => {
+      const output = await printActionOutput(
+        "timeline.addAudio",
+        {
+          resource: opts.resource,
+          durationFrames: opts.duration,
+          inFrame: opts.in,
+          gainDb: opts.gainDb,
+          fadeIn: opts.fadeIn,
+          fadeOut: opts.fadeOut,
+          track: opts.trackId ? { trackId: opts.trackId } : undefined,
+          timeline: opts.timeline,
+        },
+        opts.json,
+      );
+      if (!opts.json) printJson(output);
+    },
+  );
+
 function timelineEditInput(
   opOrUri: string,
   maybeOp: string | undefined,
@@ -442,6 +594,56 @@ renderCommand
     );
     if (!opts.json) printJson(output);
   });
+
+const remotionCommand = program
+  .command("remotion")
+  .description("Drive the Remotion producer (arm's-length subprocess)");
+
+remotionCommand
+  .command("render <composition>")
+  .description("Render a Remotion composition to an alpha ProRes 4444 clip (cached)")
+  .option("--props-json <json>", "composition props JSON", assertJson, "{}")
+  .option("--frames <start-end>", "inclusive frame range, e.g. 0-89")
+  .option("--out <path>", "output .mov path (default: cache path)")
+  .option("--profile <name>", "target profile for the cache fingerprint", "vertical")
+  .option("--repo <path>", "project repo path")
+  .option("--force", "bypass the render cache")
+  .option("--json", "emit JSON")
+  .action(
+    async (
+      composition: string,
+      opts: {
+        propsJson: string;
+        frames?: string;
+        out?: string;
+        profile: string;
+        repo?: string;
+        force?: boolean;
+        json?: boolean;
+      },
+    ) => {
+      let frameRange: [number, number] | undefined;
+      if (opts.frames) {
+        const m = /^(\d+)-(\d+)$/.exec(opts.frames.trim());
+        if (!m) throw new InvalidArgumentError("expected a frame range like 0-89");
+        frameRange = [Number.parseInt(m[1] as string, 10), Number.parseInt(m[2] as string, 10)];
+      }
+      const output = await printActionOutput(
+        "remotion.render",
+        {
+          composition,
+          props: parseJson(opts.propsJson),
+          frameRange,
+          out: opts.out,
+          profile: opts.profile,
+          repo: opts.repo,
+          force: opts.force ?? false,
+        },
+        opts.json,
+      );
+      if (!opts.json) printJson(output);
+    },
+  );
 
 const media = program.command("media").description("Manage project media catalog and roots");
 const mediaRoot = media.command("root").description("Manage media roots");

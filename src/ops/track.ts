@@ -68,9 +68,13 @@ export const addTrack: Op<AddTrackArgs> = (state, args): OpResult | EditError =>
 
   const next = cloneTimeline(state);
   if (args.kind === "video") {
-    next.tracks.video.unshift(track); // video PREPENDS (top of compositing)
+    // "top" (default, omitted) PREPENDS (video[0] = lowest main-tractor index);
+    // "bottom" APPENDS (video[last] = HIGHEST index = top melt compositing layer,
+    // where an overlay belongs so its transparent regions reveal the footage below).
+    if (args.position === "bottom") next.tracks.video.push(track);
+    else next.tracks.video.unshift(track);
   } else {
-    next.tracks.audio.push(track); // audio APPENDS
+    next.tracks.audio.push(track); // audio APPENDS (order is cosmetic)
   }
 
   const c = noConsequences();

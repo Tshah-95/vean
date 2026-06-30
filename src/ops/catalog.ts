@@ -175,6 +175,39 @@ const descriptors: BaseDescriptor[] = [
     prompt: "remove the second video track",
     args: { track: { kind: "video", index: 1 } },
   }),
+  op(
+    "pushTransition",
+    "Add Field Transition",
+    "transition",
+    "Add a cross-track field transition (e.g. a qtblend overlay composite).",
+    ["composite"],
+    {
+      inverse: "_popTransition",
+      prompt: "composite the graphics track over the footage",
+      args: {
+        transition: {
+          service: "qtblend",
+          aTrack: 2,
+          bTrack: 1,
+          in: 0,
+          out: 89,
+          properties: {},
+        },
+      },
+    },
+  ),
+  op(
+    "popTransition",
+    "Remove Field Transition",
+    "transition",
+    "Remove the last field transition(s) from the main tractor.",
+    [],
+    {
+      inverse: "_restoreTransitions",
+      prompt: "remove the last composite transition",
+      args: { count: 1 },
+    },
+  ),
 ];
 
 function op(

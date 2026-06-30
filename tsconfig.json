@@ -18,5 +18,6 @@
       "@/*": ["src/*"]
     }
   },
-  "include": ["src", "tests", "scripts", "app/src"]
+  "include": ["src", "tests", "scripts", "app/src"],
+  "exclude": ["node_modules", "remotion", "viewer", "app/src-tauri", "dist", "out", ".vean"]
 }

@@ -32,11 +32,27 @@ const jsonString = z
 const repoInput = z.object({ repo: z.string().optional() });
 const projectInput = z.object({ project: z.string().optional() });
 const emptyInput = z.object({}).strict();
+/** A non-negative integer frame (mirrors src/ir/types `frame`). */
+const frame = z.number().int().nonnegative();
+/** A track address: a stable track id or a (kind, index) pair. */
+const trackAddrInput = z.union([
+  z.object({ trackId: z.string().min(1) }),
+  z.object({ kind: z.enum(["video", "audio"]), index: z.number().int().nonnegative() }),
+]);
 const discoverKind = z.enum(["all", "command", "action", "op", "route"]).default("all");
 const discoverLimit = z.coerce.number().int().positive().max(50).default(10);
 
 function uriToPath(uri: string): string {
   return uri.startsWith("file://") ? decodeURIComponent(uri.slice("file://".length)) : uri;
+}
+
+/** Render an op EditError to a human-readable detail string for an action
+ *  envelope (the composite actions return EditErrors as typed failures). */
+function editErrorMsg(e: { kind: string; detail?: string; uuid?: string; track?: string }): string {
+  if (e.detail) return e.detail;
+  if (e.kind === "clip-not-found") return `clip not found: ${e.uuid}`;
+  if (e.kind === "track-not-found") return `track not found: ${e.track}`;
+  return e.kind;
 }
 
 async function readDoc(uri: string): Promise<string> {
@@ -794,6 +810,359 @@ const actions = [
     async execute(_ctx, input) {
       const { stillTool } = await import("../bridge/tools/read");
       return await stillTool(uriToPath(input.uri), input.frame, input.out);
+    },
+  }),
+  action({
+    id: "remotion.render",
+    title: "Render Remotion Composition",
+    description:
+      "Render a Remotion composition to an alpha ProRes 4444 clip for compositing onto an upper MLT track. Drives the remotion CLI as a subprocess; caches on (composition, props, range, profile).",
+    relatedDiscovery: ["timeline.addGraphic"],
+    input: z.object({
+      composition: z.string().min(1),
+      props: z.record(z.string(), z.unknown()).default({}),
+      frameRange: z.tuple([frame, frame]).optional(),
+      out: z.string().optional(),
+      profile: z
+        .enum(["vertical", "square", "landscape", "landscape-2997", "landscape-23976"])
+        .default("vertical"),
+      repo: z.string().optional(),
+      force: z.boolean().default(false),
+    }),
+    output: z.unknown(),
+    scopes: [
+      "render:execute",
+      "process:execute",
+      "fs:read",
+      "fs:write",
+      "state:read",
+      "state:write",
+    ],
+    effect: {
+      kind: "render",
+      mutates: ["filesystem", "process"],
+      openWorld: false,
+      destructive: false,
+      idempotency: "idempotent",
+      reversibility: "manual",
+      dryRun: "none",
+      approval: "ask",
+      audit: "metadata",
+      job: { mode: "inline", cancellable: true, retrySafe: true },
+    },
+    surfaces: { cli: { command: "remotion render" }, mcp: { name: "remotion-render" } },
+    async execute(ctx, input) {
+      const { PROFILES } = await import("../ir/profile");
+      const profileName = input.profile ?? "vertical";
+      const props = input.props ?? {};
+      const profile = PROFILES[profileName];
+      // Move 5 is restricted to integer-fps profiles — Remotion takes an integer
+      // fps. Reject a non-integer-fps target with a typed error (the fps-mismatch
+      // diagnostic + non-integer support is deferred to a later Move).
+      if (profile.fps[1] !== 1) {
+        return {
+          ok: false,
+          kind: "unsupported-fps",
+          detail: `remotion.render is restricted to integer-fps profiles; "${profileName}" is ${profile.fps[0]}/${profile.fps[1]}`,
+        };
+      }
+      const { defaultRemotionEntry, renderComposition, RemotionError } = await import(
+        "../driver/remotion"
+      );
+      const cacheMod = await import("../state/remotionCache");
+      const repo = repoFor(ctx, input.repo);
+      const entry = defaultRemotionEntry();
+      const profileFingerprint = `${profile.width}x${profile.height}@${profile.fps[0]}/${profile.fps[1]}`;
+      const entryFingerprint = cacheMod.entryFingerprint(entry);
+      const frameRange = input.frameRange ?? null;
+      const key = cacheMod.cacheKey({
+        compositionId: input.composition,
+        props,
+        frameRange,
+        profileFingerprint,
+        entryFingerprint,
+      });
+
+      if (!input.force) {
+        const hit = cacheMod.lookup(repo, key);
+        if (hit) {
+          return {
+            ok: true,
+            composition: input.composition,
+            outPath: hit.outPath,
+            cached: true,
+            pixFmt: hit.pixFmt,
+            hasAlpha: hit.hasAlpha,
+            frameRange: hit.frameRange,
+            cacheKey: key,
+            touchedUris: [hit.outPath],
+          };
+        }
+      }
+
+      const outPath = input.out ?? cacheMod.pathFor(repo, key);
+      const { mkdirSync } = await import("node:fs");
+      const { dirname } = await import("node:path");
+      mkdirSync(dirname(outPath), { recursive: true });
+
+      try {
+        const result = await renderComposition(input.composition, outPath, {
+          entry,
+          props,
+          ...(input.frameRange ? { frameRange: input.frameRange } : {}),
+        });
+        if (!result.hasAlpha) {
+          // A yuv422p… pix_fmt means the alpha plane was lost — the overlay would
+          // not composite. Hard failure, returned (not thrown) for a uniform envelope.
+          return {
+            ok: false,
+            kind: "no-alpha",
+            detail: `rendered clip has no alpha plane (pix_fmt=${result.pixFmt}); expected a yuva format`,
+            pixFmt: result.pixFmt,
+            outPath: result.outPath,
+          };
+        }
+        cacheMod.record(repo, {
+          key,
+          compositionId: input.composition,
+          props,
+          frameRange,
+          outPath: result.outPath,
+          pixFmt: result.pixFmt,
+          hasAlpha: result.hasAlpha,
+          createdAt: new Date().toISOString(),
+        });
+        return {
+          ok: true,
+          composition: input.composition,
+          outPath: result.outPath,
+          cached: false,
+          pixFmt: result.pixFmt,
+          hasAlpha: result.hasAlpha,
+          frameRange,
+          cacheKey: key,
+          touchedUris: [result.outPath],
+        };
+      } catch (error) {
+        const detail =
+          error instanceof RemotionError
+            ? error.message
+            : String((error as Error)?.message ?? error);
+        return { ok: false, kind: "render", detail };
+      }
+    },
+  }),
+  action({
+    id: "timeline.addGraphic",
+    title: "Add Graphic Overlay",
+    description:
+      "Composite a pre-rendered alpha graphic clip over the footage: ensures an upper video track, overwrites the clip at a position, and adds a qtblend field transition so it composites over the footage track.",
+    relatedDiscovery: ["remotion.render", "timeline.ops.describe"],
+    input: z.object({
+      uri: z.string().optional(),
+      timeline: z.string().optional(),
+      clipPath: z.string().min(1),
+      position: frame,
+      durationFrames: z.number().int().positive(),
+      newTrack: z.boolean().default(false),
+      blendService: z.string().default("qtblend"),
+      label: z.string().optional(),
+    }),
+    output: z.unknown(),
+    scopes: ["timeline:write", "fs:read", "fs:write"],
+    effect: {
+      kind: "update",
+      mutates: ["timeline", "filesystem"],
+      openWorld: false,
+      destructive: false,
+      idempotency: "non-idempotent",
+      reversibility: "inverse-op",
+      dryRun: "supported",
+      approval: "ask",
+      audit: "full-input",
+    },
+    surfaces: { cli: { command: "timeline add-graphic" }, mcp: { name: "add-graphic" } },
+    async execute(ctx, input) {
+      const { parseDoc, serializeDoc } = await import("../bridge/tools/core");
+      const { resolveTimelineTarget } = await import("../state/timeline");
+      const { addGraphic } = await import("./graphic");
+      const project = projectFor(ctx);
+      const timeline = resolveTimelineTarget(
+        project.rootPath,
+        project,
+        input.timeline ?? input.uri,
+      );
+      if ("ok" in timeline) return timeline;
+      const state = parseDoc(await readDoc(timeline.uri));
+      const result = addGraphic(state, {
+        clipPath: input.clipPath,
+        position: input.position,
+        durationFrames: input.durationFrames ?? 0,
+        newTrack: input.newTrack ?? false,
+        blendService: input.blendService ?? "qtblend",
+        ...(input.label ? { label: input.label } : {}),
+      });
+      if (!("state" in result)) {
+        return { ok: false, kind: result.kind, detail: editErrorMsg(result), uri: timeline.uri };
+      }
+      await writeDoc(timeline.uri, serializeDoc(result.state));
+      return {
+        ok: true,
+        consequences: result.consequences,
+        inverse: result.inverse,
+        aTrack: result.aTrack,
+        bTrack: result.bTrack,
+        gfxTrackId: result.gfxTrackId,
+        createdTrack: result.createdTrack,
+        uri: timeline.uri,
+        resolvedPath: timeline.resolvedPath,
+        touchedUris: [timeline.uri],
+        project: timeline.project,
+      };
+    },
+  }),
+  action({
+    id: "timeline.new",
+    title: "New Timeline",
+    description:
+      "Create a blank .mlt timeline from a profile preset and write it to disk (optionally set timeline:main).",
+    input: z.object({
+      out: z.string().min(1),
+      profile: z
+        .enum(["vertical", "square", "landscape", "landscape-2997", "landscape-23976"])
+        .default("vertical"),
+      title: z.string().default("vean timeline"),
+      videoTracks: z.number().int().positive().default(1),
+      audioTracks: z.number().int().nonnegative().default(1),
+      use: z.boolean().default(true),
+      repo: z.string().optional(),
+    }),
+    output: z.unknown(),
+    scopes: ["timeline:write", "fs:write", "state:read", "state:write"],
+    effect: {
+      ...baseEffects.stateWrite,
+      kind: "create",
+      mutates: ["filesystem", "projectState"],
+    },
+    surfaces: { cli: { command: "timeline new" }, mcp: { name: "timeline-new" } },
+    async execute(ctx, input) {
+      const { newTimeline } = await import("./timelineBuild");
+      const { serializeDoc } = await import("../bridge/tools/core");
+      const { resolve } = await import("node:path");
+      const project = projectFor(ctx, input.repo);
+      const outPath = resolve(project.rootPath, input.out);
+      const tl = newTimeline({
+        profile: input.profile ?? "vertical",
+        title: input.title ?? "vean timeline",
+        videoTracks: input.videoTracks ?? 1,
+        audioTracks: input.audioTracks ?? 1,
+      });
+      await writeDoc(outPath, serializeDoc(tl));
+      let set = false;
+      if (input.use !== false) {
+        const { useTimeline } = await import("../state/timeline");
+        const used = useTimeline(project.rootPath, project, outPath);
+        set = !("ok" in used);
+      }
+      return {
+        ok: true,
+        path: outPath,
+        profile: input.profile,
+        set,
+        touchedUris: [outPath],
+        project,
+      };
+    },
+  }),
+  action({
+    id: "timeline.addAudio",
+    title: "Add Audio Clip",
+    description:
+      "Append an audio clip (music/voiceover) to an audio track, with optional gain (dB) and fades.",
+    aliases: ["add-music"],
+    relatedDiscovery: ["timeline.ops.describe"],
+    input: z.object({
+      uri: z.string().optional(),
+      timeline: z.string().optional(),
+      resource: z.string().min(1),
+      durationFrames: z.number().int().positive(),
+      inFrame: frame.default(0),
+      track: trackAddrInput.optional(),
+      gainDb: z.number().optional(),
+      fadeIn: z.number().int().nonnegative().optional(),
+      fadeOut: z.number().int().nonnegative().optional(),
+      createTrackIfMissing: z.boolean().default(true),
+    }),
+    output: z.unknown(),
+    scopes: ["timeline:write", "fs:read", "fs:write"],
+    effect: {
+      kind: "update",
+      mutates: ["timeline", "filesystem"],
+      openWorld: false,
+      destructive: false,
+      idempotency: "non-idempotent",
+      reversibility: "inverse-op",
+      dryRun: "supported",
+      approval: "ask",
+      audit: "full-input",
+    },
+    surfaces: { cli: { command: "timeline add-audio" }, mcp: { name: "add-audio" } },
+    async execute(ctx, input) {
+      const { parseDoc, serializeDoc } = await import("../bridge/tools/core");
+      const { resolveTimelineTarget } = await import("../state/timeline");
+      const { addAudio } = await import("./timelineBuild");
+      const { isEditError } = await import("../ops/types");
+      const project = projectFor(ctx);
+      const timeline = resolveTimelineTarget(
+        project.rootPath,
+        project,
+        input.timeline ?? input.uri,
+      );
+      if ("ok" in timeline) return timeline;
+      const state = parseDoc(await readDoc(timeline.uri));
+      // Resolve a (kind,index) track address to its id (addAudio takes a trackId).
+      let trackId: string | undefined;
+      if (input.track) {
+        if ("trackId" in input.track) trackId = input.track.trackId;
+        else {
+          const list = state.tracks[input.track.kind];
+          const t = list[input.track.index];
+          if (!t) {
+            return {
+              ok: false,
+              kind: "track-not-found",
+              detail: `no ${input.track.kind} track at index ${input.track.index}`,
+              uri: timeline.uri,
+            };
+          }
+          trackId = t.id;
+        }
+      }
+      const result = addAudio(state, {
+        resource: input.resource,
+        durationFrames: input.durationFrames ?? 0,
+        inFrame: input.inFrame ?? 0,
+        ...(trackId ? { trackId } : {}),
+        ...(input.gainDb != null ? { gainDb: input.gainDb } : {}),
+        ...(input.fadeIn != null ? { fadeIn: input.fadeIn } : {}),
+        ...(input.fadeOut != null ? { fadeOut: input.fadeOut } : {}),
+        createTrackIfMissing: input.createTrackIfMissing ?? true,
+      });
+      if (!("state" in result)) {
+        return { ok: false, kind: result.kind, detail: editErrorMsg(result), uri: timeline.uri };
+      }
+      await writeDoc(timeline.uri, serializeDoc(result.state));
+      return {
+        ok: true,
+        consequences: result.consequences,
+        inverse: result.inverse,
+        trackId: result.trackId,
+        createdTrack: result.createdTrack,
+        uri: timeline.uri,
+        resolvedPath: timeline.resolvedPath,
+        touchedUris: [timeline.uri],
+        project: timeline.project,
+      };
     },
   }),
   action({

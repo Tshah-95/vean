@@ -8,6 +8,8 @@ out/
 .vean/
 target/
 app/src-tauri/gen/
+remotion/out/
+viewer/dist/
 
 # rendered artifacts (corpus keeps .mlt sources, never renders)
 *.mp4

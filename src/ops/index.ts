@@ -43,6 +43,16 @@ import {
   samplesAddTrack,
   samplesRemoveTrack,
 } from "./track";
+import {
+  popTransition,
+  popTransitionArgs,
+  pushTransition,
+  pushTransitionArgs,
+  restoreTransitions,
+  restoreTransitionsArgs,
+  samplesPopTransition,
+  samplesPushTransition,
+} from "./transition";
 import { samplesTrimIn, samplesTrimOut, trimIn, trimOut } from "./trim";
 import {
   type EditError,
@@ -109,6 +119,8 @@ export const REGISTRY: Record<string, OpEntry<unknown>> = {
   removeFilter: reg(removeFilter, removeFilterArgs),
   addTrack: reg(addTrack, addTrackArgs),
   removeTrack: reg(removeTrack, removeTrackArgs),
+  pushTransition: reg(pushTransition, pushTransitionArgs),
+  popTransition: reg(popTransition, popTransitionArgs),
   // Internal inverse/restore ops.
   _dropAppended: reg(dropAppended, dropAppendedArgs),
   _unsplit: reg(unsplit, unsplitArgs),
@@ -119,6 +131,11 @@ export const REGISTRY: Record<string, OpEntry<unknown>> = {
   _removeDissolve: reg(removeDissolve, removeDissolveArgs),
   _setGain: reg(setGain, setGainArgs),
   _restoreTrack: reg(restoreTrack, restoreTrackArgs),
+  // `_popTransition` is the INTERNAL inverse name `pushTransition`'s inverse
+  // dispatches to (so an undo of an addGraphic pop is namespaced); it shares the
+  // same body as the public `popTransition`.
+  _popTransition: reg(popTransition, popTransitionArgs),
+  _restoreTransitions: reg(restoreTransitions, restoreTransitionsArgs),
 };
 
 /** The set of PUBLIC op names (excludes the `_`-prefixed internal restore ops) —
@@ -172,6 +189,8 @@ export const SAMPLES: Record<string, OpSample[]> = {
   removeFilter: samplesRemoveFilter as OpSample[],
   addTrack: samplesAddTrack as OpSample[],
   removeTrack: samplesRemoveTrack as OpSample[],
+  pushTransition: samplesPushTransition as OpSample[],
+  popTransition: samplesPopTransition as OpSample[],
 };
 
 // ─── Re-exports (the public op surface) ───────────────────────────────────────
@@ -196,5 +215,7 @@ export {
   removeFilter,
   addTrack,
   removeTrack,
+  pushTransition,
+  popTransition,
 };
 export { isEditError };

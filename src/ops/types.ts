@@ -310,12 +310,26 @@ export const removeFilterArgs = z.object({
 });
 export type RemoveFilterArgs = z.infer<typeof removeFilterArgs>;
 
-/** addTrack — add a video (prepend) or audio (append) track. */
+/** addTrack — add a video or audio track.
+ *
+ * `position` controls where the new VIDEO track lands in `tracks.video`, which
+ * fixes its main-tractor index (and therefore its melt compositing layer):
+ *   • "top"    (default) — PREPEND (video[0], lowest main-tractor index). This is
+ *     Shotcut's "add video track" gesture (a fresh track on top of the stack).
+ *   • "bottom" — APPEND (video[last], HIGHEST main-tractor index). melt composites
+ *     a `qtblend a=lower b=higher` with the HIGHER index on top, so an OVERLAY that
+ *     must render over existing footage belongs at the BOTTOM of the array (= the
+ *     top compositing layer). `timeline.addGraphic` uses this so the footage stays
+ *     the base and the overlay's transparent regions reveal it (the composite seam).
+ * Audio tracks always append (their order is cosmetic — each mixes onto track 0). */
 export const addTrackArgs = z.object({
   kind: trackKind,
   /** Optional explicit id/name; minted when omitted. */
   id: z.string().min(1).optional(),
   name: z.string().optional(),
+  /** Where a VIDEO track lands (see above). Defaults to "top" (prepend) when
+   *  omitted. Ignored for audio (always appends). */
+  position: z.enum(["top", "bottom"]).optional(),
 });
 export type AddTrackArgs = z.infer<typeof addTrackArgs>;
 

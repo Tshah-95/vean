@@ -53,6 +53,15 @@ export * as diagnostics from "./diagnostics";
 // ─── The render/inspect driver (Move 0) ────────────────────────────────────
 export * from "./driver/melt";
 
+// ─── The Remotion producer driver (Move 5) ─────────────────────────────────
+// Arm's-length subprocess driver for the Remotion CLI (the `remotion/` peer
+// workspace), the SAME process-boundary pattern as the melt driver. Renders a
+// composition to an alpha ProRes 4444 clip vean composites onto an upper MLT
+// track. Namespaced so its `RemotionError`/`renderComposition` don't collide
+// with the melt driver's `render`. None of Remotion's packages enter vean's root
+// package.json — vean DRIVES the CLI, never links the library.
+export * as remotion from "./driver/remotion";
+
 // ─── The agent bridge (Move 2) ─────────────────────────────────────────────
 // Two coordinated surfaces over the SAME shared core: `vean-lsp` (ambient
 // publishDiagnostics + navigation + code actions) and the MCP/CLI domain tools
