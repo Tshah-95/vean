@@ -19,27 +19,43 @@ import { isGraphicClip, placeItems } from "./types";
 import { useTimelineEditor } from "./useTimelineEditor";
 
 /** Find the first GRAPHIC overlay clip in the timeline and read its placement +
- *  props, so the `@remotion/player` renders the right composition over the right
- *  span. `present` is false when the timeline has NO graphic clip — in which case
- *  the Player must NOT mount (it would otherwise draw its hardcoded `LowerThird`
- *  over a timeline that never asked for it; the bug seen on `projects/retire`,
- *  whose `chat.mov` overlay is a plain video file the FOOTAGE compositor composites,
- *  not a Remotion graphic). */
+ *  composition identity, so the live `@remotion/player` renders the RIGHT
+ *  composition (the clip's actual `composition.id`/`composition.props`) over the
+ *  right span — not a hardcoded `LowerThird`. `present` is false when the timeline
+ *  has NO graphic clip — in which case the Player must NOT mount (it would otherwise
+ *  draw a graphic over a timeline that never asked for it; the bug seen on
+ *  `projects/retire`, whose `chat.mov` overlay is a plain video file the FOOTAGE
+ *  compositor composites, not a Remotion graphic).
+ *
+ *  The live-overlay signal is `isGraphicClip` (the label-/cache-path convention — a
+ *  clip the `@remotion/player` owns). When that clip ALSO carries `composition`
+ *  metadata (the IR field that round-trips through `vean:composition` /
+ *  `vean:compositionProps`), its id + props drive the player so the LIVE preview is
+ *  the SAME composition the producer renders to ProRes. When the metadata is absent
+ *  (legacy label-/cache-path overlays), the player falls back to the default
+ *  composition — the historical behaviour, just no longer the only behaviour. */
 function deriveOverlay(data: TimelineResponse): {
   present: boolean;
   duration: number;
+  compositionId: string | undefined;
   props: Record<string, unknown> | undefined;
 } {
   for (const track of data.timeline.tracks.video) {
     for (const placed of placeItems(track)) {
-      if (placed.item.kind === "clip" && isGraphicClip(placed.item)) {
-        return { present: true, duration: placed.length, props: undefined };
-      }
+      const item = placed.item;
+      if (item.kind !== "clip" || !isGraphicClip(item)) continue;
+      // Read the composition identity off the clip when present (the IR field).
+      return {
+        present: true,
+        duration: placed.length,
+        compositionId: item.composition?.id,
+        props: item.composition?.props,
+      };
     }
   }
   // No graphic clip → no Remotion overlay layer at all (footage-only / video-file
   // overlays composite on the footage canvas).
-  return { present: false, duration: data.totalFrames, props: undefined };
+  return { present: false, duration: data.totalFrames, compositionId: undefined, props: undefined };
 }
 
 function Viewer({ route }: { route: string | undefined }) {
@@ -189,7 +205,12 @@ function Stage({
 }: {
   data: TimelineResponse;
   route: string | undefined;
-  overlay: { present: boolean; duration: number; props: Record<string, unknown> | undefined };
+  overlay: {
+    present: boolean;
+    duration: number;
+    compositionId: string | undefined;
+    props: Record<string, unknown> | undefined;
+  };
   volume: number;
   muted: boolean;
   sinkId: string;
@@ -272,6 +293,7 @@ function Stage({
         volume={volume}
         muted={muted}
         sinkId={sinkId}
+        {...(overlay.compositionId ? { overlayCompositionId: overlay.compositionId } : {})}
         {...(overlay.props ? { overlayProps: overlay.props } : {})}
       />
       <Transport

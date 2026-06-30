@@ -51,6 +51,7 @@
     "lint:xml": "bun scripts/lint-xml.ts",
     "verify:corpus": "bun scripts/verify-corpus.ts",
     "verify:graphic": "bun scripts/verify-graphic-composite.ts",
+    "verify:premult": "bun scripts/verify-premultiplied-alpha.ts",
     "verify:proxy": "bun scripts/verify-proxy.ts",
     "demo:build": "bun corpus/demo/build-demo.ts",
     "graphic-overlay:build": "bun corpus/demo/build-graphic-overlay.ts",

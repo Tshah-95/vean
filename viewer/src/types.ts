@@ -44,10 +44,13 @@ export interface ClipItem {
    *  subset (§7) and flags the rest `approximate`. */
   filters?: ClipFilter[];
   label?: string;
-  /** Remotion-overlay identity — present iff this clip is a baked alpha .mov from
-   *  a Remotion composition. A clip is a Remotion overlay (FOOTAGE-composited by
-   *  the WebGL compositor, distinct from the legacy `isGraphicClip` @remotion/player
-   *  path) iff this field is set. Mirrors `Clip.composition` in src/ir/types.ts. */
+  /** Remotion-composition identity — present iff this clip names a composition.
+   *  Mirrors `Clip.composition` in src/ir/types.ts; round-trips through the
+   *  `vean:composition` / `vean:compositionProps` producer properties. Two consumers
+   *  read it: the live `@remotion/player` overlay renders the named composition with
+   *  these props (so the preview is the SAME comp the producer bakes, not a hardcoded
+   *  stand-in — S7), and a baked alpha .mov overlay is FOOTAGE-composited by the WebGL
+   *  compositor (the legacy path). */
   composition?: { id: string; props?: Record<string, unknown> };
 }
 
