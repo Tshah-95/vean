@@ -14,13 +14,35 @@ export interface Profile {
   displayAspectDen: number;
 }
 
+/** A filter on a clip, as the core IR serializes it to the timeline JSON. The
+ *  viewer reads a SUBSET: fade sentinels (`vean.fadeIn`/`vean.fadeOut`), the
+ *  `brightness`/`level` and `volume`/`gain` fade/static filters, and the
+ *  animation-string escape hatch — enough for the Tier-1 compositor's exact-row
+ *  §7 mapping (opacity, fades). Unknown filters are flagged `approximate` and fall
+ *  back to a `melt` still (§6.3, §7). */
+export interface ClipFilter {
+  service: string;
+  properties: Record<string, string | number | boolean>;
+  shotcutName?: string;
+}
+
 export interface ClipItem {
   kind: "clip";
   id: string;
   resource: string;
+  /** MLT load key (`mlt_service`). `"color"` marks a solid-fill quad (resource is
+   *  a hex/named color, NOT a decodable file) — §7 "color clip → solid-fill quad".
+   *  Omitted → a footage file the decoder demuxes. */
+  service?: string;
   in: number;
   out: number;
   length?: number;
+  /** Audio gain multiplier (1 = unity), compiled to a `volume`/`gain` filter. */
+  gain?: number;
+  /** Filters on this clip (fades, color ops, the animation-string escape hatch).
+   *  Present in the timeline JSON; the Tier-1 compositor resolves the exact-row
+   *  subset (§7) and flags the rest `approximate`. */
+  filters?: ClipFilter[];
   label?: string;
 }
 

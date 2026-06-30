@@ -1,13 +1,16 @@
-// The composited preview: a LIVE footage <canvas/video> stage UNDER an
+// The composited preview: a LIVE footage <canvas> compositor UNDER an
 // @remotion/player overlay, both locked to the master clock.
 //
-// TIER 0 (DESIGN-LIVE-PREVIEW §6): the footage layer is no longer a whole-timeline
-// `melt`-proxy `<video>` scrubbed by currentTime — it is the `FootageStage`, which
-// resolves the LIVE in-memory IR at the playhead and seeks a per-source pooled
-// `<video>` to the source frame. An edit mutates the working IR + bumps `revision`,
-// and the stage re-resolves + re-seeks WITH NO SAVE and NO `/api/proxy-render`.
-// That is the no-save edit loop ("HMR for video"). The Remotion overlay draws ON
-// TOP exactly as before; its transparent regions reveal the composited footage.
+// TIER 1 (DESIGN-LIVE-PREVIEW §4, §6, §7): the footage layer is the `FootageStage`
+// WebGL2 compositor — `renderFrame(ir, frame)`. It resolves the LIVE in-memory IR
+// at the playhead into a z-stack (color quads + decoded footage + same-track
+// dissolves via gl-transitions) and composites it in one pass, recompositing on
+// every `(currentFrame, revision)` change. An edit mutates the working IR + bumps
+// `revision`, and the compositor repaints WITH NO SAVE, NO `/api/proxy-render`, NO
+// `melt` in the loop — the no-save edit loop ("HMR for video"). The Remotion
+// overlay draws ON TOP; its transparent regions reveal the composited footage
+// (two compositors, one editor track — the Remotion seam). `melt` re-enters ONLY
+// as the opt-in per-frame exact-still fallback for `approximate` services (§6.3).
 import { useClock } from "../ClockProvider";
 import type { Fps, Timeline } from "../types";
 import { FootageStage } from "./FootageStage";
@@ -84,6 +87,8 @@ export function PreviewPane({
           timeline={timeline}
           revision={revision}
           fps={fps}
+          width={width}
+          height={height}
           route={route}
           volume={volume}
           muted={muted}

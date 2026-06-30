@@ -1,59 +1,54 @@
-// The Tier-0 FOOTAGE STAGE — the live, no-save footage layer (DESIGN-LIVE-PREVIEW
-// §6 Tier 0, §9 step 2). It replaces the whole-timeline `melt`-proxy `<video>`
-// with PER-SOURCE pooled `<video>` elements, each seeked to the SOURCE frame the
-// playhead resolves to off the LIVE in-memory IR.
+// The TIER-1 FOOTAGE STAGE — the live, no-save, multi-track footage COMPOSITOR
+// (DESIGN-LIVE-PREVIEW.md §4, §6 Tier 1, §7, §9 step 4).
 //
-// THE LIVENESS CONTRACT ("HMR for video"): the stage re-resolves and repaints on
-// every `(currentFrame, revision)` change. `currentFrame` is the master clock;
-// `revision` is the session's monotonic edit counter (bumped on every op/undo/redo,
-// `src/preview/session.ts`). An edit mutates the working IR and bumps `revision` →
-// the resolve re-runs against the new IR → the `<video>` lands on the new source
-// frame, with NO save, NO `/api/proxy-render`, NO `melt`. That IS the liveness.
-// This generalizes the old "one proxy of the whole timeline, scrubbed by
-// currentTime" to "the source clip live at the playhead, seeked to its source
-// frame, derived from the live IR."
+// This is the real `renderFrame(ir, frame)` half of the no-save edit loop. It
+// replaces the Tier-0 single pooled-`<video>` with a WebGL2 `<canvas>` compositor
+// (`GlCompositor`) that draws the FULL resolved z-stack at the playhead:
+//   • `color` clips     → solid-fill quads (§7 exact),
+//   • footage clips     → decoded frames (mediabunny → ImageBitmap) as textured
+//                         quads, over-composited by track z-order (§7 exact),
+//   • same-track dissolves → `gl-transitions` fade/luma between from+to (§7 exact),
+//   • per-clip fades/opacity → resolved to a concrete alpha upstream (§4 step 3).
+// The `@remotion/player` overlay (PreviewPane) draws ON TOP, transparent regions
+// revealing this composite — two compositors, one editor track (the Remotion seam).
 //
-// REACTIVITY DISCIPLINE (ported from OpenReel `Preview.tsx:4777` + omniclip
-// `controller.ts` seek):
-//   • a `currentFrame` change → resolve + seek IMMEDIATELY (scrub must feel live);
-//   • a `revision`-only change (an edit at the same frame) → DEBOUNCE ~150ms so a
-//     burst of edits repaints once;
-//   • a single in-flight seek with LATEST-time coalescing, so the stage never
-//     settles on a stale frame mid-scrub.
-// Seek precision = set `video.currentTime`, await the `seeked` event once (omniclip
-// `#onSeeked`). During playback the element plays natively for audio + motion; the
-// RAF master clock still owns the integer frame.
+// THE LIVENESS CONTRACT ("HMR for video"): recomposite on EVERY `(currentFrame,
+// revision)` change. An edit mutates the working IR + bumps `revision` → the
+// resolve re-runs against the new IR → the compositor repaints, with NO save, NO
+// `/api/proxy-render`, NO `melt` in the loop (§0, §4). `melt` re-enters ONLY as the
+// opt-in per-frame still fallback for `approximate` services (§6.3).
 //
-// POOLING: one `<video>` per source UUID, created on demand and kept mounted (an
-// LRU cap bounds how many live at once). Resolving to the same clip across frames
-// reuses its element (only `currentTime` moves) — the analog of the decode cache
-// being keyed by stable producer uuid, so the pool survives ripple/trim edits that
-// only reposition a clip (DESIGN §4 step 2).
+// DECODE + LIFETIME (§5, §8.3 — the dominant failure mode): footage frames are
+// decoded off-thread via the mediabunny `Decoder` (one worker, bounded in-flight),
+// cached by `(producerUUID, sourceFrame)` so the cache survives ripple/trim edits
+// that only reposition a clip. The cache is byte-bounded LRU and `close()`s every
+// evicted `ImageBitmap` — forgetting `close()` OOMs the GPU within seconds of
+// scrubbing. The compositor never retains a bitmap after a draw.
 //
-// TIER-0 SCOPE: the TOPMOST covering footage clip wins (resolveVisible.ts). The
-// real multi-track crossfade compositor (mediabunny decode → WebGL `renderFrame`)
-// is Tier 1; this is the cheapest path to "edits are live" and needs neither
-// WebCodecs nor a GPU compositor. Graphics are drawn by the `@remotion/player`
-// overlay ON TOP, unchanged.
+// AUDIO (Tier 0/1 scope): a hidden per-source `<video>` carries audio during
+// playback (the visual is the canvas; the element is muted-of-video by being
+// off-screen). The full Web Audio graph is Tier 2b (§6).
 import { useCallback, useEffect, useRef, useState } from "react";
-import { mediaUrl } from "../api";
+import { mediaUrl, renderStill } from "../api";
 import { useClock, useClockInstance } from "../ClockProvider";
-import { resolveVisibleSet, type VisibleClip } from "../resolveVisible";
+import { type FootageProvider, type FrameImage, GlCompositor } from "../compositor/glCompositor";
+import { Decoder } from "../decode/decoder";
+import { type FootageLayer, type Layer, resolveLayers } from "../resolveLayers";
 import type { Fps, Timeline } from "../types";
 
 export interface FootageStageProps {
-  /** The LIVE working IR (the working copy once edited, else the server load). The
-   *  resolve walk reads THIS, so an edit is reflected the instant `revision` bumps. */
+  /** The LIVE working IR the compositor resolves at the playhead (no save). */
   timeline: Timeline;
-  /** The session's monotonic edit revision — the HMR trigger (§3). A change here
-   *  with the same `currentFrame` still re-resolves + repaints (debounced). */
+  /** The session's monotonic edit revision — the HMR trigger (§3, §4). */
   revision: number;
   fps: Fps;
-  /** The active route, scoping the `/api/media` allowlist check server-side. */
+  /** Profile pixel size (the compositor's drawing-buffer + decode-box size). */
+  width: number;
+  height: number;
+  /** The active route, scoping the `/api/media` + `/api/source-proxy` allowlist. */
   route: string | undefined;
-  /** Playback volume 0–1 (applied to the live footage element, the audio source). */
+  /** Playback volume 0–1 (applied to the hidden audio-source element). */
   volume: number;
-  /** Mute the footage audio. */
   muted: boolean;
   /** Output device id for setSinkId ("" = system default). */
   sinkId: string;
@@ -61,17 +56,21 @@ export interface FootageStageProps {
 
 /** Debounce window for a revision-only repaint (OpenReel `Preview.tsx:4835`). */
 const EDIT_DEBOUNCE_MS = 150;
-/** Max pooled `<video>` elements kept mounted (LRU). Tier-0 single-clip preview
- *  only ever shows one at a time; the pool just avoids re-creating + re-buffering a
- *  source on every cut back to it. Kept small — Tier 2 owns real decode budgeting. */
-const POOL_MAX = 6;
 
-/** A pooled source element + its bookkeeping. */
-interface PoolEntry {
-  uuid: string;
-  resource: string;
-  el: HTMLVideoElement;
-  /** Last access tick (for LRU eviction). */
+/** Decoded-frame LRU cap, in BYTES (§5, §8.3). ~4·w·h bytes/frame; ~500MB holds a
+ *  generous scrub window of 1080p frames. */
+const CACHE_MAX_BYTES = 500 * 1024 * 1024;
+
+/** Max decode-box edge — caps the compositor + decode resolution for the live path
+ *  (OpenCut's `isPreview` 2048px cap, `scene-builder.ts:102`). The profile is the
+ *  natural target; we never upscale past it. */
+const MAX_EDGE = 2048;
+
+/** A cached decoded footage frame, keyed by `(uuid, sourceFrame)`. */
+interface CachedFrame {
+  key: string;
+  bitmap: ImageBitmap;
+  bytes: number;
   lastUsed: number;
 }
 
@@ -79,227 +78,330 @@ export function FootageStage({
   timeline,
   revision,
   fps,
+  width,
+  height,
   route,
   volume,
   muted,
   sinkId,
 }: FootageStageProps) {
   const host = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const clock = useClock();
   const clockInstance = useClockInstance();
 
-  // The pool of `<video>` elements, keyed by source uuid. Imperative DOM (a ref,
-  // not state) so seeking never triggers a React re-render — the stage repaints by
-  // moving the visible element's `currentTime`, exactly like a canvas compositor
-  // repaints by drawing, not by re-rendering the tree.
-  const pool = useRef<Map<string, PoolEntry>>(new Map());
-  const useTick = useRef(0);
-  // Which uuid is currently shown (so we only flip visibility on a real change).
-  const shownUuid = useRef<string | null>(null);
-  // Whether the playhead currently sits over footage at all (else the box is empty
-  // — the background/overlay shows through). Surfaced as state for the placeholder.
-  const [hasFootage, setHasFootage] = useState(true);
+  // The decode box — the profile size clamped to MAX_EDGE (keeps aspect).
+  const boxW = useRef(0);
+  const boxH = useRef(0);
+  {
+    const scale = Math.min(1, MAX_EDGE / Math.max(width, height));
+    boxW.current = Math.max(1, Math.round(width * scale));
+    boxH.current = Math.max(1, Math.round(height * scale));
+  }
 
-  // Single-in-flight seek + latest-time coalescing (OpenReel doRender). We key the
-  // in-flight token on a monotonic request id so a newer resolve supersedes an older
-  // awaited `seeked`.
-  const inFlight = useRef(false);
-  const pendingReq = useRef<{ frame: number; revision: number } | null>(null);
+  const compositor = useRef<GlCompositor | null>(null);
+  const decoder = useRef<Decoder | null>(null);
+
+  // The decoded-frame cache + its byte accounting. Imperative (a ref) so a decode
+  // completing repaints without a React re-render.
+  const cache = useRef<Map<string, CachedFrame>>(new Map());
+  const cacheBytes = useRef(0);
+  const useTick = useRef(0);
+  // In-flight decode keys (so we never double-request the same frame).
+  const decoding = useRef<Set<string>>(new Set());
+
+  // Single in-flight composite + latest-(frame,revision) coalescing.
+  const composing = useRef(false);
+  const pending = useRef<{ frame: number; revision: number } | null>(null);
   const editTimer = useRef<number | null>(null);
+
+  // Whether the playhead sits over any footage/solid layer (else the box is empty).
+  const [hasContent, setHasContent] = useState(true);
+  // Whether the current frame has an `approximate` service (the melt-still
+  // affordance; §6.3). Surfaced so the pane can offer "show exact frame".
+  const [approximate, setApproximate] = useState(false);
+  // The on-demand `melt`-still fallback (§6.3): the ONLY place `melt` re-enters
+  // preview — opt-in, per-frame, never in the scrub loop. When the user requests
+  // an exact frame for an `approximate` composite, fetch ONE still from
+  // `/api/still` and overlay it; it is for THAT exact frame, so it clears the
+  // instant the playhead moves. `stillUrl` is the overlay; `stillFrame` pins it to
+  // its frame; `stillBusy` guards a single in-flight request.
+  const [stillUrl, setStillUrl] = useState<string | null>(null);
+  const stillFrame = useRef<number | null>(null);
+  const [stillBusy, setStillBusy] = useState(false);
+
+  // Request the exact `melt` still for the CURRENT frame (the §6.3 fallback). One
+  // request at a time; the result is the overlay image. Cached server-side by frame
+  // (the still endpoint writes `still-<frame>.png`), so re-requesting is cheap.
+  const requestExactStill = useCallback(async () => {
+    if (stillBusy) return;
+    const frame = clockInstance.getSnapshot().currentFrame;
+    setStillBusy(true);
+    try {
+      const res = await renderStill(frame, route);
+      stillFrame.current = frame;
+      // Cache-bust so a re-render of the same frame (after an edit) re-fetches.
+      setStillUrl(`${res.stillUrl}?f=${frame}&r=${Date.now()}`);
+    } catch (err) {
+      console.error("vean: exact-still fallback failed", err);
+    } finally {
+      setStillBusy(false);
+    }
+  }, [stillBusy, route, clockInstance]);
 
   const secondsForFrame = useCallback((frame: number) => (frame * fps[1]) / fps[0], [fps]);
 
-  // Acquire (or create) the pooled element for a source, applying audio settings
-  // and the source URL. Evicts LRU past POOL_MAX, pausing + detaching the source so
-  // the element releases its decode/buffer resources.
-  const acquire = useCallback(
-    (clip: VisibleClip): PoolEntry => {
-      const map = pool.current;
-      let entry = map.get(clip.uuid);
-      if (!entry) {
-        const el = document.createElement("video");
-        el.playsInline = true;
-        el.preload = "auto";
-        // Filled into the host box; only the SHOWN element is visible (others are
-        // kept mounted but hidden so a cut back to them is instant).
-        el.style.position = "absolute";
-        el.style.inset = "0";
-        el.style.width = "100%";
-        el.style.height = "100%";
-        el.style.objectFit = "contain";
-        el.style.display = "none";
-        el.src = mediaUrl(clip.resource, route);
-        host.current?.appendChild(el);
-        entry = { uuid: clip.uuid, resource: clip.resource, el, lastUsed: useTick.current };
-        map.set(clip.uuid, entry);
-        // Evict LRU.
-        if (map.size > POOL_MAX) {
-          let oldest: PoolEntry | null = null;
-          for (const e of map.values()) {
-            if (e.uuid === clip.uuid) continue;
-            if (!oldest || e.lastUsed < oldest.lastUsed) oldest = e;
-          }
-          if (oldest) {
-            oldest.el.pause();
-            oldest.el.removeAttribute("src");
-            oldest.el.load();
-            oldest.el.remove();
-            map.delete(oldest.uuid);
-          }
-        }
-      } else if (entry.resource !== clip.resource) {
-        // A re-link edit changed the source under a stable uuid — repoint it.
-        entry.resource = clip.resource;
-        entry.el.src = mediaUrl(clip.resource, route);
-      }
-      entry.lastUsed = ++useTick.current;
-      return entry;
-    },
-    [route],
-  );
+  const frameKey = (uuid: string, sourceFrame: number) => `${uuid}@${sourceFrame}`;
 
-  // Seek the visible element to a source frame, awaiting `seeked` once (omniclip
-  // precision). Returns when the element has actually landed (or immediately if it
-  // is already within ~half a frame, to avoid a redundant decode).
-  const seekTo = useCallback(
-    (el: HTMLVideoElement, sourceFrame: number) =>
-      new Promise<void>((resolveSeek) => {
-        const target = secondsForFrame(sourceFrame);
-        const halfFrame = fps[1] / fps[0] / 2;
-        if (Math.abs(el.currentTime - target) <= halfFrame) {
-          resolveSeek();
-          return;
-        }
-        const onSeeked = () => {
-          el.removeEventListener("seeked", onSeeked);
-          resolveSeek();
-        };
-        el.addEventListener("seeked", onSeeked, { once: true });
-        el.currentTime = target;
-      }),
-    [secondsForFrame, fps],
-  );
-
-  // Make `entry` the shown element (hide the previously shown one). Visibility flips
-  // are cheap; only the shown element decodes the seeked frame.
-  const show = useCallback((entry: PoolEntry) => {
-    if (shownUuid.current === entry.uuid) return;
-    const prev = shownUuid.current ? pool.current.get(shownUuid.current) : undefined;
-    if (prev && prev.uuid !== entry.uuid) {
-      prev.el.style.display = "none";
-      // Pause the element we're leaving so it doesn't keep decoding off-screen.
-      if (!prev.el.paused) prev.el.pause();
+  // ── decode cache (byte-bounded LRU, close()-on-evict — §8.3) ───────────────
+  const evictTo = useCallback((budget: number) => {
+    const map = cache.current;
+    if (cacheBytes.current <= budget) return;
+    const entries = [...map.values()].sort((a, b) => a.lastUsed - b.lastUsed);
+    for (const e of entries) {
+      if (cacheBytes.current <= budget) break;
+      e.bitmap.close(); // THE load-bearing release (§8.3)
+      cacheBytes.current -= e.bytes;
+      map.delete(e.key);
     }
-    entry.el.style.display = "block";
-    shownUuid.current = entry.uuid;
   }, []);
 
-  // The render core: resolve the visible footage clip off the LIVE IR at `frame`,
-  // acquire/seek its pooled element, show it. Single-in-flight with latest-wins
-  // coalescing so a scrub burst never settles on a stale frame.
-  const render = useCallback(
-    async (frame: number, rev: number): Promise<void> => {
-      if (inFlight.current) {
-        pendingReq.current = { frame, revision: rev };
-        return;
+  const putFrame = useCallback(
+    (key: string, bitmap: ImageBitmap) => {
+      const bytes = bitmap.width * bitmap.height * 4;
+      const existing = cache.current.get(key);
+      if (existing) {
+        // Replace — close the old bitmap first (§8.3 close-on-replace).
+        existing.bitmap.close();
+        cacheBytes.current -= existing.bytes;
+        cache.current.delete(key);
       }
-      inFlight.current = true;
-      try {
-        const clip = resolveVisibleSet(timeline, frame);
-        if (!clip) {
-          // No footage at this frame — hide whatever was shown; background/overlay
-          // fills the box.
-          if (shownUuid.current) {
-            const prev = pool.current.get(shownUuid.current);
-            if (prev) prev.el.style.display = "none";
-            shownUuid.current = null;
-          }
-          setHasFootage(false);
-          return;
-        }
-        setHasFootage(true);
-        const entry = acquire(clip);
-        show(entry);
-        // Audio settings on the shown (audio-source) element.
-        entry.el.volume = Math.min(1, Math.max(0, volume));
-        entry.el.muted = muted;
-        await seekTo(entry.el, clip.sourceFrame);
-      } finally {
-        inFlight.current = false;
-        const next = pendingReq.current;
-        pendingReq.current = null;
-        if (next && (next.frame !== frame || next.revision !== rev)) {
-          void render(next.frame, next.revision);
-        }
-      }
+      cache.current.set(key, { key, bitmap, bytes, lastUsed: ++useTick.current });
+      cacheBytes.current += bytes;
+      evictTo(CACHE_MAX_BYTES);
     },
-    [timeline, acquire, show, seekTo, volume, muted],
+    [evictTo],
   );
 
-  // ── The HMR effect: react to (currentFrame, revision) ─────────────────────
-  // A frame change renders immediately (scrub is live). A revision-only change
-  // (an edit at the same frame) debounces so a burst paints once. Playback is the
-  // same path on the clock (each tick changes currentFrame).
+  const getFrame = useCallback((key: string): ImageBitmap | null => {
+    const e = cache.current.get(key);
+    if (!e) return null;
+    e.lastUsed = ++useTick.current;
+    return e.bitmap;
+  }, []);
+
+  // The synchronous provider the compositor pulls each footage layer through: a
+  // cache hit returns the bitmap; a miss returns null (layer below shows through)
+  // and kicks off an async decode that recomposites on completion.
+  const provideFootage: FootageProvider = useCallback(
+    (layer: FootageLayer): FrameImage => {
+      const key = frameKey(layer.uuid, layer.sourceFrame);
+      const hit = getFrame(key);
+      if (hit) return hit;
+      if (!decoding.current.has(key) && decoder.current) {
+        decoding.current.add(key);
+        const seconds = secondsForFrame(layer.sourceFrame);
+        decoder.current
+          .decodeAt(layer.uuid, layer.resource, seconds, boxW.current, boxH.current, route)
+          .then((decoded) => {
+            decoding.current.delete(key);
+            if (!decoded) return;
+            putFrame(key, decoded.bitmap);
+            // A frame landed — recomposite the CURRENT playhead so it appears.
+            scheduleComposite(clockInstance.getSnapshot().currentFrame, revision, true);
+          })
+          .catch(() => {
+            decoding.current.delete(key);
+          });
+      }
+      return null;
+    },
+    // scheduleComposite is stable (defined below via ref); revision captured live.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [getFrame, putFrame, secondsForFrame, route, revision, clockInstance],
+  );
+
+  // The composite core: resolve the z-stack off the LIVE IR at `frame`, draw it.
+  const composite = useCallback(
+    (frame: number) => {
+      const comp = compositor.current;
+      if (!comp) return;
+      const resolved = resolveLayers(timeline, frame);
+      const layers: Layer[] = resolved.layers;
+      setHasContent(layers.length > 0);
+      setApproximate(resolved.hasApproximate);
+      comp.resize(boxW.current, boxH.current);
+      comp.render(layers, provideFootage);
+    },
+    [timeline, provideFootage],
+  );
+
+  // Single-in-flight composite with latest-wins coalescing. `force` bypasses the
+  // in-flight guard's coalescing collapse for a decode-completion repaint.
+  const scheduleCompositeRef = useRef<(frame: number, rev: number, force?: boolean) => void>(() => {});
+  const scheduleComposite = useCallback(
+    (frame: number, rev: number, force = false) => scheduleCompositeRef.current(frame, rev, force),
+    [],
+  );
+  useEffect(() => {
+    scheduleCompositeRef.current = (frame: number, rev: number, _force = false) => {
+      if (composing.current) {
+        pending.current = { frame, revision: rev };
+        return;
+      }
+      composing.current = true;
+      try {
+        composite(frame);
+      } finally {
+        composing.current = false;
+        const next = pending.current;
+        pending.current = null;
+        if (next) scheduleCompositeRef.current(next.frame, next.revision);
+      }
+    };
+  }, [composite]);
+
+  // Last (frame, revision) the HMR effect acted on — declared before the init
+  // effect so both can seed them (the init effect sets the baseline; the HMR
+  // effect diffs against it).
   const lastFrame = useRef(clock.currentFrame);
   const lastRevision = useRef(revision);
-  const firstPaint = useRef(true);
+
+  // ── init the compositor + decoder, and paint the first frame ───────────────
+  // The first paint is owned HERE (not by a `firstPaint` ref in the HMR effect):
+  // under React StrictMode the component double-mounts (setup → cleanup → setup),
+  // and a `firstPaint` ref set false on the first setup would never re-arm for the
+  // SECOND (live) compositor — leaving the canvas black (the bug this fixes). By
+  // compositing right after construction, every (re)mount paints its own current
+  // frame immediately. `lastFrame`/`lastRevision` are seeded here too so the HMR
+  // effect only fires on a REAL change after this baseline.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    try {
+      compositor.current = new GlCompositor(canvas);
+    } catch (err) {
+      // WebGL2 unavailable — leave the canvas blank; the overlay still draws. The
+      // pane surfaces the gap via `hasContent`.
+      console.error("vean compositor: WebGL2 init failed", err);
+    }
+    decoder.current = new Decoder();
+    // Paint the current frame off the live IR immediately (the baseline frame).
+    const snap = clockInstance.getSnapshot();
+    lastFrame.current = snap.currentFrame;
+    lastRevision.current = revision;
+    scheduleComposite(snap.currentFrame, revision);
+    return () => {
+      compositor.current?.dispose();
+      compositor.current = null;
+      decoder.current?.dispose();
+      decoder.current = null;
+      for (const e of cache.current.values()) e.bitmap.close();
+      cache.current.clear();
+      cacheBytes.current = 0;
+      decoding.current.clear();
+    };
+    // Re-init only on a compositor-identity change (canvas remount). The HMR effect
+    // owns frame/revision reactivity; this owns lifecycle + the baseline paint.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clockInstance, scheduleComposite]);
+
+  // ── The HMR effect: recomposite on (currentFrame, revision) ────────────────
   useEffect(() => {
     const frameChanged = clock.currentFrame !== lastFrame.current;
     const revisionChanged = revision !== lastRevision.current;
     lastFrame.current = clock.currentFrame;
     lastRevision.current = revision;
 
-    // The INITIAL paint: on mount neither frame nor revision has "changed" yet
-    // (both refs were seeded to the starting values), so render the current frame
-    // unconditionally once — otherwise the stage stays blank until the first scrub
-    // or edit. (The classic first-frame guard bug.)
-    if (firstPaint.current) {
-      firstPaint.current = false;
-      void render(clock.currentFrame, revision);
-      return;
+    // The exact-still overlay is pinned to ONE frame — clear it the moment the
+    // playhead leaves that frame (or an edit changes the composite), so the live
+    // compositor is always what's shown except where the user explicitly froze it.
+    if ((frameChanged || revisionChanged) && stillFrame.current !== clock.currentFrame) {
+      if (stillUrl) setStillUrl(null);
+      stillFrame.current = null;
     }
 
+    if (!frameChanged && !revisionChanged) return; // baseline handled by init effect
     if (frameChanged || clock.playing) {
-      // Immediate: scrubbing + playback must feel instant.
       if (editTimer.current != null) {
         window.clearTimeout(editTimer.current);
         editTimer.current = null;
       }
-      void render(clock.currentFrame, revision);
+      scheduleComposite(clock.currentFrame, revision);
     } else if (revisionChanged) {
-      // Edit at the same frame → debounce a single repaint.
       if (editTimer.current != null) window.clearTimeout(editTimer.current);
       editTimer.current = window.setTimeout(() => {
         editTimer.current = null;
-        void render(clock.currentFrame, revision);
+        scheduleComposite(clock.currentFrame, revision);
       }, EDIT_DEBOUNCE_MS);
     }
-  }, [clock.currentFrame, clock.playing, revision, render]);
+  }, [clock.currentFrame, clock.playing, revision, scheduleComposite]);
 
-  // Drive native play/pause of the SHOWN element from the master playing flag (so
-  // footage carries audio + motion during play; the RAF clock owns the frame).
+  // ── audio: a single hidden source element carrying the topmost footage clip's
+  // audio during playback (Tier 0/1; the Web Audio graph is Tier 2b). The visual
+  // is the canvas — this element is off-screen, played only for sound. ──────────
+  const audioEl = useRef<HTMLVideoElement | null>(null);
+  const audioUuid = useRef<string | null>(null);
+
+  const topmostAudioSource = useCallback((): { resource: string; uuid: string; seconds: number } | null => {
+    const resolved = resolveLayers(timeline, clock.currentFrame);
+    // Walk top-down; the highest footage layer carries audio (color/solid is silent).
+    for (let i = resolved.layers.length - 1; i >= 0; i--) {
+      const l = resolved.layers[i];
+      if (l && l.kind === "footage") {
+        return { resource: l.resource, uuid: l.uuid, seconds: secondsForFrame(l.sourceFrame) };
+      }
+    }
+    return null;
+  }, [timeline, clock.currentFrame, secondsForFrame]);
+
   useEffect(() => {
-    const entry = shownUuid.current ? pool.current.get(shownUuid.current) : undefined;
-    const el = entry?.el;
-    if (!el) return;
+    if (!audioEl.current) {
+      const el = document.createElement("video");
+      el.playsInline = true;
+      el.preload = "auto";
+      el.style.display = "none";
+      host.current?.appendChild(el);
+      audioEl.current = el;
+    }
+    const el = audioEl.current;
+    el.volume = Math.min(1, Math.max(0, volume));
+    el.muted = muted;
+    const src = topmostAudioSource();
+    if (!src) {
+      el.pause();
+      audioUuid.current = null;
+      return;
+    }
+    if (audioUuid.current !== src.uuid) {
+      el.src = mediaUrl(src.resource, route);
+      audioUuid.current = src.uuid;
+    }
     if (clock.playing) {
-      void el.play().catch(() => {
-        /* autoplay may be blocked until a user gesture; transport click unblocks */
-      });
+      // Keep the audio element roughly synced; the canvas owns the visual frame.
+      if (Math.abs(el.currentTime - src.seconds) > 0.25) el.currentTime = src.seconds;
+      void el.play().catch(() => {});
     } else {
       el.pause();
+      el.currentTime = src.seconds;
     }
-  }, [clock.playing]);
+  }, [clock.playing, clock.currentFrame, volume, muted, route, topmostAudioSource]);
 
-  // Audio-unlock: clock-driven play() runs from an effect (detached from the click),
-  // which browsers reject for an unmuted element. Grant playback on the first real
-  // interaction, then reconcile to the clock (same discipline the old proxy pane
-  // used).
+  // Route audio to the chosen output device.
+  useEffect(() => {
+    const el = audioEl.current as
+      | (HTMLVideoElement & { setSinkId?: (id: string) => Promise<void> })
+      | null;
+    if (!el || typeof el.setSinkId !== "function") return;
+    el.setSinkId(sinkId).catch(() => {});
+  }, [sinkId]);
+
+  // Audio-unlock on first interaction (clock-driven play() from an effect is
+  // rejected for an unmuted element until a user gesture).
   useEffect(() => {
     let unlocked = false;
     const unlock = () => {
-      const entry = shownUuid.current ? pool.current.get(shownUuid.current) : undefined;
-      const el = entry?.el;
+      const el = audioEl.current;
       if (!el || unlocked) return;
       unlocked = true;
       el.play()
@@ -318,38 +420,37 @@ export function FootageStage({
     };
   }, [clockInstance]);
 
-  // Route audio to the chosen output device on the shown element.
-  useEffect(() => {
-    const entry = shownUuid.current ? pool.current.get(shownUuid.current) : undefined;
-    const el = entry?.el as (HTMLVideoElement & { setSinkId?: (id: string) => Promise<void> }) | undefined;
-    if (!el || typeof el.setSinkId !== "function") return;
-    el.setSinkId(sinkId).catch(() => {
-      /* device may have vanished or permission denied — fall back to default */
-    });
-  }, [sinkId]);
-
-  // Tear down the whole pool on unmount: pause, detach sources, remove elements so
-  // the browser releases every decode/buffer resource (the `<video>` analog of the
-  // decode cache's `close()`-on-evict).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: unmount-only cleanup.
+  // Tear down the audio element on unmount.
   useEffect(
     () => () => {
       if (editTimer.current != null) window.clearTimeout(editTimer.current);
-      for (const entry of pool.current.values()) {
-        entry.el.pause();
-        entry.el.removeAttribute("src");
-        entry.el.load();
-        entry.el.remove();
+      const el = audioEl.current;
+      if (el) {
+        el.pause();
+        el.removeAttribute("src");
+        el.load();
+        el.remove();
       }
-      pool.current.clear();
-      shownUuid.current = null;
+      audioEl.current = null;
     },
     [],
   );
 
   return (
     <div ref={host} style={{ position: "absolute", inset: 0 }} data-testid="footage-stage">
-      {!hasFootage && (
+      <canvas
+        ref={canvasRef}
+        data-testid="footage-canvas"
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          objectFit: "contain",
+          display: "block",
+        }}
+      />
+      {!hasContent && (
         <div
           style={{
             position: "absolute",
@@ -363,6 +464,48 @@ export function FootageStage({
         >
           no footage at this frame
         </div>
+      )}
+      {stillUrl && (
+        // The on-demand `melt` exact still (§6.3), overlaid for its one frame. It
+        // sits ABOVE the live canvas but BELOW the Remotion overlay (PreviewPane
+        // stacks the overlay last), so the exact footage shows under a live overlay.
+        <img
+          data-testid="exact-still"
+          src={stillUrl}
+          alt="exact melt still"
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            objectFit: "contain",
+            display: "block",
+          }}
+        />
+      )}
+      {approximate && (
+        <button
+          type="button"
+          data-testid="approximate-badge"
+          onClick={() => void requestExactStill()}
+          disabled={stillBusy}
+          title="This frame uses a service the browser previews approximately. Click for a melt-rendered exact still of this frame."
+          style={{
+            position: "absolute",
+            top: 8,
+            right: 8,
+            padding: "2px 6px",
+            borderRadius: 4,
+            border: "none",
+            cursor: stillBusy ? "wait" : "pointer",
+            background: stillUrl ? "rgba(40,120,60,0.9)" : "rgba(180,120,20,0.85)",
+            color: "#fff",
+            fontSize: 10,
+            fontWeight: 600,
+          }}
+        >
+          {stillBusy ? "rendering…" : stillUrl ? "exact ✓" : "approx · exact?"}
+        </button>
       )}
     </div>
   );
