@@ -33,6 +33,13 @@ import {
   restoreRegionArgs,
 } from "./overwrite";
 import { reinsert, reinsertArgs, remove, samples as removeSamples } from "./remove";
+import {
+  removeWords,
+  removeWordsArgs,
+  samples as removeWordsSamples,
+  restoreWords,
+  restoreWordsArgs,
+} from "./removeWords";
 import { replace, samples as replaceSamples } from "./replace";
 import { roll, rollArgs, samples as rollSamples } from "./roll";
 import { slide, slideArgs, samples as slideSamples } from "./slide";
@@ -127,6 +134,9 @@ export const REGISTRY: Record<string, OpEntry<unknown>> = {
   removeTrack: reg(removeTrack, removeTrackArgs),
   pushTransition: reg(pushTransition, pushTransitionArgs),
   popTransition: reg(popTransition, popTransitionArgs),
+  // Word-level cut (transcript-driven; targets are stable-id-resolved frame
+  // ranges, never indices). Internal inverse `_restoreWords` below.
+  removeWords: reg(removeWords, removeWordsArgs),
   // Internal inverse/restore ops.
   _dropAppended: reg(dropAppended, dropAppendedArgs),
   _unsplit: reg(unsplit, unsplitArgs),
@@ -142,6 +152,7 @@ export const REGISTRY: Record<string, OpEntry<unknown>> = {
   // same body as the public `popTransition`.
   _popTransition: reg(popTransition, popTransitionArgs),
   _restoreTransitions: reg(restoreTransitions, restoreTransitionsArgs),
+  _restoreWords: reg(restoreWords, restoreWordsArgs),
 };
 
 /** The set of PUBLIC op names (excludes the `_`-prefixed internal restore ops) —
@@ -200,6 +211,7 @@ export const SAMPLES: Record<string, OpSample[]> = {
   removeTrack: samplesRemoveTrack as OpSample[],
   pushTransition: samplesPushTransition as OpSample[],
   popTransition: samplesPopTransition as OpSample[],
+  removeWords: removeWordsSamples as OpSample[],
 };
 
 // ─── Re-exports (the public op surface) ───────────────────────────────────────
@@ -229,5 +241,6 @@ export {
   removeTrack,
   pushTransition,
   popTransition,
+  removeWords,
 };
 export { isEditError };
