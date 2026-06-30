@@ -8,11 +8,12 @@
     "build": "vite build",
     "preview": "vite preview"
   },
+  "comment": "remotion/@remotion/player/react/react-dom are PINNED to exact versions that MUST match remotion/package.json — the live @remotion/player preview and the ProRes export render the same composition, so they must run the same Remotion/React version. `bun run doctor` asserts this parity; do not loosen to a range without keeping both files in lockstep.",
   "dependencies": {
-    "@remotion/player": "^4.0.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "remotion": "^4.0.0"
+    "@remotion/player": "4.0.484",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "remotion": "4.0.484"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",

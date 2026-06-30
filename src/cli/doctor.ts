@@ -343,6 +343,50 @@ function validateCodex(repo: string): DoctorCheck[] {
   return [check("codex:resolver", "pass", "AGENTS.md routes Codex to setup and editing skills")];
 }
 
+/**
+ * Remotion/React parity between the two frontend workspaces. The viewer renders
+ * the live `@remotion/player` preview and the `remotion/` workspace renders the
+ * ProRes export — the SAME composition, two compositing paths. They are separate
+ * installs (own node_modules, own lockfile), so they can silently drift to
+ * different 4.0.x / 19.x versions; if they do, "one composition, two paths" quietly
+ * becomes "two runtimes" and live preview can diverge from export. We read the
+ * INSTALLED version of each runtime singleton in both trees and fail on a mismatch.
+ * (The viewer's vite `resolve.dedupe` keeps the BROWSER bundle on a single copy —
+ * this check guards the cross-process version drift dedupe can't see.) Workspaces
+ * that aren't installed yet (fresh core-only clone) are a skip, not a failure.
+ */
+function validateRemotionParity(repo: string): DoctorCheck[] {
+  const SINGLETONS = ["remotion", "@remotion/player", "react", "react-dom"];
+  const installedVersion = (workspace: string, pkg: string): string | null => {
+    const path = join(repo, workspace, "node_modules", pkg, "package.json");
+    if (!existsSync(path)) return null;
+    try {
+      return (readJson(path) as { version?: string }).version ?? null;
+    } catch {
+      return null;
+    }
+  };
+  return SINGLETONS.map((pkg) => {
+    const viewer = installedVersion("viewer", pkg);
+    const producer = installedVersion("remotion", pkg);
+    if (viewer == null || producer == null) {
+      return check(
+        `remotion-parity:${pkg}`,
+        "warn",
+        `not installed in ${viewer == null ? "viewer/" : ""}${viewer == null && producer == null ? " and " : ""}${producer == null ? "remotion/" : ""} — run bun install in both to verify parity`,
+      );
+    }
+    if (viewer !== producer) {
+      return check(
+        `remotion-parity:${pkg}`,
+        "fail",
+        `${pkg} drift: viewer has ${viewer}, remotion/ has ${producer} — live preview and ProRes export would run different ${pkg} versions; pin both package.json to the same exact version and reinstall`,
+      );
+    }
+    return check(`remotion-parity:${pkg}`, "pass", `${pkg} ${viewer} matches across viewer/ + remotion/`);
+  });
+}
+
 async function validateState(repo: string): Promise<DoctorCheck[]> {
   const checks: DoctorCheck[] = [];
   let getStateStatus: typeof import("../state/migrate").getStateStatus;
@@ -427,6 +471,7 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorRepo
     skillResolutionCheck(repo, ".claude/skills/setup/SKILL.md", ".agents/skills/setup/SKILL.md"),
   );
   checks.push(skillResolutionCheck(repo, "skills/setup/SKILL.md", ".agents/skills/setup/SKILL.md"));
+  checks.push(...validateRemotionParity(repo));
   checks.push(...(await validateState(repo)));
 
   if (host === "all" || host === "claude-code") checks.push(...validateClaudeFiles(repo, surface));
