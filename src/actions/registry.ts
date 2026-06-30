@@ -1995,6 +1995,426 @@ const actions = [
       return failJob(input.repo ?? ctx.project?.rootPath ?? ctx.cwd, input.id, input.error) ?? null;
     },
   }),
+  // ════════════════════════════════════════════════════════════════════════════
+  // STREAM S3 — EDITORIAL MACROS + inspect-timeline (roadmap T6 / a.4).
+  // FLAG (integration): this block is the ONLY edit S3 makes to this shared file.
+  // It registers 6 actions (timeline.applyLayout, timeline.addBrollOverRange,
+  // timeline.duckMusic, timeline.tightenCut, timeline.removeDeadAir, and the
+  // inspect-timeline read tool). Each editorial macro lives in `./editorial.ts`
+  // (a pure helper composing existing ops, exactly like `./graphic.ts`); the
+  // inspect-timeline tool lives in `../bridge/tools/read.ts`. No new op kinds.
+  // Merge order: independent of every other stream's registry block — append-only.
+  // ════════════════════════════════════════════════════════════════════════════
+  action({
+    id: "timeline.applyLayout",
+    title: "Apply Talking-Head + B-roll Layout",
+    description:
+      "Lay out a talking-head + b-roll relationship over a range: a straight intercut (full-frame cutaway), a stacked split-screen, or a floating PiP overlay — WITH the correct crop so the subject fills its slot without stretching. Prefer THIS over low-level clip-property edits whenever a layout expresses the intent.",
+    relatedDiscovery: [
+      "timeline.addBrollOverRange",
+      "timeline.addGraphic",
+      "timeline.ops.describe",
+    ],
+    input: z.object({
+      uri: z.string().optional(),
+      timeline: z.string().optional(),
+      brollResource: z.string().min(1),
+      mode: z.enum(["intercut", "split", "overlay"]).default("intercut"),
+      position: frame,
+      durationFrames: z.number().int().positive(),
+      inFrame: frame.default(0),
+      insetSlot: z
+        .object({
+          x: z.number().min(0).max(1),
+          y: z.number().min(0).max(1),
+          w: z.number().min(0).max(1),
+          h: z.number().min(0).max(1),
+        })
+        .optional(),
+      newTrack: z.boolean().default(false),
+      blendService: z.string().default("qtblend"),
+    }),
+    output: z.unknown(),
+    scopes: ["timeline:write", "fs:read", "fs:write"],
+    effect: {
+      kind: "update",
+      mutates: ["timeline", "filesystem"],
+      openWorld: false,
+      destructive: false,
+      idempotency: "non-idempotent",
+      reversibility: "inverse-op",
+      dryRun: "supported",
+      approval: "ask",
+      audit: "full-input",
+    },
+    surfaces: { cli: { command: "timeline apply-layout" }, mcp: { name: "apply-layout" } },
+    async execute(ctx, input) {
+      const { parseDoc, serializeDoc } = await import("../bridge/tools/core");
+      const { resolveTimelineTarget } = await import("../state/timeline");
+      const { applyLayout } = await import("./editorial");
+      const project = projectFor(ctx);
+      const timeline = resolveTimelineTarget(
+        project.rootPath,
+        project,
+        input.timeline ?? input.uri,
+      );
+      if ("ok" in timeline) return timeline;
+      const state = parseDoc(await readDoc(timeline.uri));
+      const result = applyLayout(state, {
+        brollResource: input.brollResource,
+        mode: input.mode ?? "intercut",
+        position: input.position,
+        durationFrames: input.durationFrames,
+        inFrame: input.inFrame ?? 0,
+        ...(input.insetSlot ? { insetSlot: input.insetSlot } : {}),
+        newTrack: input.newTrack ?? false,
+        blendService: input.blendService ?? "qtblend",
+      });
+      if (!("state" in result)) {
+        return { ok: false, kind: result.kind, detail: editErrorMsg(result), uri: timeline.uri };
+      }
+      await writeDoc(timeline.uri, serializeDoc(result.state));
+      return {
+        ok: true,
+        mode: result.mode,
+        consequences: result.consequences,
+        inverse: result.inverse,
+        overlayTrackId: result.overlayTrackId,
+        createdTrack: result.createdTrack,
+        aTrack: result.aTrack,
+        bTrack: result.bTrack,
+        uri: timeline.uri,
+        resolvedPath: timeline.resolvedPath,
+        touchedUris: [timeline.uri],
+        project: timeline.project,
+      };
+    },
+  }),
+  action({
+    id: "timeline.addBrollOverRange",
+    title: "Add B-roll Over a Range",
+    description:
+      "Cover a [startFrame, endFrame] range with b-roll — a full-frame cutaway by default (intercut), or a split/overlay layout. Addresses the cut by endpoints (the way an agent thinks about a VO line). Thin sugar over apply-layout.",
+    relatedDiscovery: ["timeline.applyLayout"],
+    input: z.object({
+      uri: z.string().optional(),
+      timeline: z.string().optional(),
+      brollResource: z.string().min(1),
+      startFrame: frame,
+      endFrame: frame,
+      inFrame: frame.default(0),
+      mode: z.enum(["intercut", "split", "overlay"]).default("intercut"),
+      insetSlot: z
+        .object({
+          x: z.number().min(0).max(1),
+          y: z.number().min(0).max(1),
+          w: z.number().min(0).max(1),
+          h: z.number().min(0).max(1),
+        })
+        .optional(),
+      newTrack: z.boolean().default(false),
+      blendService: z.string().default("qtblend"),
+    }),
+    output: z.unknown(),
+    scopes: ["timeline:write", "fs:read", "fs:write"],
+    effect: {
+      kind: "update",
+      mutates: ["timeline", "filesystem"],
+      openWorld: false,
+      destructive: false,
+      idempotency: "non-idempotent",
+      reversibility: "inverse-op",
+      dryRun: "supported",
+      approval: "ask",
+      audit: "full-input",
+    },
+    surfaces: { cli: { command: "timeline add-broll" }, mcp: { name: "add-broll" } },
+    async execute(ctx, input) {
+      const { parseDoc, serializeDoc } = await import("../bridge/tools/core");
+      const { resolveTimelineTarget } = await import("../state/timeline");
+      const { addBrollOverRange } = await import("./editorial");
+      const project = projectFor(ctx);
+      const timeline = resolveTimelineTarget(
+        project.rootPath,
+        project,
+        input.timeline ?? input.uri,
+      );
+      if ("ok" in timeline) return timeline;
+      const state = parseDoc(await readDoc(timeline.uri));
+      const result = addBrollOverRange(state, {
+        brollResource: input.brollResource,
+        startFrame: input.startFrame,
+        endFrame: input.endFrame,
+        inFrame: input.inFrame ?? 0,
+        mode: input.mode ?? "intercut",
+        ...(input.insetSlot ? { insetSlot: input.insetSlot } : {}),
+        newTrack: input.newTrack ?? false,
+        blendService: input.blendService ?? "qtblend",
+      });
+      if (!("state" in result)) {
+        return { ok: false, kind: result.kind, detail: editErrorMsg(result), uri: timeline.uri };
+      }
+      await writeDoc(timeline.uri, serializeDoc(result.state));
+      return {
+        ok: true,
+        mode: result.mode,
+        consequences: result.consequences,
+        inverse: result.inverse,
+        overlayTrackId: result.overlayTrackId,
+        createdTrack: result.createdTrack,
+        uri: timeline.uri,
+        resolvedPath: timeline.resolvedPath,
+        touchedUris: [timeline.uri],
+        project: timeline.project,
+      };
+    },
+  }),
+  action({
+    id: "timeline.duckMusic",
+    title: "Duck Music Under Speech",
+    description:
+      "Duck a music bed under speech by lowering the music clip(s) gain (default -12 dB, relative to their current level). Target by clip ids, or let the macro duck every clip on the music track (the first audio track that isn't the speech track).",
+    aliases: ["duck-music-under-speech"],
+    relatedDiscovery: ["timeline.ops.describe"],
+    input: z.object({
+      uri: z.string().optional(),
+      timeline: z.string().optional(),
+      musicClipIds: z.array(z.string().min(1)).optional(),
+      musicTrackId: z.string().optional(),
+      speechTrackId: z.string().optional(),
+      duckDb: z.number().default(-12),
+    }),
+    output: z.unknown(),
+    scopes: ["timeline:write", "fs:read", "fs:write"],
+    effect: {
+      kind: "update",
+      mutates: ["timeline", "filesystem"],
+      openWorld: false,
+      destructive: false,
+      idempotency: "non-idempotent",
+      reversibility: "inverse-op",
+      dryRun: "supported",
+      approval: "ask",
+      audit: "full-input",
+    },
+    surfaces: { cli: { command: "timeline duck-music" }, mcp: { name: "duck-music" } },
+    async execute(ctx, input) {
+      const { parseDoc, serializeDoc } = await import("../bridge/tools/core");
+      const { resolveTimelineTarget } = await import("../state/timeline");
+      const { duckMusicUnderSpeech } = await import("./editorial");
+      const project = projectFor(ctx);
+      const timeline = resolveTimelineTarget(
+        project.rootPath,
+        project,
+        input.timeline ?? input.uri,
+      );
+      if ("ok" in timeline) return timeline;
+      const state = parseDoc(await readDoc(timeline.uri));
+      const result = duckMusicUnderSpeech(state, {
+        ...(input.musicClipIds ? { musicClipIds: input.musicClipIds } : {}),
+        ...(input.musicTrackId ? { musicTrackId: input.musicTrackId } : {}),
+        ...(input.speechTrackId ? { speechTrackId: input.speechTrackId } : {}),
+        duckDb: input.duckDb ?? -12,
+      });
+      if (!("state" in result)) {
+        return { ok: false, kind: result.kind, detail: editErrorMsg(result), uri: timeline.uri };
+      }
+      await writeDoc(timeline.uri, serializeDoc(result.state));
+      return {
+        ok: true,
+        consequences: result.consequences,
+        inverse: result.inverse,
+        duckedClipIds: result.duckedClipIds,
+        duckDb: result.duckDb,
+        uri: timeline.uri,
+        resolvedPath: timeline.resolvedPath,
+        touchedUris: [timeline.uri],
+        project: timeline.project,
+      };
+    },
+  }),
+  action({
+    id: "timeline.tightenCut",
+    title: "Tighten Cut",
+    description:
+      "Tighten a cut by trimming dead frames off a clip's head and/or tail (lose the slack before/after a line). Non-ripple by default (grows the neighbouring gap); ripple pulls downstream content in.",
+    aliases: ["tighten-cut"],
+    relatedDiscovery: ["timeline.removeDeadAir", "timeline.ops.describe"],
+    input: z.object({
+      uri: z.string().optional(),
+      timeline: z.string().optional(),
+      uuid: z.string().min(1),
+      headFrames: z.number().int().nonnegative().default(0),
+      tailFrames: z.number().int().nonnegative().default(0),
+      ripple: z.boolean().default(false),
+    }),
+    output: z.unknown(),
+    scopes: ["timeline:write", "fs:read", "fs:write"],
+    effect: {
+      kind: "update",
+      mutates: ["timeline", "filesystem"],
+      openWorld: false,
+      destructive: false,
+      idempotency: "non-idempotent",
+      reversibility: "inverse-op",
+      dryRun: "supported",
+      approval: "ask",
+      audit: "full-input",
+    },
+    surfaces: { cli: { command: "timeline tighten-cut" }, mcp: { name: "tighten-cut" } },
+    async execute(ctx, input) {
+      const { parseDoc, serializeDoc } = await import("../bridge/tools/core");
+      const { resolveTimelineTarget } = await import("../state/timeline");
+      const { tightenCut } = await import("./editorial");
+      const project = projectFor(ctx);
+      const timeline = resolveTimelineTarget(
+        project.rootPath,
+        project,
+        input.timeline ?? input.uri,
+      );
+      if ("ok" in timeline) return timeline;
+      const state = parseDoc(await readDoc(timeline.uri));
+      const result = tightenCut(state, {
+        uuid: input.uuid,
+        headFrames: input.headFrames ?? 0,
+        tailFrames: input.tailFrames ?? 0,
+        ripple: input.ripple ?? false,
+      });
+      if (!("state" in result)) {
+        return { ok: false, kind: result.kind, detail: editErrorMsg(result), uri: timeline.uri };
+      }
+      await writeDoc(timeline.uri, serializeDoc(result.state));
+      return {
+        ok: true,
+        consequences: result.consequences,
+        inverse: result.inverse,
+        uuid: result.uuid,
+        headFrames: result.headFrames,
+        tailFrames: result.tailFrames,
+        uri: timeline.uri,
+        resolvedPath: timeline.resolvedPath,
+        touchedUris: [timeline.uri],
+        project: timeline.project,
+      };
+    },
+  }),
+  action({
+    id: "timeline.removeDeadAir",
+    title: "Remove Dead Air",
+    description:
+      "Remove dead air (gaps) on a track by ripple-closing every literal blank gap >= minGapFrames (a pause, a lifted clip's hole). Operates on gaps the track already carries — no silence detection. Defaults to the first video track.",
+    aliases: ["remove-dead-air"],
+    relatedDiscovery: ["timeline.tightenCut", "timeline.ops.describe"],
+    input: z.object({
+      uri: z.string().optional(),
+      timeline: z.string().optional(),
+      trackId: z.string().optional(),
+      minGapFrames: z.number().int().positive().default(1),
+    }),
+    output: z.unknown(),
+    scopes: ["timeline:write", "fs:read", "fs:write"],
+    effect: {
+      kind: "update",
+      mutates: ["timeline", "filesystem"],
+      openWorld: false,
+      destructive: false,
+      idempotency: "non-idempotent",
+      reversibility: "inverse-op",
+      dryRun: "supported",
+      approval: "ask",
+      audit: "full-input",
+    },
+    surfaces: { cli: { command: "timeline remove-dead-air" }, mcp: { name: "remove-dead-air" } },
+    async execute(ctx, input) {
+      const { parseDoc, serializeDoc } = await import("../bridge/tools/core");
+      const { resolveTimelineTarget } = await import("../state/timeline");
+      const { removeDeadAir } = await import("./editorial");
+      const project = projectFor(ctx);
+      const timeline = resolveTimelineTarget(
+        project.rootPath,
+        project,
+        input.timeline ?? input.uri,
+      );
+      if ("ok" in timeline) return timeline;
+      const state = parseDoc(await readDoc(timeline.uri));
+      const result = removeDeadAir(state, {
+        ...(input.trackId ? { trackId: input.trackId } : {}),
+        minGapFrames: input.minGapFrames ?? 1,
+      });
+      if (!("state" in result)) {
+        return { ok: false, kind: result.kind, detail: editErrorMsg(result), uri: timeline.uri };
+      }
+      await writeDoc(timeline.uri, serializeDoc(result.state));
+      return {
+        ok: true,
+        consequences: result.consequences,
+        inverse: result.inverse,
+        gapsClosed: result.gapsClosed,
+        framesRemoved: result.framesRemoved,
+        trackId: result.trackId,
+        uri: timeline.uri,
+        resolvedPath: timeline.resolvedPath,
+        touchedUris: [timeline.uri],
+        project: timeline.project,
+      };
+    },
+  }),
+  action({
+    id: "inspect.timeline",
+    title: "Inspect Timeline (Still-Strip)",
+    description:
+      "Render a STILL-STRIP across [startFrame, endFrame] (evenly spaced, capped at maxFrames) via melt so the agent SEES its edit — a cut, a fade, a layout — in one call. Returns the produced PNGs in touchedUris (the frames to read next).",
+    relatedDiscovery: ["render.still", "timeline.applyLayout"],
+    input: z.object({
+      uri: z.string().optional(),
+      timeline: z.string().optional(),
+      startFrame: frame,
+      endFrame: frame,
+      maxFrames: z.number().int().positive().max(64).default(8),
+      outDir: z.string().optional(),
+    }),
+    output: z.unknown(),
+    scopes: ["timeline:read", "render:execute", "process:execute", "fs:read", "fs:write"],
+    effect: {
+      kind: "render",
+      mutates: ["filesystem", "process"],
+      openWorld: false,
+      destructive: false,
+      idempotency: "idempotent",
+      reversibility: "manual",
+      dryRun: "none",
+      approval: "ask",
+      audit: "metadata",
+      job: { mode: "inline", cancellable: true, retrySafe: true },
+    },
+    surfaces: { cli: { command: "inspect timeline" }, mcp: { name: "inspect-timeline" } },
+    async execute(ctx, input) {
+      const { resolveTimelineTarget } = await import("../state/timeline");
+      const { inspectTimelineTool } = await import("../bridge/tools/read");
+      const project = projectFor(ctx);
+      const timeline = resolveTimelineTarget(
+        project.rootPath,
+        project,
+        input.timeline ?? input.uri,
+      );
+      if ("ok" in timeline) return timeline;
+      const result = await inspectTimelineTool(
+        uriToPath(timeline.uri),
+        {
+          startFrame: input.startFrame,
+          endFrame: input.endFrame,
+          maxFrames: input.maxFrames ?? 8,
+        },
+        input.outDir ? uriToPath(input.outDir) : undefined,
+      );
+      return {
+        ...result,
+        uri: timeline.uri,
+        resolvedPath: timeline.resolvedPath,
+        project: timeline.project,
+      };
+    },
+  }),
 ];
 
 const registry = new Map<string, ActionDefinition>(
