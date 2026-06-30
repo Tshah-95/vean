@@ -30,6 +30,9 @@ export type ActionEffect = {
   job?: { mode: "inline" | "queued"; cancellable: boolean; retrySafe: boolean };
 };
 
+/** The permission level the default policy assigns an action (see `./policy`). */
+export type PolicyLevel = "auto" | "ask" | "ask-strong" | "deny";
+
 export type ActionSurfaces = {
   cli?:
     | {
@@ -79,6 +82,8 @@ export type ActionDescriptor = {
   examples: Array<{ name: string; input: unknown; prompt?: string }>;
   relatedDiscovery?: string[];
   surfaces: ActionSurfaces;
+  /** The context-free default-policy level (see `./policy` → `defaultPolicyLevel`). */
+  policy: PolicyLevel;
   mcpAnnotations: {
     readOnlyHint: boolean;
     destructiveHint: boolean;

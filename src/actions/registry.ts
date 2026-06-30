@@ -8,6 +8,7 @@ import {
   setActiveProject,
 } from "../project/context";
 import type { ResolvedProject } from "../project/context";
+import { defaultPolicyLevel } from "./policy";
 import { summarizeSchema } from "./schema-summary";
 import type {
   ActionContext,
@@ -1779,6 +1780,7 @@ export function describeAction(action: ActionDefinition): ActionDescriptor {
     examples: action.examples ?? [],
     relatedDiscovery: action.relatedDiscovery,
     surfaces: action.surfaces,
+    policy: defaultPolicyLevel(action),
     mcpAnnotations: {
       readOnlyHint: action.effect.mutates.length === 0,
       destructiveHint: action.effect.destructive,
