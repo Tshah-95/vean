@@ -51,6 +51,18 @@ export async function fetchDiagnostics(
   return getJson(`/api/diagnostics${qs}`);
 }
 
+/** Build the same-origin URL the live-preview footage `<video>` streams a SOURCE
+ *  clip from (Range-served by `GET /api/media`). `path` is the clip's absolute
+ *  `resource`; `route` scopes the server-side allowlist check to the timeline that
+ *  references it. This is the Tier-0 footage transport — the browser seeks this
+ *  per-source element to the source frame the playhead resolves to, replacing the
+ *  whole-timeline `melt` proxy as the realtime footage source. */
+export function mediaUrl(path: string, route?: string): string {
+  const qs = new URLSearchParams({ path });
+  if (route) qs.set("route", route);
+  return `/api/media?${qs.toString()}`;
+}
+
 export async function renderProxy(route?: string, scale?: number, force?: boolean): Promise<ProxyResponse> {
   const res = await fetch("/api/proxy-render", {
     method: "POST",

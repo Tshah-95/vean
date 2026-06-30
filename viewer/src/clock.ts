@@ -74,6 +74,23 @@ export class MasterClock {
     });
   }
 
+  /** Update the total-frame bound WITHOUT pausing — the live edit path. A ripple /
+   *  trim that changes the working IR's length must move the playhead clamp so the
+   *  footage stage can resolve frames the edit just created or removed, but it must
+   *  NOT interrupt playback or fight the load-time `configure`. Re-anchors the RAF
+   *  loop if the clamp moved the current frame mid-play. A no-op when unchanged, so
+   *  it is safe to call from an effect keyed on the working IR's length. */
+  setTotalFrames(totalFrames: number): void {
+    const next = Math.max(1, totalFrames);
+    if (next === this.state.totalFrames) return;
+    const clampedFrame = Math.min(this.state.currentFrame, next - 1);
+    if (this.state.playing && clampedFrame !== this.state.currentFrame) {
+      this.playStartWall = performance.now();
+      this.playStartFrame = clampedFrame;
+    }
+    this.emit({ totalFrames: next, currentFrame: clampedFrame });
+  }
+
   // ── transport ─────────────────────────────────────────────────────────
   seekTo(frame: number): void {
     const clamped = Math.max(0, Math.min(Math.round(frame), this.state.totalFrames - 1));

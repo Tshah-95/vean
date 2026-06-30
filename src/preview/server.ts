@@ -87,6 +87,12 @@ const CONTENT_TYPES: Record<string, string> = {
   ".map": "application/json; charset=utf-8",
   ".woff": "font/woff",
   ".woff2": "font/woff2",
+  // Source/proxy media the live-preview footage `<video>` streams (Range-served).
+  ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
+  ".mov": "video/quicktime",
+  ".webm": "video/webm",
+  ".mkv": "video/x-matroska",
 };
 
 /** The vean repo root (two levels up from `src/preview/`). */
@@ -180,6 +186,25 @@ function serveFile(filePath: string, baseDir: string, req: Request): Response {
   return new Response(file, {
     headers: { "content-type": type, "accept-ranges": "bytes", "content-length": String(size) },
   });
+}
+
+/** Collect the absolute source-media resource paths a timeline references — every
+ *  footage clip's `resource`, across all video + audio tracks. This is the
+ *  ALLOWLIST the `/api/media` source-serve endpoint validates against (a request
+ *  may only stream a file the live timeline actually points at — never an arbitrary
+ *  disk path). `color`/synthetic producers (resource = a hex/named color, not a
+ *  file) and Remotion graphic overlays are naturally excluded: a color resource is
+ *  not a path on disk, and graphics are drawn by the `@remotion/player` overlay,
+ *  not the footage `<video>`. Paths are resolved to absolutes so the membership
+ *  check is exact regardless of how the request spelled the path. */
+function referencedResources(timeline: ReturnType<typeof fromMlt>): Set<string> {
+  const out = new Set<string>();
+  for (const track of [...timeline.tracks.video, ...timeline.tracks.audio]) {
+    for (const item of track.items) {
+      if (item.kind === "clip") out.add(resolve(item.resource));
+    }
+  }
+  return out;
 }
 
 /** Read a timeline route to its parsed IR + frame/fps metadata, or a typed error
@@ -477,6 +502,42 @@ export function createPreviewHandler(
           500,
         );
       }
+    }
+
+    // ── Live source media (the Tier-0 footage transport) ───────────────────
+    // GET /api/media?path=<abs>&route=<r>  → streams a SOURCE clip's media file,
+    // Range-capable, so a pooled `<video>` can point at the source the playhead
+    // resolves to and seek it by source time (DESIGN-LIVE-PREVIEW §6 Tier 0). This
+    // is what replaces the whole-timeline `melt` proxy as the realtime footage
+    // source: the browser composites the live IR by seeking per-source `<video>`s,
+    // never by re-rendering a file per edit.
+    //
+    // SECURITY: a request may only stream a file the route's LIVE timeline actually
+    // references. We resolve the route's working session IR (the same in-memory
+    // copy the preview shows) and require the requested path to be in its
+    // referenced-resource allowlist. An arbitrary disk path is a 403 — the endpoint
+    // is a footage transport, not a general file server. (The session store is the
+    // source of truth so an edit that re-links a clip's resource is honored without
+    // a save.)
+    if (path === "/api/media") {
+      const requested = url.searchParams.get("path");
+      if (!requested) {
+        return jsonResponse({ ok: false, kind: "invalid-args", detail: "path is required" }, 400);
+      }
+      const route = url.searchParams.get("route") ?? defaultRoute ?? undefined;
+      const got = getSession(sessions, repo, route);
+      if ("error" in got) return got.error;
+      const allow = referencedResources(got.session.ir);
+      const resolved = resolve(requested);
+      if (!allow.has(resolved)) {
+        return jsonResponse(
+          { ok: false, kind: "forbidden", detail: "path is not referenced by this timeline" },
+          403,
+        );
+      }
+      // serveFile's baseDir guard wants the served file under baseDir; the source's
+      // own directory is the correct base (we've already authorized the exact path).
+      return serveFile(resolved, dirname(resolved), req);
     }
 
     if (path.startsWith("/api/proxy/")) {

@@ -16,6 +16,12 @@ import type { Diagnostic, OpInvocation, SessionEditResult, Timeline } from "./ty
 export interface TimelineEditor {
   /** The IR to draw: the working copy once edited, else the server's load. */
   timeline: Timeline;
+  /** The session's monotonic edit revision (0 on load; bumped on every
+   *  op/undo/redo). The live-preview footage stage keys its recomposite on
+   *  `(currentFrame, revision)` — the HMR trigger (DESIGN-LIVE-PREVIEW §3, §4): a
+   *  same-frame edit changes `revision` so the stage re-resolves the live IR and
+   *  re-seeks the footage `<video>` WITH NO SAVE. */
+  revision: number;
   /** Total timeline frames for the working IR (max across all tracks). */
   totalFrames: number;
   /** The selected clip's uuid, or null. */
@@ -79,6 +85,10 @@ export function useTimelineEditor(
   // `working` is null until the first successful edit; before that we draw the
   // server's load verbatim. After an edit we draw the returned IR.
   const [working, setWorking] = useState<Timeline | null>(null);
+  // Monotonic edit revision (the HMR trigger). 0 = the un-edited server load; the
+  // first edit makes it 1. Mirrors the server session's `revision`, so the footage
+  // stage repaints on a same-frame edit even though `currentFrame` did not move.
+  const [revision, setRevision] = useState(0);
   const [diagnostics, setDiagnostics] = useState<Diagnostic[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [canUndo, setCanUndo] = useState(false);
@@ -94,6 +104,7 @@ export function useTimelineEditor(
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally keyed on the server IR identity only.
   useEffect(() => {
     setWorking(null);
+    setRevision(0);
     setDiagnostics([]);
     setSelectedId(null);
     setCanUndo(false);
@@ -107,6 +118,7 @@ export function useTimelineEditor(
 
   const ingest = useCallback((res: SessionEditResult) => {
     setWorking(res.ir);
+    setRevision(res.revision);
     setDiagnostics(res.diagnostics);
     setCanUndo(res.canUndo);
     setCanRedo(res.canRedo);
@@ -171,6 +183,7 @@ export function useTimelineEditor(
 
   return {
     timeline,
+    revision,
     totalFrames,
     selectedId,
     select: setSelectedId,

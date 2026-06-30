@@ -1,10 +1,12 @@
 // The viewer app. Loads the timeline IR (/api/timeline), configures the master
-// clock to the profile fps + total frames, kicks off the footage-proxy render
-// (/api/proxy-render), and derives the overlay (the Remotion graphic clip) so the
-// @remotion/player shows the right composition for the right span. All preview
-// layers are slaved to the one master clock (see ClockProvider + PreviewPane).
+// clock to the profile fps + total frames, and derives the overlay (the Remotion
+// graphic clip) so the @remotion/player shows the right composition for the right
+// span. The footage layer is LIVE: the `PreviewPane`'s `FootageStage` resolves the
+// working IR at the playhead and seeks per-source `<video>`s — NO `melt` proxy, no
+// save (DESIGN-LIVE-PREVIEW §6 Tier 0). All preview layers are slaved to the one
+// master clock (see ClockProvider + PreviewPane).
 import { useEffect, useMemo, useState } from "react";
-import { fetchDiagnostics, fetchProjects, fetchTimeline, type ProjectEntry, renderProxy } from "./api";
+import { fetchDiagnostics, fetchProjects, fetchTimeline, type ProjectEntry } from "./api";
 import { ClockProvider, useClockInstance } from "./ClockProvider";
 import { Header } from "./components/Header";
 import { PreviewPane } from "./components/PreviewPane";
@@ -35,7 +37,6 @@ function deriveOverlay(data: TimelineResponse): {
 function Viewer({ route }: { route: string | undefined }) {
   const clock = useClockInstance();
   const [data, setData] = useState<TimelineResponse | null>(null);
-  const [proxyUrl, setProxyUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [diag, setDiag] = useState<{ errors: number; warnings: number } | null>(null);
   const [volume, setVolume] = useState(1);
@@ -65,17 +66,11 @@ function Viewer({ route }: { route: string | undefined }) {
     };
   }, [route, clock]);
 
-  // Kick off the footage proxy render once we have a timeline.
-  useEffect(() => {
-    if (!data) return;
-    let cancelled = false;
-    renderProxy(route)
-      .then((res) => !cancelled && setProxyUrl(res.proxyUrl))
-      .catch((e) => !cancelled && setError((prev) => prev ?? `proxy: ${String(e?.message ?? e)}`));
-    return () => {
-      cancelled = true;
-    };
-  }, [data, route]);
+  // The footage layer is LIVE — no whole-timeline `melt` proxy render kicks off on
+  // load or per edit. `PreviewPane`'s `FootageStage` resolves the working IR at the
+  // playhead and seeks per-source `<video>`s through `/api/media`. (The export-path
+  // proxy `/api/proxy-render` survives as a fallback for non-Tier-0 cases, but it
+  // is no longer the realtime footage source — DESIGN-LIVE-PREVIEW §0, §6 Tier 0.)
 
   // Reflect the active timeline route into the URL so each tab is stable and
   // shareable — open multiple timelines in multiple browsers via ?route=<path|alias>.
@@ -147,39 +142,64 @@ function Viewer({ route }: { route: string | undefined }) {
           projects={projects}
           currentResolvedPath={data.resolvedPath}
         />
-        <PreviewPane
-          width={data.profile.width}
-          height={data.profile.height}
-          fps={data.fps}
-          proxyUrl={proxyUrl}
-          overlayDuration={overlay.duration}
+        <Stage
+          data={data}
+          route={route}
+          overlay={overlay}
           volume={volume}
           muted={muted}
           sinkId={sinkId}
-          {...(overlay.props ? { overlayProps: overlay.props } : {})}
-        />
-        <Transport
-          volume={volume}
-          muted={muted}
           onVolumeChange={setVolume}
           onMutedChange={setMuted}
-          sinkId={sinkId}
           onSinkChange={setSinkId}
         />
-        <EditorSurface data={data} route={route} />
       </div>
       <Sidebar route={route} />
     </div>
   );
 }
 
-/** The interactive editing surface: owns the timeline EDITOR (working IR + undo /
- *  redo / save / diagnostics) and the edit keyboard (Cmd+Z / Cmd+Shift+Z / Cmd+S,
- *  B to blade the selected clip at the playhead). Mounted only once a timeline has
- *  loaded, so the editor hook always has a real IR to start from. */
-function EditorSurface({ data, route }: { data: TimelineResponse; route: string | undefined }) {
+/** The interactive STAGE: owns the timeline EDITOR (the working IR + revision +
+ *  undo/redo/save/diagnostics) and projects it to BOTH the live `PreviewPane`
+ *  (footage stage resolves the working IR at the playhead) and the editing strip,
+ *  so an edit is reflected in the preview with no save. Also owns the edit keyboard
+ *  (Cmd+Z / Cmd+Shift+Z / Cmd+S, B to blade the selected clip at the playhead).
+ *  Mounted only once a timeline has loaded, so the editor hook always has a real IR
+ *  to start from — and so the footage stage always has the LIVE working IR to draw,
+ *  the single source of truth the no-save loop depends on (§4: the compositor reads
+ *  the in-memory working IR the edit loop pushes on every op). */
+function Stage({
+  data,
+  route,
+  overlay,
+  volume,
+  muted,
+  sinkId,
+  onVolumeChange,
+  onMutedChange,
+  onSinkChange,
+}: {
+  data: TimelineResponse;
+  route: string | undefined;
+  overlay: { duration: number; props: Record<string, unknown> | undefined };
+  volume: number;
+  muted: boolean;
+  sinkId: string;
+  onVolumeChange: (v: number) => void;
+  onMutedChange: (m: boolean) => void;
+  onSinkChange: (id: string) => void;
+}) {
   const clock = useClockInstance();
   const editor = useTimelineEditor(data.timeline, data.totalFrames, route);
+
+  // Keep the master clock's total-frame bound in step with the working IR: a
+  // ripple/trim that changes the timeline length must move the playhead's clamp so
+  // the live footage stage can resolve frames the edit just created/removed. Uses
+  // `setTotalFrames` (not `configure`) so an edit never pauses playback or re-clamps
+  // the playhead to 0 — it just widens/narrows the bound (no-op when unchanged).
+  useEffect(() => {
+    clock.setTotalFrames(editor.totalFrames);
+  }, [clock, editor.totalFrames]);
 
   // Edit keyboard. Undo/redo/save use Cmd (meta); B blades the selected clip at the
   // playhead. Coexists with the play/pause/zoom keys (different keys / handlers).
@@ -212,7 +232,32 @@ function EditorSurface({ data, route }: { data: TimelineResponse; route: string 
     return () => window.removeEventListener("keydown", onKey);
   }, [editor, clock]);
 
-  return <TimelineStrip editor={editor} />;
+  return (
+    <>
+      <PreviewPane
+        width={data.profile.width}
+        height={data.profile.height}
+        fps={data.fps}
+        timeline={editor.timeline}
+        revision={editor.revision}
+        route={route}
+        overlayDuration={overlay.duration}
+        volume={volume}
+        muted={muted}
+        sinkId={sinkId}
+        {...(overlay.props ? { overlayProps: overlay.props } : {})}
+      />
+      <Transport
+        volume={volume}
+        muted={muted}
+        onVolumeChange={onVolumeChange}
+        onMutedChange={onMutedChange}
+        sinkId={sinkId}
+        onSinkChange={onSinkChange}
+      />
+      <TimelineStrip editor={editor} />
+    </>
+  );
 }
 
 export function App() {
