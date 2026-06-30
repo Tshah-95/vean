@@ -62,6 +62,14 @@ export const SETTINGS: readonly SettingDef[] = [
     description:
       "Relative gap between a source's nominal (r_frame_rate) and average rate above which the 'variable-frame-rate-source' diagnostic fires (0.002 = 0.2%). Lower = more sources flagged as VFR.",
   },
+  {
+    key: "media.transcodeCodec",
+    type: "enum",
+    default: "prores422hq",
+    allowed: ["prores422hq", "prores422", "prores422lt", "dnxhr_hq", "dnxhr_sq", "h264"],
+    description:
+      "Codec for the edit-friendly CFR intermediate `vean fps transcode` produces. ProRes 422 HQ is the visually-lossless default (largest); 422/422LT trade quality for size; DNxHR HQ/SQ are the Avid-native equivalents; h264 is the smallest (CRF 18, .mp4) but least edit-friendly. ProRes/DNxHR write .mov.",
+  },
 ];
 
 const BY_KEY = new Map(SETTINGS.map((s) => [s.key, s]));

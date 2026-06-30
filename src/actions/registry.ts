@@ -488,13 +488,40 @@ const actions = [
         { op: resolvedOp.canonicalOp, args: input.args },
         timeline.uri,
       );
-      if (!isToolError(outcome) && newState) await writeDoc(timeline.uri, serializeDoc(newState));
+      let fpsAutodetect:
+        | { applied: true; fromFps: [number, number]; toFps: [number, number] }
+        | { applied: false; proposal: { fromFps: [number, number]; toFps: [number, number] } }
+        | undefined;
+      if (!isToolError(outcome) && newState) {
+        let finalState = newState;
+        // First-clip fps autodetect (the `fps.autodetect` setting): when this op put
+        // the first video clip on the timeline, conform the profile to it (auto) or
+        // surface a proposal (confirm). Best-effort — never block/break the edit.
+        try {
+          const { dirname } = await import("node:path");
+          const { autodetectFirstClip } = await import("../conform/autodetect");
+          const ad = await autodetectFirstClip(state, newState, {
+            repo: project.rootPath,
+            baseDir: dirname(timeline.uri),
+          });
+          if (ad?.decision.decision === "apply") {
+            finalState = ad.state;
+            fpsAutodetect = { applied: true, ...ad.decision.proposal };
+          } else if (ad?.decision.decision === "propose") {
+            fpsAutodetect = { applied: false, proposal: ad.decision.proposal };
+          }
+        } catch {
+          /* autodetect is best-effort */
+        }
+        await writeDoc(timeline.uri, serializeDoc(finalState));
+      }
       return {
         ...outcome,
         invocation: { op: resolvedOp.canonicalOp, resolvedFrom: resolvedOp.resolvedFrom },
         uri: timeline.uri,
         resolvedPath: timeline.resolvedPath,
         project: timeline.project,
+        ...(fpsAutodetect ? { fpsAutodetect } : {}),
       };
     },
   }),

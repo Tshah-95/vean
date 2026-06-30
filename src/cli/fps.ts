@@ -13,7 +13,7 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import { Command } from "commander";
 import { type FpsConformMode, applyFpsConform, autodetectDecision } from "../conform/fps";
 import { probeSource } from "../driver/probe";
-import { transcodeToCfr } from "../driver/transcode";
+import { type TranscodeCodec, transcodeToCfr } from "../driver/transcode";
 import { fromMlt } from "../ir/parse";
 import { toMlt } from "../ir/serialize";
 import type { Clip, Timeline } from "../ir/types";
@@ -122,8 +122,9 @@ export function buildFpsCommand(): Command {
       const clip = findClipById(timeline, clipId);
       if (!clip) throw new Error(`clip not found: ${clipId}`);
       const src = abs(dirname(mltPath), clip.resource);
+      const codec = getSettingValue(repo, "media.transcodeCodec") as TranscodeCodec;
       // Conform the intermediate to the TIMELINE rate so it lands frame-exact.
-      const result = await transcodeToCfr(src, timeline.profile.fps);
+      const result = await transcodeToCfr(src, timeline.profile.fps, { codec });
       clip.resource = result.outPath; // relink (additive: the original is untouched)
       writeFileSync(mltPath, toMlt(timeline), "utf8");
       if (opts.json) {
