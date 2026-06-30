@@ -31,9 +31,10 @@
 //   POST /api/save {route}                → serializes the working IR to the .mlt
 //                                           { ok, path } | { ok:false, … }
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { extname, join, resolve } from "node:path";
+import { dirname, extname, join, resolve } from "node:path";
 import { createActionContext, executeAction } from "../actions";
 import { collectDiagnostics, summarize } from "../diagnostics";
+import { collectProbeDiagnostics } from "../driver/probeDiagnostics";
 import { VERSION } from "../index";
 import { fromMlt } from "../ir/parse";
 import type { OpInvocation } from "../ops";
@@ -276,7 +277,20 @@ export function createPreviewHandler(
       const route = url.searchParams.get("route") ?? defaultRoute ?? undefined;
       const read = readTimeline(repo, route);
       if ("error" in read) return read.error;
-      const diagnostics = collectDiagnostics(read.timeline);
+      const engine = collectDiagnostics(read.timeline);
+      // Driver-layer fps/VFR diagnostics need ffprobe (I/O), which the pure engine
+      // can't do — collect them here and merge into the set so the viewer badge
+      // reflects them. A probe failure (missing ffprobe / unreadable source) must
+      // not break the read: degrade to engine-only.
+      let probe: typeof engine = [];
+      try {
+        probe = await collectProbeDiagnostics(read.timeline, {
+          baseDir: dirname(read.resolvedPath),
+        });
+      } catch {
+        probe = [];
+      }
+      const diagnostics = [...engine, ...probe];
       return jsonResponse({ ok: true, health: summarize(diagnostics), diagnostics });
     }
 
