@@ -170,7 +170,14 @@ copy over the files git won't" (e.g. `.env.*`). vean's needs are lighter
 3. ensures `.vean/` is initialized fresh (`state:init`) and, if a project is
    designated, registers its media roots **by reference** at the shared external
    location rather than copying the catalog;
-4. is safe to run twice (every step checks-then-acts).
+4. **bootstraps dependencies** — `git worktree add` does not carry `node_modules`
+   (gitignored), and any command that loads the action registry (whereami,
+   `drive up`, diagnose) throws without it (observed: a depless worktree fails on
+   `z.ZodNativeEnum` instanceof). So when `node_modules` is absent, run
+   `bun install` (the conductor "install on create" step). Gated on absence — a
+   plain branch switch is a no-op — opt out with `VEAN_WORKTREE_INIT_INSTALL=0`,
+   best-effort (a failure is reported, never thrown);
+5. is safe to run twice (every step checks-then-acts).
 
 **The trigger** — tool-agnostic, so it fires for Claude chips, Conductor, *and*
 manual `git worktree add`:

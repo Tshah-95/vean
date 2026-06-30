@@ -58,6 +58,12 @@ const PROJECT_MARKER = resolve(REPO, ".vean", "worktree-project");
  */
 const CARRY_OVER_ALLOWLIST: readonly string[] = [".claude/settings.local.json"];
 
+/** Outcome of the dependency bootstrap step. "present" = node_modules already
+ *  there (the common case on a branch switch in an established tree); "installed"
+ *  = ran `bun install` for a fresh worktree; "skipped" = disabled or no bun;
+ *  "failed" = install ran but errored (best-effort — never fails the hook). */
+type DepBootstrap = "present" | "installed" | "skipped" | "failed";
+
 type InitResult = {
   slug: string;
   source: WorktreeState["source"];
@@ -66,6 +72,7 @@ type InitResult = {
   projectPointer: string | null;
   copied: string[];
   skipped: string[];
+  installedDeps: DepBootstrap;
 };
 
 /** Run a git command in `repo`, returning trimmed stdout or null on any failure. */
@@ -89,6 +96,24 @@ function primaryToplevel(repo: string): string | null {
     if (line.startsWith("worktree ")) return line.slice("worktree ".length).trim();
   }
   return null;
+}
+
+/**
+ * Bootstrap dependencies for a fresh worktree. `git worktree add` does NOT carry
+ * `node_modules` (gitignored), so any command pulling in the action registry
+ * (whereami, `drive up`, diagnose, …) would throw until deps exist — proven: a
+ * depless worktree fails on `z.ZodNativeEnum` instanceof. This is the conductor
+ * "run install on worktree creation" step. Gated on node_modules ABSENCE so a
+ * plain branch switch in an established tree is a no-op; opt out with
+ * VEAN_WORKTREE_INIT_INSTALL=0. Best-effort: a failure is reported, never thrown.
+ */
+function bootstrapDeps(repo: string): DepBootstrap {
+  if (existsSync(resolve(repo, "node_modules"))) return "present";
+  if (process.env.VEAN_WORKTREE_INIT_INSTALL === "0") return "skipped";
+  const bun = spawnSync("bun", ["--version"], { encoding: "utf8" });
+  if (bun.status !== 0 || bun.error) return "skipped";
+  const install = spawnSync("bun", ["install"], { cwd: repo, stdio: "ignore" });
+  return install.status === 0 && !install.error ? "installed" : "failed";
 }
 
 /** Parse `--project <path>` / `--quiet` with the same shape drive.ts uses. */
@@ -152,6 +177,10 @@ function run(argv: string[]): InitResult {
     }
   }
 
+  // Step 4 — bootstrap deps so the fresh worktree is immediately usable (the
+  // conductor "install on create" step). No-op when node_modules already exists.
+  const installedDeps = bootstrapDeps(REPO);
+
   return {
     slug: state.slug,
     source: state.source,
@@ -160,6 +189,7 @@ function run(argv: string[]): InitResult {
     projectPointer,
     copied,
     skipped,
+    installedDeps,
   };
 }
 
@@ -182,6 +212,13 @@ function report(result: InitResult): void {
   if (result.copied.length === 0 && !result.isPrimary) {
     lines.push("  carried over: nothing (allowlist empty or files absent)");
   }
+  const depMsg: Record<DepBootstrap, string> = {
+    present: "  deps: node_modules present",
+    installed: "  deps: ran `bun install` (fresh worktree)",
+    skipped: "  deps: install skipped (disabled or no bun)",
+    failed: "  deps: `bun install` FAILED — run it manually before driving",
+  };
+  lines.push(depMsg[result.installedDeps]);
   lines.push("  (no DB, no media, no secrets copied — §4.4a)");
   process.stderr.write(`${lines.join("\n")}\n`);
 }
