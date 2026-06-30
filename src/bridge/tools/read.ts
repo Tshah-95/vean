@@ -19,6 +19,7 @@
 // the produced path in `touchedUris`, exactly the way a mutating tool reports the
 // document it changed. (The .mlt SOURCE is read-only here; the URI that gets
 // "touched" is the new artifact on disk, which is what the agent reads next.)
+import { dirname, join } from "node:path";
 import { type RenderOpts, render, still } from "../../driver/melt";
 import type { Timeline } from "../../ir/types";
 import {
@@ -64,6 +65,36 @@ export type RenderToolResult = {
   stderr: string;
 };
 
+/** One sampled frame in an `inspect-timeline` still-strip: the (timeline) frame it
+ *  shows and the PNG the agent reads. */
+export type StillStripFrame = {
+  /** The exact 0-based timeline frame this still shows. */
+  frame: number;
+  /** The PNG produced for this frame (also surfaced in the result `touchedUris`). */
+  outPath: string;
+};
+
+/** An `inspect-timeline` result: the strip of stills (evenly spaced across the
+ *  requested range) plus the produced PNGs in `touchedUris`.
+ *
+ *  This is the agent's VISUAL VERIFICATION primitive — Palmier's most distinctive
+ *  tool, here built on the existing single-frame `still` driver. Where `still`
+ *  grabs one frame, `inspect-timeline` grabs an even SPREAD across `[startFrame,
+ *  endFrame]` (capped at `maxFrames`), so the agent SEES the shape of its edit (a
+ *  cut, a fade, a transition) in one call instead of guessing which frame to
+ *  inspect. Every PNG lands in `touchedUris` (the load-bearing "read these next"
+ *  field), exactly like `still`. */
+export type InspectTimelineResult = {
+  ok: true;
+  kind: "inspect-timeline";
+  /** The sampled frames, in ascending timeline order, each with its PNG path. */
+  frames: StillStripFrame[];
+  /** Every produced PNG, in the same order — the perceptual-inspection surface. */
+  touchedUris: string[];
+  /** The inclusive timeline range the strip spans. */
+  range: { startFrame: number; endFrame: number };
+};
+
 /** A failed read/render tool: a typed reason, no artifact. Returned (not thrown)
  *  so the agent reads the failure the same way it reads a mutating ToolError. */
 export type ReadError = {
@@ -76,6 +107,7 @@ export type ReadError = {
 
 export type ReadOutcome<T> = ReadResult<T> | ReadError;
 export type RenderOutcome = RenderToolResult | ReadError;
+export type InspectTimelineOutcome = InspectTimelineResult | ReadError;
 
 /** Narrow a read/render outcome to the error arm. */
 export function isReadError(x: { ok: boolean }): x is ReadError {
@@ -158,6 +190,101 @@ export async function stillTool(
   } catch (err) {
     return { ok: false, kind: "still", detail: errMsg(err) };
   }
+}
+
+// ─── inspect-timeline (still-strip across a frame range) ──────────────────────
+/** Evenly-spaced sample frames across the inclusive `[start, end]` range, capped
+ *  at `count`. A 1-frame range (or `count` of 1) yields a single frame at `start`;
+ *  otherwise the endpoints are always included and the interior is spread evenly,
+ *  de-duped + sorted (so a tiny range never asks melt for the same frame twice).
+ *  Pure integer math — the strip's frames are exact timeline frames, never floats. */
+export function sampleFrames(start: number, end: number, count: number): number[] {
+  const lo = Math.min(start, end);
+  const hi = Math.max(start, end);
+  const cap = Math.max(1, Math.trunc(count));
+  if (hi <= lo || cap === 1) return [lo];
+  const span = hi - lo;
+  const n = Math.min(cap, span + 1); // never more samples than distinct frames
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) {
+    // Even spread including both endpoints: i/(n-1) of the span, rounded to a frame.
+    out.push(lo + Math.round((span * i) / (n - 1)));
+  }
+  return [...new Set(out)].sort((a, b) => a - b);
+}
+
+/** inspect-timeline: grab a STILL-STRIP across `[startFrame, endFrame]` (capped at
+ *  `maxFrames`) of the `.mlt` — the agent's visual-verification eye. Samples evenly
+ *  spaced frames (endpoints always included), drives the existing single-frame
+ *  `still` for each, and reports every produced PNG in `touchedUris` (so the agent
+ *  reads the whole strip next). PNGs land beside `outDir` (defaults to the .mlt's
+ *  directory) named `<base>.inspect.<frame>.png`. Any single melt failure aborts
+ *  with a typed `ReadError` carrying that frame's stderr — no half-strip silently
+ *  passed off as complete. */
+export async function inspectTimelineTool(
+  mltPath: string,
+  range: { startFrame: number; endFrame: number; maxFrames: number },
+  outDir?: string,
+): Promise<InspectTimelineOutcome> {
+  const { startFrame, endFrame, maxFrames } = range;
+  if (!Number.isInteger(startFrame) || startFrame < 0) {
+    return {
+      ok: false,
+      kind: "inspect-timeline",
+      detail: `startFrame must be a non-negative integer, got ${startFrame}`,
+    };
+  }
+  if (!Number.isInteger(endFrame) || endFrame < 0) {
+    return {
+      ok: false,
+      kind: "inspect-timeline",
+      detail: `endFrame must be a non-negative integer, got ${endFrame}`,
+    };
+  }
+  if (!Number.isInteger(maxFrames) || maxFrames < 1) {
+    return {
+      ok: false,
+      kind: "inspect-timeline",
+      detail: `maxFrames must be a positive integer, got ${maxFrames}`,
+    };
+  }
+
+  const frames = sampleFrames(startFrame, endFrame, maxFrames);
+  const dir = outDir ?? dirname(mltPath);
+  const base = baseName(mltPath);
+
+  const strip: StillStripFrame[] = [];
+  for (const frame of frames) {
+    const outPath = join(dir, `${base}.inspect.${frame}.png`);
+    try {
+      const r = await still(mltPath, frame, outPath);
+      strip.push({ frame, outPath: r.outPath });
+    } catch (err) {
+      // Abort on the first failing frame — a partial strip would mislead the agent
+      // into reasoning over frames that never rendered.
+      return {
+        ok: false,
+        kind: "inspect-timeline",
+        detail: `still at frame ${frame} failed: ${errMsg(err)}`,
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    kind: "inspect-timeline",
+    frames: strip,
+    touchedUris: strip.map((s) => s.outPath),
+    range: { startFrame: Math.min(startFrame, endFrame), endFrame: Math.max(startFrame, endFrame) },
+  };
+}
+
+/** The filename stem of a path (no directory, no final extension) — used to name
+ *  the strip's PNGs after the source .mlt (`scene.mlt` → `scene`). */
+function baseName(path: string): string {
+  const file = path.slice(path.lastIndexOf("/") + 1);
+  const dot = file.lastIndexOf(".");
+  return dot > 0 ? file.slice(0, dot) : file;
 }
 
 function errMsg(err: unknown): string {
