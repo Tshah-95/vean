@@ -33,6 +33,9 @@ export interface PreviewPaneProps {
   overlayPresent: boolean;
   /** Overlay duration in frames. */
   overlayDuration: number;
+  /** The composition id the graphic clip names (forwarded to the `<Player>` so it
+   *  renders the clip's ACTUAL composition, not a hardcoded one). */
+  overlayCompositionId?: string;
   /** Props for the overlay composition. */
   overlayProps?: Record<string, unknown>;
   /** Playback volume 0–1 (applied to the live footage <video>, the audio source). */
@@ -52,6 +55,7 @@ export function PreviewPane({
   route,
   overlayPresent,
   overlayDuration,
+  overlayCompositionId,
   overlayProps,
   volume,
   muted,
@@ -105,6 +109,7 @@ export function PreviewPane({
             height={height}
             fps={fps}
             durationInFrames={overlayDuration}
+            {...(overlayCompositionId ? { compositionId: overlayCompositionId } : {})}
             {...(overlayProps ? { inputProps: overlayProps } : {})}
           />
         )}

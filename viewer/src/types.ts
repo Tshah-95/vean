@@ -44,6 +44,13 @@ export interface ClipItem {
    *  subset (§7) and flags the rest `approximate`. */
   filters?: ClipFilter[];
   label?: string;
+  /** Remotion-composition identity — present iff this graphic clip names a comp.
+   *  `id` selects the registered composition the live `@remotion/player` renders;
+   *  `props` are the render inputs. Round-trips through the `vean:composition` /
+   *  `vean:compositionProps` producer properties. Mirrors `Clip.composition` in
+   *  src/ir/types.ts. The live overlay reads this so the preview is the SAME
+   *  composition the producer bakes to ProRes (not a hardcoded stand-in). */
+  composition?: { id: string; props?: Record<string, unknown> };
 }
 
 export interface BlankItem {
