@@ -65,7 +65,7 @@ the current source so the design tracks reality, not intention.
 
 | Resource | Note |
 |---|---|
-| Absolute paths in the DB (`media_roots.path`, `media_assets.path`, `route_aliases.target`) | Harmless while each worktree has its own DB. Becomes load-bearing the moment a project (or its DB) is **copied** across worktrees, or a shared catalog is introduced. §3 invariant 1 makes this safe by construction (media roots must point at a stable external location, never inside a project). |
+| Absolute paths in the DB (`media_roots.path`, `media_assets.path`, `route_aliases.target`) | Harmless while each worktree has its own DB. Becomes load-bearing the moment a project (or its DB) is **copied** across worktrees, or a shared catalog is introduced. The DB is therefore **never copied** (§4.4a); §3 invariant 1 keeps it safe by construction (media roots must point at a stable external location, never inside a project); the committed-config Layer B foundation (§5) removes the absolute paths from copyable state entirely. |
 | Job lease `locked_by` | Caller-supplied, no built-in per-process identity. A non-issue with per-worktree DBs; becomes real only if a **shared** job queue is ever introduced. Then `locked_by` must encode worktree + pid. |
 
 ## §3 — Invariants (load-bearing for both layers)
@@ -187,6 +187,48 @@ manual `git worktree add`:
 - Manual fallback: `bun run worktree:init`, and `vean doctor` offers to run it
   when it detects an uninitialized worktree.
 
+### §4.4a — The `.vean/vean.db` question: never copy
+
+The single most important clarification for `worktree-init`. There is **no
+`timeline` / `clips` / `tracks` / `keyframes` table** — the edit that *is* the
+project lives entirely in the `.mlt`/`.tsx` files on disk. The DB is cache +
+coordination only (the Local state contract in `AGENTS.md`), so copying it never
+preserves "the project"; it only drags machine-specific absolute paths and stale
+jobs into a tree that shouldn't have them. Per-table verdict:
+
+| Table | Holds | Copy on worktree create? |
+|---|---|---|
+| `projects` | id, `root_path` (absolute), title | **No — wrong.** `root_path` points at the source tree (unique-indexed); re-derive via `project init` → the new tree's own path. |
+| `jobs` | queued/running jobs + leases | **Never.** Ephemeral; copying = phantom running jobs leased by a dead worker. |
+| `media_assets` | `path` (absolute), `relative_path`, probe cache | **No — regenerate** via `media scan`; copied mtimes are instantly stale. |
+| `media_roots` | `path` (absolute), role, policy | **No verbatim.** Config, but absolute + `project_id`-bound; reconstruct (Layer B). |
+| `route_aliases` | `alias` → `target` | **No verbatim.** Genuine config; the one thing worth reconstructing (Layer B). |
+| `app_meta` / `setup_choices` | settings overrides, schema version, setup answers | **No.** Small config; defaults suffice or reconstruct. No edit data. |
+
+**Therefore `worktree-init` copies no DB and seeds no catalog for Layer A.** The
+two real sub-cases:
+
+1. **Codebase worktree, no project** (IR/ops/diagnostics/test work — most chips):
+   needs no DB. `state:init` lazily creates an empty `.vean` only if an action
+   touches it. Nothing to seed.
+2. **Codebase worktree that drives the app:** point `drive up --project <shared
+   canonical project>`. Drive spawns the preview with `cwd: project` +
+   `--repo project`, so it reads the *project's own* (shared, WAL, read-mostly)
+   `vean.db` and `.mlt`, while the code worktree contributes only the code under
+   test and its per-worktree `.vean/drive/<slug>.json`. The DB is shared by
+   reference, never copied. (Two worktrees previewing the same project may both
+   write `<project>/.vean/cache/render/…`; renders are input-addressed, so a
+   double-write is wasteful, not corrupting. Full per-variant isolation is
+   Layer B.)
+
+So `worktree-init`'s only DB-adjacent jobs are: stamp the slug, and optionally
+record a default `--project` pointer so `drive up` in this tree knows which
+shared project to preview. The heavyweight seed — reconstruct `media_roots` /
+`route_aliases`, regenerate the catalog, drop `jobs` — is **Layer B**, and the
+clean enabler there is to move durable config (roots, aliases, settings) into a
+small **committed** project-config file, making the DB 100% regenerable cache and
+dissolving the absolute-path problem (§5).
+
 ### §4.5 `whereami` / doctor surfacing
 
 A single command answers "where am I, and what am I driving?":
@@ -216,7 +258,9 @@ whose `rootPath` no longer exists (a cheap GC on read).
 3. `preview.serve` default port → 0; honor `VEAN_PREVIEW_PORT` (§4.2).
 4. `vean whereami` action + `doctor` worktree section (§4.5).
 5. `scripts/worktree-init.ts` + `.githooks/post-checkout` + `core.hooksPath`
-   wiring in setup (§4.4).
+   wiring in setup (§4.4). Copies **no** DB and seeds no catalog (§4.4a); stamps
+   the slug and an optional default `--project` pointer so `drive up` knows which
+   shared project to preview.
 6. De-hardcode `/Users/tejas/Github/vean` in `tests/policy.test.ts` (derive from
    the test's own location); leave docs as a follow-up sweep.
 7. `~/.vean/projects.json` GC-on-read for dead `rootPath`s (§4.6).
