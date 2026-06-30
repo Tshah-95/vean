@@ -245,13 +245,22 @@ interaction layer**, which vitest does not cover (`viewer/` is biome-excluded, g
 
 | Item | Type | Severity | Action |
 |---|---|---|---|
+| **Remotion seam is half-built** — live `@remotion/player` hardcodes `LowerThird`; real comps are baked to `.mov` and decoded as plain footage (the GATE-MOVE5 green is the *fixture* path, not the general producer) | Shipped stub | **High** | Harden the real-comp producer path; Move 5 is "proven on a fixture", not done |
+| **App overlays go opaque** — bundled `ffprobe` dylib-broken → `sourceHasAlpha` silently degrades alpha→opaque (NOT a WebKit gap; WebKit decodes alpha fine) | Shipped bug | **High** | Fix the bundled-ffprobe dylib closure; ties into a.3 / S7 alpha work |
+| **Preview silent for MP4s on video tracks** — `resolveAudio` only sources `tracks.audio` (fix in flight — see the dirty `viewer/src/resolveAudio.ts`) | Shipped bug | Med | Land the in-progress `resolveAudio` fix |
 | Git-worktree exploration model + agent-session panel | Missing Move-4 feature | High | T10 / S6 — the big remaining product feature |
 | Premultiplied-alpha mismatch on Remotion overlay | Latent correctness | Med | a.3 / S7 — verify + golden **now** |
 | 5 latent keyframe-engine gaps | Low/latent | Low | a.6 — fix now, don't defer |
 | Root lint vs viewer lint — conflicting signal in the map (root reported pre-existing failures in `src/{cli,conform,state}`, but `bun run lint` reported clean) | Unknown | Med | **Verify** which is true; if real, fix |
-| UI/app interaction bugs (the ones you're seeing) | Unknown — not in the headless inventory | ? | Need your list (§7) + a `drive`-skill bug-hunt pass |
 | Move-0 Shotcut GUI spot-check; Move-4 "prefer to Shotcut" gate | Manual | — | Needs you at the GUI |
 | Palmier's bug *classes* (index-shift, sync-locks, phantom clips) | Design lesson | — | Make impossible by construction in T3/T6 |
+
+**Correction to §2/§3's "Remotion shipped":** Move 5's gate is green on a *proof fixture*, but the general
+producer path (arbitrary compositions, live player driven by real comp props, alpha overlays surviving the
+app's ffprobe) is **partially built** — three of the bugs above live in this seam. "Extend Remotion" in this
+roadmap therefore includes **hardening the real-comp producer path**, not only adding new comps. The known
+bug cluster is concentrated in the **preview / Remotion-seam / app layer**, exactly as predicted — and the
+list is now concrete (above), so no user bug-list is needed to start.
 
 The unprobed I/O diagnostics (a.2) aren't bugs — they're correctness we get for free once probe is wired.
 
