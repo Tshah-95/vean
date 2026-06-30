@@ -112,7 +112,12 @@ export function resolveProjectReference(
   value: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  const known = listKnownProjects(env).find((p) => p.id === value || p.rootPath === value);
+  // Match a known project by id, exact rootPath, or TITLE (so `vean open retire`
+  // resolves the project named "retire", not a cwd-relative `./retire`). Exact
+  // id/path wins over title (checked first per project).
+  const known =
+    listKnownProjects(env).find((p) => p.id === value || p.rootPath === value) ??
+    listKnownProjects(env).find((p) => p.title === value);
   if (known) return known.rootPath;
   return resolve(value);
 }
