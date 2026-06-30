@@ -29,6 +29,7 @@
     "viewer:dev": "cd viewer && bun run dev",
     "viewer:build": "cd viewer && bun run build",
     "preview": "bun src/cli.ts preview",
+    "drive": "bun scripts/drive.ts",
     "setup:cli": "bun link",
     "state:init": "bun src/cli.ts state init",
     "project:init": "bun src/cli.ts project init",
