@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const appMeta = sqliteTable("app_meta", {
   key: text("key").primaryKey(),
@@ -102,6 +102,26 @@ export const mediaAssets = sqliteTable(
     kind: text("kind").notNull().default("unknown"),
     sizeBytes: integer("size_bytes"),
     mtimeMs: integer("mtime_ms"),
+    // ─── Typed ffprobe facts (the queryable, first-class media-intelligence
+    //     columns). `probeJson` keeps the verbatim ffprobe blob; these promote the
+    //     load-bearing fields a query/diagnostic actually filters on. All nullable —
+    //     a never-probed row, an audio-only file (no width/fps), or a still image
+    //     leaves the irrelevant columns null. fps stays RATIONAL [num, den] (never a
+    //     float) per the frame-exact invariant; duration is the one inherently
+    //     real-valued probe fact (seconds), so it is the single `real` column. ──
+    durationSec: real("duration_sec"),
+    fpsNum: integer("fps_num"),
+    fpsDen: integer("fps_den"),
+    width: integer("width"),
+    height: integer("height"),
+    audioStreams: integer("audio_streams"),
+    colorSpace: text("color_space"),
+    colorTransfer: text("color_transfer"),
+    colorPrimaries: text("color_primaries"),
+    /** Short content hash (sha256 prefix) — detects a re-encode / replacement. */
+    contentHash: text("content_hash"),
+    /** ISO timestamp of the last successful probe (null = never probed). */
+    probedAt: text("probed_at"),
     labelsJson: text("labels_json").notNull().default("[]"),
     probeJson: text("probe_json").notNull().default("{}"),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),

@@ -15,6 +15,8 @@ function probe(r: string | null, avg: string | null): SourceProbe {
     durationSec: null,
     width: 1920,
     height: 1080,
+    color: { space: null, transfer: null, primaries: null },
+    audioStreams: 1,
   };
 }
 
