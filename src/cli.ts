@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
-import { writeSync } from "node:fs";
+import { existsSync, writeSync } from "node:fs";
+import { join } from "node:path";
 import { Command, InvalidArgumentError } from "commander";
 import {
   createActionContext,
@@ -670,6 +671,59 @@ program
         dev: opts.dev ?? false,
         repo: opts.repo,
       });
+    },
+  );
+
+program
+  .command("open [project]")
+  .description("Open the vean editor on a project — the native app (default) or a browser")
+  .option("--view <surface>", "app or browser", "app")
+  .option(
+    "--dev",
+    "for the app: the hot-reloading dev build (tauri:dev) instead of the installed app",
+  )
+  .option("--port <n>", "for the browser view: port to bind on 127.0.0.1", parseInteger, 5174)
+  .action(
+    async (project: string | undefined, opts: { view: string; dev?: boolean; port: number }) => {
+      // Select the project so the app/preview boots straight at it (the app reads
+      // the persisted active project at startup).
+      const used = (await runAction("project.use", { project })) as {
+        activeProject: { rootPath: string; title: string | null };
+      };
+      const root = used.activeProject.rootPath;
+      const label = used.activeProject.title ?? root;
+
+      if (opts.view === "browser") {
+        console.error(`vean: opening ${label} in the browser on http://127.0.0.1:${opts.port} …`);
+        await runAction("preview.serve", { project: root, port: opts.port, open: true });
+        return;
+      }
+      if (opts.view !== "app") {
+        throw new InvalidArgumentError("expected --view app or browser");
+      }
+
+      const appDir = join(import.meta.dir, "..", "app");
+      const launchDev = () => {
+        console.error(
+          `vean: launching the dev app on ${label} (tauri:dev — first compile is slow) …`,
+        );
+        Bun.spawn(["bun", "run", "tauri:dev"], {
+          cwd: appDir,
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+      };
+      if (opts.dev) return launchDev();
+      const prodApp = "/Applications/vean.app";
+      if (existsSync(prodApp)) {
+        console.error(`vean: opening the app on ${label} …`);
+        Bun.spawn(["open", prodApp], { stdout: "ignore", stderr: "ignore" });
+      } else {
+        console.error(
+          "vean: no installed app (build one with `bun run app:build`) — using the dev app …",
+        );
+        launchDev();
+      }
     },
   );
 

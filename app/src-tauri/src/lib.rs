@@ -68,6 +68,27 @@ fn vean_bin() -> String {
     std::env::var("VEAN_BIN").unwrap_or_else(|_| "bun".to_string())
 }
 
+/// The project the app should boot at: the persisted active project from
+/// `~/.vean/projects.json` (set by `vean open` / `vean project use`), or the repo
+/// root when none is selected. Lets `vean open <project>` land the app straight at
+/// that project instead of always the repo root.
+fn boot_project() -> PathBuf {
+    if let Ok(home) = std::env::var("HOME") {
+        let cfg = PathBuf::from(home).join(".vean").join("projects.json");
+        if let Ok(text) = std::fs::read_to_string(&cfg) {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                if let Some(root) = json.get("activeProjectRoot").and_then(|v| v.as_str()) {
+                    let p = PathBuf::from(root);
+                    if p.exists() {
+                        return p;
+                    }
+                }
+            }
+        }
+    }
+    vean_repo()
+}
+
 /// Ask the OS for a free loopback port by binding :0 and reading it back.
 fn free_port() -> std::io::Result<u16> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
@@ -364,9 +385,10 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             install_menu(&handle)?;
-            // Boot the sidecar against the repo root as the default project; the user
-            // switches via File → Open Project Folder….
-            if let Err(err) = restart_sidecar(&handle, vean_repo()) {
+            // Boot the sidecar against the persisted active project (so `vean open
+            // <project>` lands here), falling back to the repo root; the user switches
+            // via File → Open Project Folder….
+            if let Err(err) = restart_sidecar(&handle, boot_project()) {
                 eprintln!("vean: failed to start preview sidecar: {err}");
             }
             Ok(())
