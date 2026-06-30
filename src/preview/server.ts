@@ -570,7 +570,11 @@ export function createPreviewHandler(
       }
       try {
         const { buildSourceProxy } = await import("./source-proxy");
-        const result = await buildSourceProxy(repo, resolvedReq);
+        // `intra=1` requests an ALL-INTRA H.264 proxy (every frame a keyframe) for
+        // scrub-heavy footage — the §8.2 extreme of the short-GOP seek lever. Absent
+        // it, the default short GOP (`-g 15`) balances size vs seek for normal play.
+        const intra = url.searchParams.get("intra") === "1";
+        const result = await buildSourceProxy(repo, resolvedReq, { intra });
         return serveFile(result.proxyPath, dirname(result.proxyPath), req);
       } catch (error) {
         return jsonResponse(

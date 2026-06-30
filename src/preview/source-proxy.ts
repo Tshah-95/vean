@@ -52,8 +52,17 @@ export type SourceProxyOpts = {
    *  box preserving aspect; never upscaled. */
   maxEdge?: number;
   /** GOP length in frames (default 15 — short GOP for instant random access; a
-   *  seek lands within at most `gop−1` frames of a keyframe). */
+   *  seek lands within at most `gop−1` frames of a keyframe). Ignored when `intra`
+   *  is set (all-intra forces a keyframe on EVERY frame). */
   gop?: number;
+  /** ALL-INTRA: every frame is a keyframe (`keyint=1`, no inter-frames). The §8.2
+   *  scrub-heavy extreme of the short-GOP lever — worst-case random-access seek
+   *  collapses to a SINGLE keyframe (~6ms, no GOP walk) at the cost of a larger
+   *  proxy. Use for footage the editor scrubs frame-by-frame; the default short
+   *  GOP (`-g 15`) is the size/seek balance for normal play. NOTE: only the opaque
+   *  H.264 path honours this; an alpha (VP9) proxy keeps the short-GOP path
+   *  (all-intra VP9-alpha is rarely worth the size). */
+  intra?: boolean;
   /** Bypass the cache and force a fresh encode. */
   force?: boolean;
 };
@@ -135,9 +144,14 @@ function proxyKey(
   maxEdge: number,
   gop: number,
   alpha: boolean,
+  intra: boolean,
 ): string {
+  // `i1` (all-intra) is part of the address so an all-intra proxy never collides
+  // with the short-GOP one for the same source — they are different artifacts.
   return createHash("sha256")
-    .update(`${resolvedSource}::${mtimeMs}::${size}::${maxEdge}::g${gop}::a${alpha ? 1 : 0}`)
+    .update(
+      `${resolvedSource}::${mtimeMs}::${size}::${maxEdge}::g${gop}::a${alpha ? 1 : 0}::i${intra ? 1 : 0}`,
+    )
     .digest("hex")
     .slice(0, 32);
 }
@@ -160,7 +174,10 @@ export async function buildSourceProxy(
   opts: SourceProxyOpts = {},
 ): Promise<SourceProxyResult> {
   const maxEdge = opts.maxEdge ?? 960;
-  const gop = opts.gop ?? 15;
+  // All-intra forces a keyframe on every frame (gop = 1); otherwise the short-GOP
+  // default. `gop` is the effective keyint passed to the encoder below.
+  const intra = opts.intra ?? false;
+  const gop = intra ? 1 : (opts.gop ?? 15);
   const resolvedSource = resolve(srcPath);
   if (!existsSync(resolvedSource)) {
     throw new Error(`source-proxy: source not found: ${resolvedSource}`);
@@ -174,7 +191,18 @@ export async function buildSourceProxy(
   // returns the source's exact alpha in headless Chromium). H.264 has no alpha plane,
   // so an opaque H.264 proxy of an alpha source would occlude the layer below.
   const hasAlpha = await sourceHasAlpha(resolvedSource);
-  const key = proxyKey(resolvedSource, stat.mtimeMs, stat.size, maxEdge, gop, hasAlpha);
+  // The alpha (VP9) path ignores all-intra (see SourceProxyOpts.intra); record the
+  // effective flag in the key so it matches what was actually encoded.
+  const effectiveIntra = intra && !hasAlpha;
+  const key = proxyKey(
+    resolvedSource,
+    stat.mtimeMs,
+    stat.size,
+    maxEdge,
+    gop,
+    hasAlpha,
+    effectiveIntra,
+  );
 
   const dir = sourceProxyCacheDir(repo);
   mkdirSync(dir, { recursive: true });
@@ -224,15 +252,24 @@ export async function buildSourceProxy(
     return { proxyPath, key, width, height, cached: false, hasAlpha, contentType };
   }
 
-  // Opaque source → the short-GOP H.264 path. Drive melt to a small short-GOP H.264,
-  // NO audio (the decode path is video-only; audio stays on the old proxy `<video>`
-  // / Web Audio per the tiered plan). The `g`/`keyint`/`keyint_min` triple pins the
-  // GOP so EVERY ~15th frame is a keyframe — the random-access seek lever (§8.2).
-  // `bf=0` disables B-frames so the decoder never reorders (the spike's
-  // "push-N-then-collect" deadlock, §8.5, is avoided wholesale — mediabunny handles
-  // ordering, but an all-reference stream is strictly cheaper to seek). Scaling is
-  // done via a downscaled `scaleProfile`, NOT a consumer `s=` rescale, which stalls
-  // melt 7.38 at 99% (the proxy.ts lesson).
+  // Opaque source → the short-GOP (or all-intra) H.264 path. Drive melt to a small
+  // H.264, NO audio (the decode path is video-only; audio stays on the old proxy
+  // `<video>` / Web Audio per the tiered plan). The `g`/`keyint`/`keyint_min` triple
+  // pins the GOP so EVERY ~`gop`th frame is a keyframe — the random-access seek lever
+  // (§8.2). With `intra` (gop=1) every frame is a keyframe, so worst-case seek is a
+  // single keyframe with no GOP walk (the scrub-heavy extreme; §8.2). `bf=0` disables
+  // B-frames so the decoder never reorders (the spike's "push-N-then-collect"
+  // deadlock, §8.5, is avoided wholesale — mediabunny handles ordering, but an
+  // all-reference stream is strictly cheaper to seek). Scaling is done via a
+  // downscaled `scaleProfile`, NOT a consumer `s=` rescale, which stalls melt 7.38
+  // at 99% (the proxy.ts lesson).
+  //
+  // libx264 has a dedicated all-intra flag (`x264opts=keyint=1` ≡ `--keyint 1`), but
+  // we ALSO pass `intra-refresh=0` and the keyint triple so a libx264 default
+  // scenecut/keyint can never reintroduce inter-frames under all-intra.
+  const x264 = effectiveIntra
+    ? "keyint=1:min-keyint=1:scenecut=0:bframes=0:intra-refresh=0"
+    : `keyint=${gop}:min-keyint=${gop}:scenecut=0:bframes=0`;
   const { render } = await import("../driver/melt");
   await render(resolvedSource, proxyPath, {
     vcodec: "libx264",
@@ -243,9 +280,9 @@ export async function buildSourceProxy(
       `g=${gop}`,
       `keyint_min=${gop}`,
       "bf=0",
-      // melt's avformat consumer forwards `x264opts` to libx264; pin the GOP there
-      // too so a libx264 default scenecut/keyint can't override the short GOP.
-      `x264opts=keyint=${gop}:min-keyint=${gop}:scenecut=0:bframes=0`,
+      // melt's avformat consumer forwards `x264opts` to libx264; pin the keyint
+      // there too so a libx264 default scenecut/keyint can't override the GOP.
+      `x264opts=${x264}`,
     ],
   });
 
