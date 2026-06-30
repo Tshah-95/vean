@@ -28,7 +28,7 @@
 // compositor, via the exact rational `sourceFrame * fps[1] / fps[0]` (never a
 // float fps).
 import { isAnimated, parseAnim, scalarOf, valueAtFrame } from "./keyframes";
-import { type ClipItem, type Item, type Timeline, type Track, type Transition, isGraphicClip } from "./types";
+import { type ClipItem, type Item, type Timeline, type Track, isGraphicClip } from "./types";
 
 /** The main-tractor track index of `tracks.video[videoIndex]`. Index 0 is the
  *  background producer; video tracks follow (1-based), then audio — the inverse of

@@ -33,16 +33,22 @@
 // forward scrub lands on already-decoded frames. A fresh seek bumps the generation,
 // canceling stale preload work.
 //
-// AUDIO (Tier 0/1 scope): a hidden per-source `<video>` carries audio during
-// playback (the visual is the canvas; the element is muted-of-video by being
-// off-screen). The full Web Audio graph is Tier 2b (§6).
+// AUDIO (Tier 2b, §6 / §8.6, §9 step 6): a `Web Audio graph` (`AudioGraph`) slaved
+// to the master clock mixes EVERY audio track — per-clip `AudioBufferSourceNode`s
+// through per-clip gain (fades) → per-track gain (volume) → master gain (preview
+// volume/mute). The clock's time base becomes this graph's `AudioContext.currentTime`
+// so A/V is sample-locked (no 29.97 drift over minutes). This REPLACES the Tier-0/1
+// single-hidden-`<video>` stopgap; multi-track gain/fade mixing was never
+// sample-accurate through one element.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { mediaUrl, renderStill } from "../api";
 import { useClock, useClockInstance } from "../ClockProvider";
+import { renderStill } from "../api";
+import { AudioGraph } from "../audio/audioGraph";
 import { type FootageProvider, type FrameImage, GlCompositor } from "../compositor/glCompositor";
 import { sourceProxyUrl } from "../decode/decoder";
 import { FrameCache } from "../decode/frameCache";
 import { ParallelDecoder } from "../decode/parallelDecoder";
+import { resolveAudio } from "../resolveAudio";
 import { type FootageLayer, type Layer, resolveLayers } from "../resolveLayers";
 import type { Fps, Timeline } from "../types";
 
@@ -75,12 +81,6 @@ const CACHE_MAX_BYTES = 500 * 1024 * 1024;
  *  (OpenCut's `isPreview` 2048px cap, `scene-builder.ts:102`). The profile is the
  *  natural target; we never upscale past it. */
 const MAX_EDGE = 2048;
-
-/** Decode-ahead window around the playhead (§5). Warm this many SOURCE frames ahead
- *  / behind so a forward scrub lands on decoded frames. Kept modest so preload never
- *  starves the on-demand decode of the frame actually on screen. */
-const PRELOAD_AHEAD = 24;
-const PRELOAD_BEHIND = 8;
 
 /** Cap on preload decodes dispatched per composite, so a burst can't flood the
  *  pool's queue (the on-demand current-frame decode always goes first). */
@@ -250,31 +250,34 @@ export function FootageStage({
   // we dispatch a bounded slice per tick so preload never starves the on-demand
   // current-frame decode or floods the pool queue. The generation counter (bumped
   // on seek) cancels stale preload work in flight.
-  const warmAhead = useCallback((frame: number) => {
-    const dec = decoder.current;
-    if (!dec) return;
-    const resolved = resolveLayers(timeline, frame);
-    let dispatched = 0;
-    const footage: FootageLayer[] = [];
-    for (const l of resolved.layers) {
-      if (l.kind === "footage") footage.push(l);
-      else if (l.kind === "dissolve") {
-        if (l.from.kind === "footage") footage.push(l.from);
-        if (l.to.kind === "footage") footage.push(l.to);
+  const warmAhead = useCallback(
+    (frame: number) => {
+      const dec = decoder.current;
+      if (!dec) return;
+      const resolved = resolveLayers(timeline, frame);
+      let dispatched = 0;
+      const footage: FootageLayer[] = [];
+      for (const l of resolved.layers) {
+        if (l.kind === "footage") footage.push(l);
+        else if (l.kind === "dissolve") {
+          if (l.from.kind === "footage") footage.push(l.from);
+          if (l.to.kind === "footage") footage.push(l.to);
+        }
       }
-    }
-    for (const l of footage) {
-      if (dispatched >= MAX_PRELOAD_PER_TICK) break;
-      const missing = cache.current.missingPreloadFrames(l.uuid, l.sourceFrame, l.in, l.out);
-      for (const sf of missing) {
+      for (const l of footage) {
         if (dispatched >= MAX_PRELOAD_PER_TICK) break;
-        if (decoding.current.has(frameKey(l.uuid, sf))) continue;
-        requestDecode(l.uuid, l.resource, sf);
-        dispatched++;
+        const missing = cache.current.missingPreloadFrames(l.uuid, l.sourceFrame, l.in, l.out);
+        for (const sf of missing) {
+          if (dispatched >= MAX_PRELOAD_PER_TICK) break;
+          if (decoding.current.has(frameKey(l.uuid, sf))) continue;
+          requestDecode(l.uuid, l.resource, sf);
+          dispatched++;
+        }
       }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeline, requestDecode]);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [timeline, requestDecode],
+  );
 
   // The composite core: resolve the z-stack off the LIVE IR at `frame`, draw it,
   // record perf, then warm the decode-ahead window.
@@ -299,7 +302,9 @@ export function FootageStage({
 
   // Single-in-flight composite with latest-wins coalescing. `force` bypasses the
   // in-flight guard's coalescing collapse for a decode-completion repaint.
-  const scheduleCompositeRef = useRef<(frame: number, rev: number, force?: boolean) => void>(() => {});
+  const scheduleCompositeRef = useRef<(frame: number, rev: number, force?: boolean) => void>(
+    () => {},
+  );
   const scheduleComposite = useCallback(
     (frame: number, rev: number, force = false) => scheduleCompositeRef.current(frame, rev, force),
     [],
@@ -411,80 +416,101 @@ export function FootageStage({
     }
   }, [clock.currentFrame, clock.playing, revision, scheduleComposite]);
 
-  // ── audio: a single hidden source element carrying the topmost footage clip's
-  // audio during playback (Tier 0/1; the Web Audio graph is Tier 2b). The visual
-  // is the canvas — this element is off-screen, played only for sound. ──────────
-  const audioEl = useRef<HTMLVideoElement | null>(null);
-  const audioUuid = useRef<string | null>(null);
+  // ── audio: the Tier-2b WEB AUDIO GRAPH slaved to the master clock (§6, §8.6) ──
+  // One `AudioGraph` mixes every audio track — per-clip `AudioBufferSourceNode`s
+  // through per-clip gain (fades) → per-track gain → master gain. Its
+  // `AudioContext.currentTime` becomes the clock's time base on resume, so A/V is
+  // sample-locked. The graph is rebuilt only when fps/route change (a new document);
+  // its schedule is re-derived on edits + seeks. Exposed on `window.__veanAudio` so
+  // the headless §9-step-6 gate can assert the graph is live + A/V-locked.
+  const audioGraph = useRef<AudioGraph | null>(null);
+  // The last frame the audio path acted on — to detect a discrete SEEK (a jump) vs
+  // smooth playback, so we re-schedule audio only on a real seek, never per tick.
+  const prevAudioFrame = useRef(clock.currentFrame);
 
-  const topmostAudioSource = useCallback((): { resource: string; uuid: string; seconds: number } | null => {
-    const resolved = resolveLayers(timeline, clock.currentFrame);
-    // Walk top-down; the highest footage layer carries audio (color/solid is silent).
-    for (let i = resolved.layers.length - 1; i >= 0; i--) {
-      const l = resolved.layers[i];
-      if (l && l.kind === "footage") {
-        return { resource: l.resource, uuid: l.uuid, seconds: secondsForFrame(l.sourceFrame) };
-      }
-    }
-    return null;
-  }, [timeline, clock.currentFrame, secondsForFrame]);
-
+  // Build the graph once per (fps, route). Re-resolves the schedule + preloads
+  // buffers immediately so the first play is instant.
   useEffect(() => {
-    if (!audioEl.current) {
-      const el = document.createElement("video");
-      el.playsInline = true;
-      el.preload = "auto";
-      el.style.display = "none";
-      host.current?.appendChild(el);
-      audioEl.current = el;
-    }
-    const el = audioEl.current;
-    el.volume = Math.min(1, Math.max(0, volume));
-    el.muted = muted;
-    const src = topmostAudioSource();
-    if (!src) {
-      el.pause();
-      audioUuid.current = null;
-      return;
-    }
-    if (audioUuid.current !== src.uuid) {
-      el.src = mediaUrl(src.resource, route);
-      audioUuid.current = src.uuid;
-    }
-    if (clock.playing) {
-      // Keep the audio element roughly synced; the canvas owns the visual frame.
-      if (Math.abs(el.currentTime - src.seconds) > 0.25) el.currentTime = src.seconds;
-      void el.play().catch(() => {});
-    } else {
-      el.pause();
-      el.currentTime = src.seconds;
-    }
-  }, [clock.playing, clock.currentFrame, volume, muted, route, topmostAudioSource]);
+    const graph = new AudioGraph(clockInstance, fps, route);
+    audioGraph.current = graph;
+    graph.setVolume(volume);
+    graph.setMuted(muted);
+    void graph.setSinkId(sinkId);
+    graph.schedule(resolveAudio(timeline));
+    (window as unknown as { __veanAudio?: () => ReturnType<AudioGraph["getStats"]> }).__veanAudio =
+      () => graph.getStats();
+    return () => {
+      graph.dispose();
+      audioGraph.current = null;
+      (window as unknown as { __veanAudio?: unknown }).__veanAudio = undefined;
+    };
+    // Re-create only on a document-identity change (fps/route). volume/muted/sinkId
+    // and the schedule are pushed by the effects below; timeline is read live.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clockInstance, fps, route]);
 
-  // Route audio to the chosen output device.
+  // Push mixer controls into the graph as they change (no re-create).
   useEffect(() => {
-    const el = audioEl.current as
-      | (HTMLVideoElement & { setSinkId?: (id: string) => Promise<void> })
-      | null;
-    if (!el || typeof el.setSinkId !== "function") return;
-    el.setSinkId(sinkId).catch(() => {});
+    audioGraph.current?.setVolume(volume);
+  }, [volume]);
+  useEffect(() => {
+    audioGraph.current?.setMuted(muted);
+  }, [muted]);
+  useEffect(() => {
+    void audioGraph.current?.setSinkId(sinkId);
   }, [sinkId]);
 
-  // Audio-unlock on first interaction (clock-driven play() from an effect is
-  // rejected for an unmuted element until a user gesture).
+  // Re-derive the audio schedule whenever the working IR changes (an edit bumps
+  // `revision`). When paused this only preloads/records; when playing it re-schedules
+  // from the current playhead — so an edit is reflected in audio with NO save, the
+  // audio twin of the footage HMR loop.
+  useEffect(() => {
+    audioGraph.current?.schedule(resolveAudio(timeline));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revision]);
+
+  // Play/pause TRANSITION → start/stop the graph. Keyed on `clock.playing` ONLY (not
+  // `currentFrame`), so it fires once per transition — NOT every frame. `play()`
+  // resumes the context, slaves the clock to it, and schedules from the playhead;
+  // `pause()` silences. (Re-running this per tick would stop+reschedule every frame,
+  // glitching audio and re-anchoring the clock — the playback-speed bug this avoids.)
+  useEffect(() => {
+    const graph = audioGraph.current;
+    if (!graph) return;
+    if (clock.playing) {
+      void graph.play(resolveAudio(timeline));
+    } else {
+      graph.pause();
+    }
+    prevAudioFrame.current = clock.currentFrame;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clock.playing]);
+
+  // Seek-while-playing → re-align audio to the new position. A DISCRETE jump (a
+  // scrub/seek of more than a couple frames while playing) re-schedules the graph
+  // from the new playhead; smooth playback (±1 frame/tick) does NOT (that would
+  // stop+restart sources every frame). The clock owns the frame; this only re-aligns
+  // the speakers after a jump.
+  useEffect(() => {
+    const graph = audioGraph.current;
+    if (!graph || !clock.playing) {
+      prevAudioFrame.current = clock.currentFrame;
+      return;
+    }
+    const jumped = Math.abs(clock.currentFrame - prevAudioFrame.current) > 2;
+    prevAudioFrame.current = clock.currentFrame;
+    if (jumped) graph.reseek();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clock.currentFrame, clock.playing]);
+
+  // Audio-unlock on first interaction: resume the AudioContext (autoplay policy) and
+  // slave the clock to it, so the audio clock is ready the instant the user plays.
   useEffect(() => {
     let unlocked = false;
     const unlock = () => {
-      const el = audioEl.current;
-      if (!el || unlocked) return;
+      if (unlocked) return;
       unlocked = true;
-      el.play()
-        .then(() => {
-          if (!clockInstance.getSnapshot().playing) el.pause();
-        })
-        .catch(() => {
-          unlocked = false;
-        });
+      void audioGraph.current?.resume();
     };
     window.addEventListener("pointerdown", unlock);
     window.addEventListener("keydown", unlock);
@@ -492,20 +518,42 @@ export function FootageStage({
       window.removeEventListener("pointerdown", unlock);
       window.removeEventListener("keydown", unlock);
     };
-  }, [clockInstance]);
+  }, []);
 
-  // Tear down the audio element on unmount.
+  // Headless APPROXIMATE bridge (`window.__veanApprox`) — the no-UI handle the
+  // §9-step-6 gate uses to (a) read whether the current composite uses an
+  // `approximate` service (a non-default blend / frei0r / blur the browser can't
+  // match — §7), and (b) trigger the ONE on-demand `melt` exact still for the frame
+  // (§6.3) and observe the overlay landing. The gate counts `/api/still` requests in
+  // the browser to assert EXACTLY ONE `melt` call fires per request, never in the
+  // scrub loop. Side-effect only; mirrors the decode/edit bridges. Re-published on
+  // each `(approximate, stillUrl)` change so the gate always reads current state.
+  useEffect(() => {
+    (
+      window as unknown as {
+        __veanApprox?: {
+          approximate: boolean;
+          hasStill: boolean;
+          stillFrame: number | null;
+          requestExactStill: () => Promise<void>;
+        };
+      }
+    ).__veanApprox = {
+      approximate,
+      hasStill: stillUrl != null,
+      stillFrame: stillFrame.current,
+      requestExactStill,
+    };
+    return () => {
+      (window as unknown as { __veanApprox?: unknown }).__veanApprox = undefined;
+    };
+  }, [approximate, stillUrl, requestExactStill]);
+
+  // Clear the composite debounce timer on unmount (the graph tears itself down in
+  // its own effect's cleanup).
   useEffect(
     () => () => {
       if (editTimer.current != null) window.clearTimeout(editTimer.current);
-      const el = audioEl.current;
-      if (el) {
-        el.pause();
-        el.removeAttribute("src");
-        el.load();
-        el.remove();
-      }
-      audioEl.current = null;
     },
     [],
   );

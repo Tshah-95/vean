@@ -9,12 +9,33 @@
 //      (only when the delta exceeds ~1 frame, to avoid feedback during playback).
 //   2. the @remotion/player: playerRef.seekTo(frame).
 //
-// Playback driver: a SINGLE requestAnimationFrame loop is the master clock during
-// play. It computes the frame from wall-clock elapsed time, advances
-// `currentFrame`, and pushes both layers. The <video>'s own timeupdate is NOT the
-// master (too coarse — it would desync the Player); the proxy <video> plays only
-// to carry AUDIO, and the RAF clock owns the integer frame number.
+// Playback driver: a SINGLE requestAnimationFrame loop drives the playhead during
+// play. It computes the integer frame from elapsed time on the CLOCK'S TIME SOURCE,
+// advances `currentFrame`, and pushes all layers. The <video>'s own timeupdate is
+// NOT the master (too coarse — it would desync the Player); the RAF loop owns the
+// integer frame number.
+//
+// ── TIME SOURCE: wall-clock (video-only) → AudioContext (audio online) ─────────
+// The clock's TIME BASE is an injectable monotonic seconds source (`timeSource`),
+// defaulting to `performance.now()/1000`. When the Web Audio graph comes online
+// (Tier 2b, §3 / §6 / §8.6), `attachTimeSource(() => audioContext.currentTime)`
+// makes the SAME `AudioContext.currentTime` that schedules the audio sources also
+// drive the playhead — so A/V is sample-locked and 29.97 footage does not desync
+// over minutes (a direct violation of the rational-time invariant if measured in
+// float `performance.now()` ms). The public surface (`seekTo`/`play`/`pause`, one
+// `currentFrame` writer) is unchanged — only the internal `now()` it reads changes.
+// All frame math stays EXACT integer-rational: `frame = anchorFrame + round(elapsed
+// * num / den)`, never a float fps. Re-anchoring on attach/seek keeps `currentFrame`
+// continuous across a time-source swap.
 import type { Fps } from "./types";
+
+/** A monotonic time source in SECONDS (the semantics of `AudioContext.currentTime`
+ *  and `performance.now()/1000`). Injectable so the clock's time base can switch
+ *  from wall-clock to the audio clock without changing its public surface. */
+export type TimeSource = () => number;
+
+/** The default (video-only) time source: wall-clock seconds. */
+const wallClockSeconds: TimeSource = () => performance.now() / 1000;
 
 export interface ClockState {
   /** Integer master playhead. */
@@ -37,7 +58,11 @@ export class MasterClock {
   };
   private listeners = new Set<Listener>();
   private raf: number | null = null;
-  private playStartWall = 0;
+  /** The clock's TIME BASE (seconds). Wall-clock by default; swapped to
+   *  `AudioContext.currentTime` once the audio graph attaches (Tier 2b). */
+  private timeSource: TimeSource = wallClockSeconds;
+  /** The time-source reading (seconds) at which the current play span began. */
+  private playStartTime = 0;
   private playStartFrame = 0;
 
   // ── store plumbing (useSyncExternalStore) ──────────────────────────────
@@ -64,6 +89,36 @@ export class MasterClock {
     return Math.round((seconds * num) / den);
   }
 
+  // ── time source (wall-clock ⇄ AudioContext) ───────────────────────────────
+  /** Swap the clock's time base to `source` (seconds), re-anchoring the current
+   *  play span so `currentFrame` is continuous across the swap. Tier 2b calls this
+   *  with `() => audioContext.currentTime` once the Web Audio graph is live, so the
+   *  audio clock that schedules the sources also drives the playhead (A/V lock,
+   *  §8.6). Idempotent: re-attaching the same source is a no-op. */
+  attachTimeSource(source: TimeSource): void {
+    if (this.timeSource === source) return;
+    // Re-anchor BEFORE swapping so the new source continues from the current frame:
+    // pin the play span's start to "now" on the NEW source at the current frame.
+    this.timeSource = source;
+    if (this.state.playing) {
+      this.playStartTime = source();
+      this.playStartFrame = this.state.currentFrame;
+    }
+  }
+
+  /** Revert to the wall-clock time base (e.g. the audio graph tore down). Re-anchors
+   *  the same way as `attachTimeSource`. */
+  detachTimeSource(): void {
+    this.attachTimeSource(wallClockSeconds);
+  }
+
+  /** The current time-source reading (seconds). Exposed so the audio graph can align
+   *  its scheduling math (`when = ctx.currentTime + clipStart − clockTime`) to the
+   *  exact same clock the playhead reads. */
+  now(): number {
+    return this.timeSource();
+  }
+
   // ── config ──────────────────────────────────────────────────────────────
   configure(fps: Fps, totalFrames: number): void {
     this.pause();
@@ -85,7 +140,7 @@ export class MasterClock {
     if (next === this.state.totalFrames) return;
     const clampedFrame = Math.min(this.state.currentFrame, next - 1);
     if (this.state.playing && clampedFrame !== this.state.currentFrame) {
-      this.playStartWall = performance.now();
+      this.playStartTime = this.timeSource();
       this.playStartFrame = clampedFrame;
     }
     this.emit({ totalFrames: next, currentFrame: clampedFrame });
@@ -96,7 +151,7 @@ export class MasterClock {
     const clamped = Math.max(0, Math.min(Math.round(frame), this.state.totalFrames - 1));
     if (this.state.playing) {
       // Re-anchor the RAF loop so playback continues from the new frame.
-      this.playStartWall = performance.now();
+      this.playStartTime = this.timeSource();
       this.playStartFrame = clamped;
     }
     if (clamped !== this.state.currentFrame) this.emit({ currentFrame: clamped });
@@ -107,7 +162,7 @@ export class MasterClock {
     if (this.state.currentFrame >= this.state.totalFrames - 1) {
       this.emit({ currentFrame: 0 });
     }
-    this.playStartWall = performance.now();
+    this.playStartTime = this.timeSource();
     this.playStartFrame = this.state.currentFrame;
     this.emit({ playing: true });
     this.tick();
@@ -129,8 +184,12 @@ export class MasterClock {
   private tick = (): void => {
     if (!this.state.playing) return;
     const [num, den] = this.state.fps;
-    const elapsedMs = performance.now() - this.playStartWall;
-    const frame = this.playStartFrame + Math.round((elapsedMs * num) / den / 1000);
+    // Exact integer-rational advance off the clock's TIME SOURCE (seconds): frame =
+    // anchorFrame + round(elapsedSeconds × num / den). The time source is wall-clock
+    // for video-only and `AudioContext.currentTime` once audio is online — same
+    // formula either way, so A/V is locked without a float fps anywhere (§8.6).
+    const elapsedSeconds = this.timeSource() - this.playStartTime;
+    const frame = this.playStartFrame + Math.round((elapsedSeconds * num) / den);
     if (frame >= this.state.totalFrames - 1) {
       this.emit({ currentFrame: this.state.totalFrames - 1, playing: false });
       this.raf = null;
