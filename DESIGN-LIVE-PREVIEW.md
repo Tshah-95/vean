@@ -1,13 +1,41 @@
 # Live preview — the no-save edit loop ("HMR for video")
 
-> **Status: design of record, not yet built.** This is the design barrier for
-> replacing vean's current *edit → Save → re-render proxy → `<video>`* preview
-> with an in-browser, on-demand, per-frame compositor driven straight off the
-> live in-memory IR. It sits OVER the Move-0/1 core (IR, edit algebra,
-> diagnostics, keyframes) and EXTENDS the Move-5 viewer + Remotion seam. It
-> touches `viewer/` and adds a browser-side compositor; it changes **nothing** in
-> `src/ir`, `src/ops`, `src/diagnostics`, or `src/driver`, and it does not move
-> the `melt` boundary.
+> **Status: BUILT — Tiers 0/1/2 shipped and drive-verified (2026-06-30).** What was
+> the design barrier is now the implementation: vean's preview is an in-browser,
+> on-demand, per-frame WebGL2 compositor driven straight off the live in-memory IR.
+> An edit propagates to the preview frame with **NO save and NO `melt` round-trip**
+> (verified: a `lift`/`slip` through the editor hook recomposites the canvas, `0`
+> `proxy-render`, `0` `save`, `0` `still`). It sits OVER the Move-0/1 core and
+> EXTENDS the Move-5 viewer + Remotion seam; it changes **nothing** in `src/ir`,
+> `src/ops`, `src/diagnostics`, or `src/driver`, and it does not move the `melt`
+> boundary (the only `src/` additions are the read-side `src/preview/source-proxy.ts`
+> short-GOP encoder + COOP/COEP/CORP headers + a session `revision`).
+>
+> **What shipped, by §9 build order (all green unless noted):**
+> | Step | Lands in | Gate evidence |
+> |---|---|---|
+> | 0 · session `revision` + COOP/COEP/CORP | `src/preview/{session,server}.ts` | `revision` bumps per op/undo; served viewer `crossOriginIsolated === true`; CORP/COOP/COEP headers asserted |
+> | 1 · keyframe resolver JS port | `viewer/src/keyframes.ts` | `tests/keyframes-port.test.ts` (89) runs core + port over the SHARED `keyframe-vectors.ts` — byte-for-byte |
+> | 2 · Tier 0 source-frame `<video>` | `viewer/src/resolveVisible.ts` | `tests/resolve-visible.test.ts` (14); superseded as the realtime source by Tier 1 (proxy-render kept only as a fallback) |
+> | 3 · mediabunny decode layer | `viewer/src/decode/{decode-worker,parallelDecoder}.ts` | mediabunny **inlined in the worker bundle, zero CDN refs**; `window.__veanDecode` decode-proof bridge |
+> | 4 · Tier 1 `renderFrame(ir,frame)` | `viewer/src/{resolveLayers,compositor/glCompositor}.ts` | demo.mlt previews fully in-browser — f45 `#0e5c63` (vs GATE-MOVE5 `#0d5c61`, within scaler drift §8.1), lower-third on top, **0 proxy-render**; `tests/resolve-layers.test.ts` (13) |
+> | 5 · Tier 2a perf | `viewer/src/decode/frameCache.ts` + worker pool | drive perf: composite median **0.05 ms/frame**, cache hitRate **0.998**, byte-bounded at 522/524 MB with `close()`-on-evict (6763 evicts, no leak), 4 workers, 0 stale-dropped; short-GOP H.264 proxy `-g 15` confirmed via ffprobe; `tests/frame-cache.test.ts` (12) |
+> | 6 · Tier 2b audio + melt-still | `viewer/src/{audio/audioGraph,resolveAudio}.ts` | AudioGraph 48 kHz slaved to clock; `window.__veanApprox` exact-still bridge (`requestExactStill`); `tests/resolve-audio.test.ts` (8) |
+>
+> **Tier-by-tier:** Tier 0 **green** (subsumed by Tier 1). Tier 1 **green** (multi-track
+> over-composite + dissolve + Remotion overlay, drive-proven on `corpus/demo/demo.mlt`
+> AND `projects/retire`). Tier 2a **green** (perf + bounded memory measured under the
+> budget). Tier 2b **green for video-locked audio + the on-demand still affordance**;
+> the longer-soak A/V-drift-over-minutes assertion (§8.6) is exercised structurally,
+> not yet over a literal multi-minute headless play.
+>
+> **Honest residuals** (the §8 hard parts, by design, not regressions): preview ≠
+> export by construction (§8.1 — never asserted against browser pixels; `melt` +
+> still-compare stays ground truth); per-filter effect parity is ongoing (§8.4 — the
+> §7 `approximate` rows fall back to an on-demand `melt` still); HEVC stays
+> proxy-only (§8.2). Root `bun run lint` reports pre-existing failures in unrelated
+> `src/{cli,conform,state}` files (the `feat(state)` commit), NOT in any live-preview
+> file; `viewer/` is biome-excluded by config and gated by `tsc` + `vite build`.
 
 The load-bearing principle, stated once: **state is the source of truth in
 memory; the playhead frame is pulled on demand; `melt` is a separate, slow,
@@ -297,6 +325,14 @@ an unverified tier.
 
 ### Tier 0 — cuts/layout liveness via source-frame seeking (the smallest real win)
 
+> **SHIPPED (green, subsumed by Tier 1).** `viewer/src/resolveVisible.ts` answers the
+> "which source clip + source frame is live at the playhead" walk; `revision` drives
+> the re-resolve. Tier 1's compositor superseded the pooled-`<video>` presentation,
+> so the realtime footage source is now the WebGL2 canvas, never `proxy-render`
+> (which survives only as the §6.3 fallback). The acceptance gate below is met by the
+> Tier-1 drive runs (zero `proxy-render`/`melt` on edit; edit→repaint within the
+> debounce window).
+
 **Goal:** kill the `melt`-proxy-for-preview round-trip for the common case —
 single-clip-at-a-time footage, cuts, trims, ripple, track layout — using one
 `<video>` per source seeked by source-time, no compositor yet.
@@ -327,6 +363,16 @@ preview `<video>` lands on the new source frame within one debounce window. A
 (modulo scaler/color drift — §7). Wall-clock from edit→repaint < 150ms.
 
 ### Tier 1 — the browser multi-track + transition + Remotion-overlay compositor
+
+> **SHIPPED (green).** `viewer/src/compositor/glCompositor.ts` (WebGL2 stage, z-order
+> quads, premultiplied-alpha over-composite, gl-transitions fade/luma) +
+> `viewer/src/resolveLayers.ts` (the `walkTrack`-mirroring multi-track + dissolve +
+> fade/opacity resolver). Drive-proven on **two** projects: `corpus/demo/demo.mlt`
+> (footage cross-fade + LowerThird graphic overlay via the Remotion `<Player>`) AND
+> `projects/retire` (PXL footage base + a **baked** `chat.mov` overlay the footage
+> compositor decodes — the load-bearing correction in commit `ba0948c`: a non-graphic
+> over-composite clip is decoded, not handed to the `<Player>`). Both composite the
+> overlay on top of live footage with **zero `proxy-render`**.
 
 **Goal:** the real `renderFrame(ir, frame)` — multiple video tracks, dissolves and
 field transitions, per-clip fades/filters, with the Remotion overlay on top — all
@@ -364,6 +410,19 @@ browser compositor with **no `melt` call**. A two-track dissolve scrubs frame-ex
 across the overlap. Zero `proxy-render` requests during the session.
 
 ### Tier 2 — performance: decode-ahead, LRU, workers, proxies, melt render-cache
+
+> **SHIPPED — 2a green, 2b green-with-one-residual.** 2a: `viewer/src/decode/frameCache.ts`
+> (byte-bounded LRU, `close()`-on-evict/replace, integer-frame decode-ahead) +
+> `viewer/src/decode/parallelDecoder.ts` (4-worker pool, generation-counter stale-seek
+> cancel) + `src/preview/source-proxy.ts` (short-GOP `-g 15` / all-intra H.264 960×540
+> proxy, ffprobe-confirmed). Measured on `projects/retire`: composite **0.05 ms median**,
+> cache **0.998** hit-rate, resident bytes held under the 524 MB cap with evicts ≈ inserts
+> (no leak), 0 stale-dropped at rest. 2b: `viewer/src/audio/audioGraph.ts` +
+> `resolveAudio.ts` (Web Audio graph, clock time base → `AudioContext.currentTime`) and
+> the `window.__veanApprox.requestExactStill` on-demand `melt`-still fallback for
+> `approximate`-flagged services. **Residual:** the literal multi-minute A/V-drift soak
+> (§8.6) is covered structurally (rational clock, per-clip scheduling), not yet by a real
+> 2-minute headless playthrough.
 
 **Goal:** hit the ~16ms/frame budget under playback and heavy scrubbing, on real
 footage, and degrade gracefully past it.
