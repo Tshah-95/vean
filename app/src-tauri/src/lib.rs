@@ -74,20 +74,67 @@ fn free_port() -> std::io::Result<u16> {
     Ok(listener.local_addr()?.port())
 }
 
-/// Spawn `vean preview` against `project`, bound to `port`. The viewer it serves is
-/// read from `<repo>/viewer/dist`.
-fn spawn_sidecar(project: &PathBuf, port: u16) -> std::io::Result<Child> {
+/// Resolve the bundled renderer sidecars and return the env that points the driver
+/// (`src/driver/melt.ts` → `resolveBin`) at them: VEAN_MELT/FFMPEG/FFPROBE plus the
+/// MLT_* module/profile/data dirs. Empty when no bundle is present — dev on a
+/// Homebrew machine then falls back to system melt/ffmpeg. In a packaged `.app` the
+/// binaries live in `Contents/MacOS` (Tauri strips the target-triple suffix) with
+/// data under `Contents/Resources/sidecars`; in a source tree they're under
+/// `app/src-tauri/sidecars/bin` carrying the `-<triple>` suffix.
+fn renderer_env(app: &AppHandle) -> Vec<(String, String)> {
+    let triple = "aarch64-apple-darwin";
+    // (bin_dir, sidecars_root) candidates, packaged first then the dev tree.
+    let mut roots: Vec<(PathBuf, PathBuf)> = Vec::new();
+    if let Ok(res) = app.path().resource_dir() {
+        roots.push((res.join("..").join("MacOS"), res.join("sidecars")));
+        roots.push((res.join("sidecars").join("bin"), res.join("sidecars")));
+    }
+    let dev = vean_repo().join("app").join("src-tauri").join("sidecars");
+    roots.push((dev.join("bin"), dev));
+
+    for (bin_dir, sidecars) in roots {
+        for (suffix, melt_name) in [
+            (format!("-{triple}"), format!("melt-{triple}")),
+            (String::new(), "melt".to_string()),
+        ] {
+            let melt = bin_dir.join(&melt_name);
+            let lib_mlt = sidecars.join("lib").join("mlt");
+            let data = sidecars.join("share").join("mlt");
+            if melt.exists() && lib_mlt.is_dir() && data.is_dir() {
+                let s = |p: PathBuf| p.to_string_lossy().into_owned();
+                return vec![
+                    ("VEAN_MELT".into(), s(melt)),
+                    ("VEAN_FFMPEG".into(), s(bin_dir.join(format!("ffmpeg{suffix}")))),
+                    ("VEAN_FFPROBE".into(), s(bin_dir.join(format!("ffprobe{suffix}")))),
+                    ("MLT_REPOSITORY".into(), s(lib_mlt)),
+                    ("MLT_DATA".into(), s(data.clone())),
+                    ("MLT_PROFILES_PATH".into(), s(data.join("profiles"))),
+                    ("MLT_PRESETS_PATH".into(), s(data.join("presets"))),
+                ];
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// Spawn `vean preview` against `project`, bound to `port`, with the renderer env
+/// (bundled sidecars or, when empty, system deps). The viewer it serves is read
+/// from `<repo>/viewer/dist`.
+fn spawn_sidecar(project: &PathBuf, port: u16, env: &[(String, String)]) -> std::io::Result<Child> {
     let cli = vean_repo().join("src").join("cli.ts");
-    Command::new(vean_bin())
-        .arg(cli)
+    let mut cmd = Command::new(vean_bin());
+    cmd.arg(cli)
         .arg("preview")
         .arg("--no-open")
         .arg("--port")
         .arg(port.to_string())
         .arg("--repo")
         .arg(project)
-        .current_dir(project)
-        .spawn()
+        .current_dir(project);
+    for (key, value) in env {
+        cmd.env(key, value);
+    }
+    cmd.spawn()
 }
 
 /// Block until the sidecar port accepts connections (or time out after ~15s). Once
@@ -122,7 +169,8 @@ fn navigate_to_sidecar(app: &AppHandle, port: u16) {
 /// webview once the new server is up. Returns the bound port.
 fn restart_sidecar(app: &AppHandle, project: PathBuf) -> Result<u16, String> {
     let port = free_port().map_err(|e| e.to_string())?;
-    let child = spawn_sidecar(&project, port).map_err(|e| e.to_string())?;
+    let env = renderer_env(app);
+    let child = spawn_sidecar(&project, port, &env).map_err(|e| e.to_string())?;
     {
         let state = app.state::<AppState>();
         let mut guard = state.sidecar.lock().map_err(|e| e.to_string())?;

@@ -24,8 +24,17 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app"],
-    "externalBin": [],
-    "resources": ["sidecars/README.md"]
+    "targets": ["app", "dmg"],
+    "externalBin": ["sidecars/bin/melt", "sidecars/bin/ffmpeg", "sidecars/bin/ffprobe"],
+    "resources": [
+      "sidecars/lib/",
+      "sidecars/share/",
+      "sidecars/licenses/",
+      "sidecars/MANIFEST.json",
+      "sidecars/README.md"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    }
   }
 }
