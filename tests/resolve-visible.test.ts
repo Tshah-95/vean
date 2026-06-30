@@ -4,10 +4,7 @@ import { describe, expect, it } from "vitest";
 // tsconfig, but resolveVisible.ts is a pure ESM module (no Node/DOM), so vitest
 // imports and exercises it directly — the golden unit gate for Tier-0 liveness
 // (DESIGN-LIVE-PREVIEW §6 Tier 0, §9 step 2).
-import {
-  resolveVisibleOnTrack,
-  resolveVisibleSet,
-} from "../viewer/src/resolveVisible";
+import { resolveVisibleOnTrack, resolveVisibleSet } from "../viewer/src/resolveVisible";
 import type { Timeline, Track } from "../viewer/src/types";
 
 const FPS: [number, number] = [30, 1];
@@ -101,7 +98,14 @@ describe("resolveVisibleOnTrack: blanks, graphics, hidden tracks", () => {
 
   it("skips a clip labelled graphic:", () => {
     const track = videoTrack("GFX", [
-      { kind: "clip", id: "g", resource: "/p/renders/chat.mov", in: 0, out: 99, label: "graphic:chat" },
+      {
+        kind: "clip",
+        id: "g",
+        resource: "/p/renders/chat.mov",
+        in: 0,
+        out: 99,
+        label: "graphic:chat",
+      },
     ]);
     expect(resolveVisibleOnTrack(tl([track]), 0, 10)).toBeNull();
   });
