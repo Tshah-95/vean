@@ -101,3 +101,28 @@ export async function redoEdit(route?: string): Promise<SessionEditResult> {
 export async function saveTimeline(route?: string): Promise<SaveResult> {
   return postJson<SaveResult>("/api/save", { route });
 }
+
+// ─── Generic action bridge ───────────────────────────────────────────────────
+// Every product panel (media, jobs, render, project) calls registered actions
+// through one endpoint rather than a bespoke fetch per feature. The server runs
+// the SAME `executeAction` the CLI/MCP/Tauri use; this just returns its `output`.
+
+/** Run any registered vean action through the local action bridge. Returns the
+ *  action's typed `output`; throws on a non-ok envelope (validation/policy/exec). */
+export async function runAction<T = unknown>(
+  id: string,
+  input?: unknown,
+  project?: string,
+): Promise<T> {
+  const res = await fetch("/api/action", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id, input, project }),
+  });
+  const env = (await res.json()) as { ok: true; output: T } | ApiError;
+  if (!res.ok || (env as ApiError).ok === false) {
+    const err = env as ApiError;
+    throw new Error(`${err.kind ?? res.status}: ${err.detail ?? res.statusText}`);
+  }
+  return (env as { ok: true; output: T }).output;
+}

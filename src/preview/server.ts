@@ -12,6 +12,9 @@
 //   GET  /api/timelines                   → { timelines: [...] }
 //   GET  /api/timeline?route=timeline:main→ parsed IR + { resolvedPath, fps, totalFrames }
 //   GET  /api/diagnostics?route=…         → { health, diagnostics }
+//   POST /api/action {id,input?,project?}  → the whole action registry over local
+//                                            IPC (ActionEnvelope) — every product
+//                                            panel is action-backed, no per-feature endpoint
 //   POST /api/proxy-render {route,scale?} → { ok, proxyUrl, fps, totalFrames, width, height, cached }
 //   GET  /api/proxy/:key.mp4              → streams the cached proxy (Range-capable)
 //   GET  /api/overlay/:key.mov            → streams a Remotion overlay clip (Range-capable)
@@ -26,6 +29,7 @@
 //                                           { ok, path } | { ok:false, … }
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
+import { createActionContext, executeAction } from "../actions";
 import { collectDiagnostics, summarize } from "../diagnostics";
 import { VERSION } from "../index";
 import { fromMlt } from "../ir/parse";
@@ -45,6 +49,11 @@ import {
   undoSession,
 } from "./session";
 import type { TimelineSession } from "./session";
+
+/** Actions that block their caller indefinitely and so must not be invoked through
+ *  the synchronous `/api/action` bridge (the viewer is already hosted by a preview
+ *  server; `preview.serve` would spin a second one and hang this request). */
+const BLOCKING_ACTIONS = new Set<string>(["preview.serve"]);
 
 export type PreviewServerOptions = {
   repo: string;
@@ -266,6 +275,46 @@ export function createPreviewHandler(
       if ("error" in read) return read.error;
       const diagnostics = collectDiagnostics(read.timeline);
       return jsonResponse({ ok: true, health: summarize(diagnostics), diagnostics });
+    }
+
+    // ── Generic action bridge ──────────────────────────────────────────────
+    // The whole action registry over local IPC: the same `executeAction` the CLI,
+    // MCP, and Tauri app call, projected to the hosted UI so every product panel
+    // (media browser, jobs/activity, render/still, project dashboard) is
+    // action-backed rather than growing a bespoke endpoint per feature. Body:
+    //   POST /api/action { id, input?, project? } → ActionEnvelope (200 always; the
+    //                                               envelope's `ok` carries success)
+    // Long-blocking server actions are refused (the viewer is ALREADY hosted by a
+    // preview server; spinning a second one would hang this request thread).
+    if (path === "/api/action" && req.method === "POST") {
+      let body: { id?: string; input?: unknown; project?: string } = {};
+      try {
+        body = (await req.json()) as typeof body;
+      } catch {
+        return jsonResponse({ ok: false, kind: "invalid-args", detail: "body must be JSON" }, 400);
+      }
+      if (typeof body.id !== "string" || body.id.length === 0) {
+        return jsonResponse({ ok: false, kind: "invalid-args", detail: "id is required" }, 400);
+      }
+      if (BLOCKING_ACTIONS.has(body.id)) {
+        return jsonResponse(
+          {
+            ok: false,
+            actionId: body.id,
+            kind: "policy",
+            detail: `${body.id} blocks the server; not callable through /api/action`,
+          },
+          422,
+        );
+      }
+      const ctx = createActionContext({
+        cwd: repo,
+        surface: "tauri",
+        project: body.project ?? repo,
+        env: process.env,
+      });
+      const envelope = await executeAction(body.id, body.input ?? {}, ctx);
+      return jsonResponse(envelope);
     }
 
     // ── Write-back / undo / redo / save (in-memory working copy) ────────────
