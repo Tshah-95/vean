@@ -38,6 +38,28 @@ Consequence:
 So "drive the app" == "drive `vean preview` in a real browser." Headful only buys
 you a visible window; the proof is identical.
 
+## ⛔ HEADLESS IS NON-NEGOTIABLE — never open a visible window
+
+A headed browser on macOS **steals the user's focus on every command** ("takes
+over the computer every half-second"). This is a hard rule:
+
+- **Never pass `--headed`.** Not for "debugging", not "just this once". If a
+  screenshot/snapshot isn't enough to see what's wrong, take a `--full` screenshot
+  or `get html`/`get styles` — do not open a window.
+- Headless is enforced by config: this repo ships `agent-browser.json`
+  (`{"headed": false}`) and there's a global `~/.agent-browser/config.json` too. Do
+  not remove or override them.
+- **The footgun that bit us:** `agent-browser` runs a **persistent daemon** that
+  survives across invocations. If a *prior* session (in any repo) left the daemon
+  running **headed**, your next `open` reattaches to that visible window and every
+  command re-raises it. If you ever see a window, kill the daemon and restart:
+  ```bash
+  pkill -9 -f agent-browser            # nuke the daemon (and its browser)
+  # then re-run; the config forces the fresh daemon headless
+  ```
+- The only legitimate `--headed` use anywhere is a human-driven OAuth login — which
+  does not apply to vean's loopback viewer (no auth). So here: **never.**
+
 ## The harness (three commands)
 
 ```bash
@@ -53,7 +75,8 @@ agent-browser --session vean find text "Render" click
 agent-browser --session vean screenshot "$TMPDIR/drive-render-panel.png"
 
 # 3. Tear down (kills the sidecar, clears the session). ALWAYS do this.
-bun run drive down
+agent-browser --session vean close      # close the browser session
+bun run drive down                      # stop the preview sidecar
 ```
 
 `bun run drive` is `scripts/drive.ts` — it owns only the server lifecycle
