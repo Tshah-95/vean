@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describeAction, listActions } from "../src/actions";
+import { projectTauriActions } from "../src/actions/tauri-projection";
 
 type Check = {
   name: string;
@@ -152,6 +153,20 @@ function appChecks(options: { native?: boolean } = {}): Check[] {
       "actions:registry",
       hasTauriProjection ? "pass" : "fail",
       `action registry exposes ${descriptors.length} descriptors for app wiring`,
+    ),
+  );
+
+  // The Tauri projection must cover every registered action (one generic
+  // `run_action` command per id) so the app never grows a second runtime.
+  const tauriActions = projectTauriActions();
+  const fullyProjected =
+    tauriActions.length === descriptors.length &&
+    tauriActions.every((action) => action.command === "run_action");
+  checks.push(
+    check(
+      "actions:tauri-projection",
+      fullyProjected ? "pass" : "fail",
+      `action registry projects ${tauriActions.length}/${descriptors.length} actions to the run_action bridge`,
     ),
   );
 

@@ -1,8 +1,9 @@
 :root {
-  color: #1d1d1f;
-  background: #f7f7f4;
+  color: #e8e8ea;
+  background: #161618;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
+  color-scheme: dark;
 }
 
 body {
@@ -15,20 +16,40 @@ main {
   place-items: center;
 }
 
-section {
-  width: min(720px, calc(100vw - 48px));
+.splash {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  text-align: center;
 }
 
-h1 {
-  margin: 0 0 16px;
-  font-size: 32px;
+.splash h1 {
+  margin: 0;
+  font-size: 28px;
   font-weight: 650;
+  letter-spacing: 0.01em;
 }
 
-pre {
-  overflow: auto;
-  border: 1px solid #d8d8d0;
-  border-radius: 8px;
-  padding: 16px;
-  background: #ffffff;
+.splash p {
+  margin: 0;
+  max-width: 420px;
+  color: #9a9aa2;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid #2c2c30;
+  border-top-color: #7c8cff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }

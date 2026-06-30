@@ -1,16 +1,328 @@
+// vean local Mac app — V1 thin consumer shell (Move 4, slice 1).
+//
+// The app owns NO domain logic. It is a native shell that consumes the SAME
+// surfaces the CLI / MCP / LSP do:
+//
+//   • a SIDECAR SUPERVISOR spawns `vean preview` (the `preview.serve` action) bound
+//     to a free 127.0.0.1 port, waits for it to listen, and kills it on exit /
+//     project switch — the one real "background" primitive the app adds;
+//   • the main webview NAVIGATES to that sidecar URL, so the existing `viewer/`
+//     renders the real timeline + composited preview with ZERO app-side UI;
+//   • native macOS menu gestures route through the action runtime: "Open Project
+//     Folder…" restarts the sidecar against a real folder picked in Finder (the
+//     file-path-native win — no route-alias ceremony), and every registered action
+//     is reachable through the generic `run_action` bridge that shells to
+//     `vean action run <id> --json`.
+//
+// Transport posture (V1): sidecar HTTP. Structured actions can migrate to `invoke`
+// incrementally behind viewer/src/api.ts; media stays on loopback HTTP because
+// WKWebView's custom-scheme handler is the weak link for <video> Range seeking.
+
+use std::path::PathBuf;
+use std::process::{Child, Command};
+use std::sync::Mutex;
+use std::time::Duration;
+
+use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::{AppHandle, Manager, State};
+use tauri_plugin_dialog::DialogExt;
+
+/// The live preview sidecar: the child process, the port it bound, and the project
+/// root it was started against.
+struct Sidecar {
+    child: Option<Child>,
+    port: u16,
+    project: PathBuf,
+}
+
+impl Drop for Sidecar {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+        }
+    }
+}
+
+#[derive(Default)]
+struct AppState {
+    sidecar: Mutex<Option<Sidecar>>,
+}
+
+/// The vean repo root. Dev-from-source resolves it from the crate manifest dir
+/// (`<repo>/app/src-tauri` → `<repo>`); `VEAN_REPO` overrides for other layouts
+/// (e.g. a bundled app pointing at an installed checkout).
+fn vean_repo() -> PathBuf {
+    if let Ok(repo) = std::env::var("VEAN_REPO") {
+        return PathBuf::from(repo);
+    }
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest
+        .join("..")
+        .join("..")
+        .canonicalize()
+        .unwrap_or(manifest)
+}
+
+/// The runtime that runs the vean CLI (`bun` by default; `VEAN_BIN` overrides).
+fn vean_bin() -> String {
+    std::env::var("VEAN_BIN").unwrap_or_else(|_| "bun".to_string())
+}
+
+/// Ask the OS for a free loopback port by binding :0 and reading it back.
+fn free_port() -> std::io::Result<u16> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    Ok(listener.local_addr()?.port())
+}
+
+/// Spawn `vean preview` against `project`, bound to `port`. The viewer it serves is
+/// read from `<repo>/viewer/dist`.
+fn spawn_sidecar(project: &PathBuf, port: u16) -> std::io::Result<Child> {
+    let cli = vean_repo().join("src").join("cli.ts");
+    Command::new(vean_bin())
+        .arg(cli)
+        .arg("preview")
+        .arg("--no-open")
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--repo")
+        .arg(project)
+        .current_dir(project)
+        .spawn()
+}
+
+/// Block until the sidecar port accepts connections (or time out after ~15s). Once
+/// the Bun server is listening it can serve viewer/dist + the read API immediately.
+fn wait_for_port(port: u16) -> bool {
+    for _ in 0..150 {
+        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    false
+}
+
+/// Point the main webview at the sidecar URL once it is reachable. Full-window
+/// navigation (not an iframe) keeps the viewer page a plain http origin, sidesteps
+/// secure-context mixed-content blocking, and lets native menu gestures stay
+/// Rust-side (so they survive the navigation away from the app shell).
+fn navigate_to_sidecar(app: &AppHandle, port: u16) {
+    if !wait_for_port(port) {
+        return;
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        if let Ok(url) = format!("http://127.0.0.1:{port}/").parse() {
+            let _ = window.navigate(url);
+        }
+    }
+}
+
+/// Start (or restart) the sidecar against `project`: replace any existing child
+/// (dropping it kills the old process), pick a fresh port, spawn, and navigate the
+/// webview once the new server is up. Returns the bound port.
+fn restart_sidecar(app: &AppHandle, project: PathBuf) -> Result<u16, String> {
+    let port = free_port().map_err(|e| e.to_string())?;
+    let child = spawn_sidecar(&project, port).map_err(|e| e.to_string())?;
+    {
+        let state = app.state::<AppState>();
+        let mut guard = state.sidecar.lock().map_err(|e| e.to_string())?;
+        // Replacing the Option drops the previous Sidecar → kills the old child.
+        *guard = Some(Sidecar {
+            child: Some(child),
+            port,
+            project,
+        });
+    }
+    let app = app.clone();
+    std::thread::spawn(move || navigate_to_sidecar(&app, port));
+    Ok(port)
+}
+
+/// The active project root, or the repo root if no project is selected yet.
+fn active_project(app: &AppHandle) -> PathBuf {
+    app.state::<AppState>()
+        .sidecar
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|s| s.project.clone()))
+        .unwrap_or_else(vean_repo)
+}
+
+/// Run a vean action through the canonical CLI escape hatch and return its parsed
+/// envelope (`{ ok, actionId, output, project }`). Shells to
+/// `vean action run <id> --input-json <json> --json` with cwd = the active project
+/// so project context resolves correctly. This is the GENERIC bridge: one path
+/// projects every registered action, with no per-action Rust.
+fn run_action_internal(
+    project: &PathBuf,
+    id: &str,
+    input: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let cli = vean_repo().join("src").join("cli.ts");
+    let output = Command::new(vean_bin())
+        .arg(cli)
+        .arg("action")
+        .arg("run")
+        .arg(id)
+        .arg("--input-json")
+        .arg(input.to_string())
+        .arg("--json")
+        .current_dir(project)
+        .output()
+        .map_err(|e| e.to_string())?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    serde_json::from_str::<serde_json::Value>(stdout.trim())
+        .map_err(|e| format!("could not parse action envelope: {e}\nstdout: {stdout}"))
+}
+
+// ── invoke commands (app shell + future hybrid transport) ───────────────────
+
+/// The port the preview sidecar bound, for the splash to display while Rust
+/// navigates the window.
 #[tauri::command]
-fn action_runtime_boundary() -> serde_json::Value {
-    serde_json::json!({
-        "ok": true,
-        "surface": "tauri",
-        "boundary": "registered-actions"
-    })
+fn preview_port(state: State<AppState>) -> Option<u16> {
+    state.sidecar.lock().ok().and_then(|g| g.as_ref().map(|s| s.port))
+}
+
+/// Generic action bridge exposed to the webview. The end-state hybrid transport
+/// moves structured action calls here from HTTP; V1 wires it for completeness and
+/// the native gestures below use the same `run_action_internal`.
+#[tauri::command]
+fn run_action(
+    app: AppHandle,
+    id: String,
+    input: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let project = active_project(&app);
+    run_action_internal(&project, &id, &input.unwrap_or_else(|| serde_json::json!({})))
+}
+
+// ── native menu gestures (handled Rust-side; survive webview navigation) ────
+
+/// "Open Project Folder…" — pick a real folder in Finder and restart the editor
+/// against it. THE file-path-native win: no route-alias ceremony, the user points
+/// at an actual directory and the sidecar resolves the project there.
+fn open_project_flow(app: &AppHandle) {
+    let Some(folder) = app.dialog().file().blocking_pick_folder() else {
+        return;
+    };
+    let Ok(path) = folder.into_path() else {
+        return;
+    };
+    if let Err(err) = restart_sidecar(app, path) {
+        let _ = app
+            .dialog()
+            .message(format!("Could not open project: {err}"))
+            .title("vean")
+            .blocking_show();
+    }
+}
+
+/// "Add Media Root…" — pick a folder and register it as a project media root via
+/// the action runtime, exercising the generic `run_action` bridge end-to-end with
+/// a real native path.
+fn add_media_root_flow(app: &AppHandle) {
+    let Some(folder) = app.dialog().file().blocking_pick_folder() else {
+        return;
+    };
+    let Ok(path) = folder.into_path() else {
+        return;
+    };
+    let project = active_project(app);
+    let input = serde_json::json!({ "path": path.to_string_lossy() });
+    let message = match run_action_internal(&project, "media.root.add", &input) {
+        Ok(env) if env.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) => format!(
+            "Added media root:\n{}",
+            serde_json::to_string_pretty(env.get("output").unwrap_or(&env)).unwrap_or_default()
+        ),
+        Ok(env) => format!("media.root.add failed:\n{env}"),
+        Err(err) => format!("media.root.add error:\n{err}"),
+    };
+    let _ = app.dialog().message(message).title("vean").blocking_show();
+}
+
+/// "Project Info" — read-only proof of the generic action bridge.
+fn project_info_flow(app: &AppHandle) {
+    let project = active_project(app);
+    let message = match run_action_internal(&project, "project.current", &serde_json::json!({})) {
+        Ok(env) => serde_json::to_string_pretty(&env).unwrap_or_else(|_| env.to_string()),
+        Err(err) => format!("error: {err}"),
+    };
+    let _ = app
+        .dialog()
+        .message(message)
+        .title("Current project")
+        .blocking_show();
+}
+
+/// Build the macOS menu and route its events to the gesture handlers. Dialogs block,
+/// so each handler runs on its own thread (off the menu-event/main thread).
+fn install_menu(app: &AppHandle) -> tauri::Result<()> {
+    let open_project = MenuItemBuilder::with_id("open_project", "Open Project Folder…")
+        .accelerator("CmdOrCtrl+O")
+        .build(app)?;
+    let add_media = MenuItemBuilder::with_id("add_media_root", "Add Media Root…").build(app)?;
+    let project_info = MenuItemBuilder::with_id("project_info", "Project Info").build(app)?;
+
+    let app_menu = SubmenuBuilder::new(app, "vean")
+        .about(None)
+        .separator()
+        .quit()
+        .build()?;
+    let file_menu = SubmenuBuilder::new(app, "File")
+        .item(&open_project)
+        .item(&add_media)
+        .separator()
+        .item(&project_info)
+        .build()?;
+    let edit_menu = SubmenuBuilder::new(app, "Edit")
+        .undo()
+        .redo()
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .select_all()
+        .build()?;
+
+    let menu = MenuBuilder::new(app)
+        .items(&[&app_menu, &file_menu, &edit_menu])
+        .build()?;
+    app.set_menu(menu)?;
+    app.on_menu_event(move |app, event| {
+        let app = app.clone();
+        match event.id().as_ref() {
+            "open_project" => {
+                std::thread::spawn(move || open_project_flow(&app));
+            }
+            "add_media_root" => {
+                std::thread::spawn(move || add_media_root_flow(&app));
+            }
+            "project_info" => {
+                std::thread::spawn(move || project_info_flow(&app));
+            }
+            _ => {}
+        }
+    });
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![action_runtime_boundary])
+        .plugin(tauri_plugin_dialog::init())
+        .manage(AppState::default())
+        .invoke_handler(tauri::generate_handler![preview_port, run_action])
+        .setup(|app| {
+            let handle = app.handle().clone();
+            install_menu(&handle)?;
+            // Boot the sidecar against the repo root as the default project; the user
+            // switches via File → Open Project Folder….
+            if let Err(err) = restart_sidecar(&handle, vean_repo()) {
+                eprintln!("vean: failed to start preview sidecar: {err}");
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running vean app");
 }
