@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readdirSync, statSync } from "node:fs";
 import { basename, extname, join, relative, resolve } from "node:path";
 import { and, eq, like, sql } from "drizzle-orm";
+import { contentHash, probeFactsFromSource, probeSource } from "../driver/probe";
 import { openStateDb } from "./db";
 import { initializeProject } from "./project";
 import { mediaAssets, mediaRoots, routeAliases } from "./schema";
@@ -260,6 +261,77 @@ export function setMediaProbe(
     handle.db
       .update(mediaAssets)
       .set({ probeJson: JSON.stringify(probe), updatedAt: nowIso() })
+      .where(and(eq(mediaAssets.projectId, project.id), eq(mediaAssets.id, id)))
+      .run();
+    return handle.db
+      .select()
+      .from(mediaAssets)
+      .where(and(eq(mediaAssets.projectId, project.id), eq(mediaAssets.id, id)))
+      .get();
+  } finally {
+    handle.sqlite.close();
+  }
+}
+
+/**
+ * Probe one cataloged asset with ffprobe + a content hash and persist the typed
+ * facts (duration, rational fps, resolution, audio-stream count, colorspace, hash,
+ * last-probe timestamp) plus the verbatim `probeJson` blob. Cache/coordination state
+ * only — the file on disk stays the source of truth.
+ *
+ * Probing is I/O (ffprobe spawn + a whole-file hash read) and runs OUTSIDE any DB
+ * transaction (the local-state concurrency rule: never hold a transaction while
+ * probing media); the write that follows is a single short UPDATE. Returns the
+ * updated row, or `undefined` if the id is unknown. An unprobeable file (missing /
+ * no streams) still records a `probedAt` with null facts, so a re-scan can tell
+ * "probed, nothing there" from "never probed".
+ */
+export async function probeAndCatalogAsset(
+  repo: string,
+  id: string,
+): Promise<MediaAssetRecord | undefined> {
+  const project = initializeProject(repo);
+
+  // Read the asset's path under a short-lived handle, then CLOSE it before probing.
+  const asset = (() => {
+    const handle = openStateDb(project.rootPath);
+    try {
+      return handle.db
+        .select()
+        .from(mediaAssets)
+        .where(and(eq(mediaAssets.projectId, project.id), eq(mediaAssets.id, id)))
+        .get();
+    } finally {
+      handle.sqlite.close();
+    }
+  })();
+  if (!asset) return undefined;
+
+  // I/O — no DB handle open here.
+  const probe = await probeSource(asset.path);
+  const hash = contentHash(asset.path);
+  const facts = probeFactsFromSource(probe, hash);
+
+  // Short write: the typed columns + the verbatim blob (`{}` when unprobeable).
+  const handle = openStateDb(project.rootPath);
+  try {
+    handle.db
+      .update(mediaAssets)
+      .set({
+        durationSec: facts.durationSec,
+        fpsNum: facts.fpsNum,
+        fpsDen: facts.fpsDen,
+        width: facts.width,
+        height: facts.height,
+        audioStreams: facts.audioStreams,
+        colorSpace: facts.colorSpace,
+        colorTransfer: facts.colorTransfer,
+        colorPrimaries: facts.colorPrimaries,
+        contentHash: facts.contentHash,
+        probedAt: facts.probedAt,
+        probeJson: probe ? JSON.stringify(probe) : "{}",
+        updatedAt: nowIso(),
+      })
       .where(and(eq(mediaAssets.projectId, project.id), eq(mediaAssets.id, id)))
       .run();
     return handle.db

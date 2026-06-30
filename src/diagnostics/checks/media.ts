@@ -23,12 +23,16 @@
 //     flagged. Uncertainty is silence.
 //
 // FINALIZED SIGNATURE. `media: Checker` is the stable registry contract; the
-// in-IR rules below are LIVE. The two rules that genuinely need I/O — a dangling
-// FILE ref (the path is gone from disk) and upscaling from a SMALLER SOURCE (the
-// file's pixel dimensions) — stay the DRIVER's job (see the `// TODO(driver)`
-// markers); this checker handles the in-IR slice of each (an EMPTY resource; an
-// explicit over-canvas scale FILTER) so the moment the driver lands its probe the
-// two halves compose under one code family.
+// in-IR rules below are LIVE. The rules that genuinely need I/O — a dangling FILE
+// ref (the path is gone from disk), upscaling from a SMALLER SOURCE (the file's
+// pixel dimensions), and the SOURCE's real colorspace — are the DRIVER's job and are
+// now LIVE there: `src/driver/probe.ts` exports `danglingFileRefDiagnostic`,
+// `sourceUpscaleDiagnostic`, and `sourceColorspaceDiagnostic`, fed by ffprobe + an
+// fs stat and merged into the set by the driver orchestrator (stamped
+// `source: "probe"`). This checker handles the in-IR slice of each (an EMPTY
+// resource; an explicit over-canvas scale FILTER; an `extraProps` colorspace hint),
+// and the driver slice emits the SAME code family (`upscaling-past-canvas`,
+// `colorspace-mismatch`), so the two halves compose under one code.
 import { FADE_IN_SERVICE, FADE_OUT_SERVICE } from "../../ir/builder";
 import { isAnimated } from "../../ir/keyframes";
 import type { Clip, Filter, Profile, Timeline, Track } from "../../ir/types";
@@ -456,15 +460,19 @@ function checkDialRanges(clip: Clip, track: Track): DiagnosticInput[] {
   return out;
 }
 
-// TODO(driver): dangling FILE ref — the resource is a path that doesn't exist on
-// disk. A filesystem stat, which the diagnostics engine forbids (no I/O). The
-// DRIVER (`src/driver`) probes the media and surfaces a `missing-media-file`
-// Diagnostic through this same type, merged into the set by a caller that has I/O.
-//
-// TODO(driver): upscaling from a SMALLER SOURCE — the source frame is smaller than
-// the canvas, so melt scales it up (soft). Needs the source resolution (an
-// ffprobe); the driver surfaces it under the SAME `upscaling-past-canvas` family
-// as the in-IR scale-filter slice above, so the two compose.
+// DRIVER (now LIVE in `src/driver/probe.ts`): the three I/O-fed slices the pure
+// engine can't raise on its own, each a path-existence / ffprobe fact:
+//   • dangling FILE ref — the resource path is gone from disk (`danglingFileRefDiagnostic`,
+//     code `dangling-file-ref`, an ERROR; the in-IR slice below only catches an
+//     EMPTY resource).
+//   • upscaling from a SMALLER SOURCE — the source frame is smaller than the canvas,
+//     so melt scales it up soft (`sourceUpscaleDiagnostic`, SAME `upscaling-past-canvas`
+//     family as the in-IR scale-filter slice above, so the two compose).
+//   • SOURCE colorspace — the file declares a log / wide-gamut transfer/primaries on
+//     a 709 timeline (`sourceColorspaceDiagnostic`, SAME `colorspace-mismatch` family
+//     as the `extraProps`-hint slice above).
+// The driver orchestrator probes each clip and stamps `source: "probe"`, merging
+// these into the LSP set alongside the pure checkers.
 
 /** A clip with no resource string points at nothing — a structurally dangling
  *  reference detectable WITHOUT I/O (a missing FILE is a driver-layer probe, but
