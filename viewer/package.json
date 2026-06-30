@@ -11,6 +11,7 @@
   "comment": "remotion/@remotion/player/react/react-dom are PINNED to exact versions that MUST match remotion/package.json — the live @remotion/player preview and the ProRes export render the same composition, so they must run the same Remotion/React version. `bun run doctor` asserts this parity; do not loosen to a range without keeping both files in lockstep.",
   "dependencies": {
     "@remotion/player": "4.0.484",
+    "mediabunny": "^1.49.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "remotion": "4.0.484"

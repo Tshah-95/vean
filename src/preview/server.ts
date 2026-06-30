@@ -540,6 +540,46 @@ export function createPreviewHandler(
       return serveFile(resolved, dirname(resolved), req);
     }
 
+    // ── Per-source short-GOP H.264 decode proxy (the LIVE in-browser decode src) ──
+    // GET /api/source-proxy?path=<abs>&route=<r>  → builds (once, cached) a small
+    // short-GOP H.264 proxy of ONE source file and streams it Range-capable. This is
+    // the source the in-browser mediabunny→WebCodecs decoder demuxes (§5, §8.2): the
+    // user's footage is HEVC/ProRes, which WebCodecs can't reliably decode, so the
+    // realtime decode path consumes an `avc1` proxy that decodes everywhere. The
+    // short GOP (`-g 15`) collapses worst-case seek toward a single keyframe.
+    //
+    // SAME ALLOWLIST as /api/media: a request may only build/stream a proxy for a
+    // file the route's LIVE timeline actually references — never an arbitrary disk
+    // path. The transcode shells out to `melt` once; subsequent requests hit the
+    // content-addressed cache. `melt` here is a one-time prep, NOT in the scrub loop.
+    if (path === "/api/source-proxy") {
+      const requested = url.searchParams.get("path");
+      if (!requested) {
+        return jsonResponse({ ok: false, kind: "invalid-args", detail: "path is required" }, 400);
+      }
+      const route = url.searchParams.get("route") ?? defaultRoute ?? undefined;
+      const got = getSession(sessions, repo, route);
+      if ("error" in got) return got.error;
+      const allow = referencedResources(got.session.ir);
+      const resolvedReq = resolve(requested);
+      if (!allow.has(resolvedReq)) {
+        return jsonResponse(
+          { ok: false, kind: "forbidden", detail: "path is not referenced by this timeline" },
+          403,
+        );
+      }
+      try {
+        const { buildSourceProxy } = await import("./source-proxy");
+        const result = await buildSourceProxy(repo, resolvedReq);
+        return serveFile(result.proxyPath, dirname(result.proxyPath), req);
+      } catch (error) {
+        return jsonResponse(
+          { ok: false, kind: "source-proxy", detail: String((error as Error)?.message ?? error) },
+          500,
+        );
+      }
+    }
+
     if (path.startsWith("/api/proxy/")) {
       const name = decodeURIComponent(path.slice("/api/proxy/".length));
       const dir = proxyCacheDir(repo);
