@@ -695,7 +695,7 @@ program
 
       if (opts.view === "browser") {
         console.error(`vean: opening ${label} in the browser on http://127.0.0.1:${opts.port} …`);
-        await runAction("preview.serve", { project: root, port: opts.port, open: true });
+        await runAction("preview.serve", { repo: root, port: opts.port, open: true });
         return;
       }
       if (opts.view !== "app") {
