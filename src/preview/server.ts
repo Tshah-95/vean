@@ -94,6 +94,37 @@ function veanRepoRoot(): string {
   return resolve(new URL("../..", import.meta.url).pathname);
 }
 
+/** Cross-origin isolation headers (DESIGN-LIVE-PREVIEW §8.5). The live-preview
+ *  compositor decodes footage with WebCodecs in workers and (for the Tier-2 audio
+ *  ring buffer) `SharedArrayBuffer`; both are gated behind `crossOriginIsolated`,
+ *  which the browser only grants when the top-level document is served with
+ *  `Cross-Origin-Opener-Policy: same-origin` AND `Cross-Origin-Embedder-Policy:
+ *  require-corp`. Under COEP `require-corp` every subresource the isolated document
+ *  loads (the JS bundle, fonts, the footage/proxy/overlay media streams, the JSON
+ *  API) must itself be CORP-compatible or the browser blocks it — which would
+ *  silently un-isolate the page. The whole preview origin is 127.0.0.1
+ *  same-origin, so stamping `Cross-Origin-Resource-Policy: same-origin` on EVERY
+ *  response (HTML, assets, JSON, Range-streamed media) is the correct, complete
+ *  policy: the document gets COOP+COEP and every subresource is CORP-allowed.
+ *  Applied centrally (see `withCrossOriginIsolation`) so no endpoint can forget it
+ *  and drop isolation. These headers are inert for the current `<video>`/proxy
+ *  preview; they cost nothing and unblock the compositor that replaces it. */
+function applyCrossOriginIsolation(res: Response): Response {
+  res.headers.set("Cross-Origin-Opener-Policy", "same-origin");
+  res.headers.set("Cross-Origin-Embedder-Policy", "require-corp");
+  res.headers.set("Cross-Origin-Resource-Policy", "same-origin");
+  return res;
+}
+
+/** Wrap a request handler so every response it returns carries the cross-origin
+ *  isolation headers. Centralizing this guarantees `crossOriginIsolated === true`
+ *  in the served viewer regardless of which code path produced the Response. */
+function withCrossOriginIsolation(
+  handler: (req: Request) => Promise<Response>,
+): (req: Request) => Promise<Response> {
+  return async (req: Request): Promise<Response> => applyCrossOriginIsolation(await handler(req));
+}
+
 function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), {
     status,
@@ -217,7 +248,7 @@ export function createPreviewHandler(
   // undo/redo history across requests for the lifetime of this preview process.
   const sessions = new SessionStore();
 
-  return async function handle(req: Request): Promise<Response> {
+  const handle = async function handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const path = url.pathname;
 
@@ -590,6 +621,11 @@ export function createPreviewHandler(
     // SPA fallback.
     return serveFile(join(distDir, "index.html"), distDir, req);
   };
+
+  // Stamp cross-origin isolation on EVERY response so the served viewer reports
+  // `crossOriginIsolated === true` (the gate for WebCodecs-in-workers +
+  // SharedArrayBuffer the live-preview compositor needs — DESIGN-LIVE-PREVIEW §8.5).
+  return withCrossOriginIsolation(handle);
 }
 
 /** Start the preview server on 127.0.0.1:port. Returns a handle with the URL and

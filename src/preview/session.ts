@@ -51,6 +51,14 @@ export type TimelineSession = {
   /** True once a mutation/undo/redo has diverged the working IR from the last
    *  saved (or loaded) on-disk content, so the UI can show an unsaved indicator. */
   dirty: boolean;
+  /** A monotonic counter bumped on EVERY successful op/undo/redo. The live-preview
+   *  compositor keys its draw effect on `(currentFrame, revision)` — the analog of
+   *  OpenReel's `project.modifiedAt` / OpenCut's `renderTree` identity — so a
+   *  same-frame edit invalidates the cached frame and triggers a recomposite
+   *  WITHOUT deep-diffing the IR. It is the HMR trigger (DESIGN-LIVE-PREVIEW §3,
+   *  §4). Starts at 0 on load (the initial, un-edited state); the first edit makes
+   *  it 1. It is in-memory working-copy state, never serialized to the `.mlt`. */
+  revision: number;
 };
 
 /** The successful payload an apply/undo/redo returns to the viewer. The full
@@ -72,6 +80,11 @@ export type SessionEditResult = {
   canUndo: boolean;
   canRedo: boolean;
   dirty: boolean;
+  /** The session's monotonic revision AFTER this edit (see `TimelineSession`).
+   *  The viewer's live-preview compositor keys its recomposite on this — every
+   *  op/undo/redo returns a strictly greater value than the prior result, so the
+   *  client knows the IR changed even when the playhead frame did not. */
+  revision: number;
 };
 
 /** A typed failure (no state change). Mirrors the bridge `ToolError` shape plus the
@@ -109,6 +122,7 @@ export class SessionStore {
       undoStack: [],
       redoStack: [],
       dirty: false,
+      revision: 0,
     };
     this.sessions.set(uri, session);
     return session;
@@ -139,6 +153,7 @@ function editResult(session: TimelineSession, consequences: Consequences): Sessi
     canUndo: session.undoStack.length > 0,
     canRedo: session.redoStack.length > 0,
     dirty: session.dirty,
+    revision: session.revision,
   };
 }
 
@@ -171,6 +186,7 @@ export function applyOp(session: TimelineSession, invocation: OpInvocation): Ses
   session.undoStack.push(outcome.inverse);
   session.redoStack = [];
   session.dirty = true;
+  session.revision++;
   return editResult(session, outcome.consequences);
 }
 
@@ -193,6 +209,7 @@ export function undoSession(session: TimelineSession): SessionEditOutcome {
   // The inverse-of-the-inverse is the forward op that redoes this edit.
   session.redoStack.push(outcome.inverse);
   session.dirty = true;
+  session.revision++;
   return editResult(session, outcome.consequences);
 }
 
@@ -213,6 +230,7 @@ export function redoSession(session: TimelineSession): SessionEditOutcome {
   session.ir = newState;
   session.undoStack.push(outcome.inverse);
   session.dirty = true;
+  session.revision++;
   return editResult(session, outcome.consequences);
 }
 

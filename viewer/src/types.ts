@@ -146,6 +146,10 @@ export interface SessionEditResult {
   canUndo: boolean;
   canRedo: boolean;
   dirty: boolean;
+  /** Monotonic per-session counter, bumped on every op/undo/redo. The live-preview
+   *  compositor keys its recomposite on `(currentFrame, revision)` (the HMR
+   *  trigger). Mirrors `src/preview/session.ts` SessionEditResult.revision. */
+  revision: number;
 }
 
 /** A successful /api/save response. */

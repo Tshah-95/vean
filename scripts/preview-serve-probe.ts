@@ -41,12 +41,33 @@ async function main() {
     return { status: res.status, body: await res.json().catch(() => null) };
   };
 
+  /** Capture the cross-origin isolation headers a response carries. The served
+   *  viewer can only reach `crossOriginIsolated === true` if the top-level document
+   *  ships COOP `same-origin` + COEP `require-corp`, and every subresource ships a
+   *  CORP header. We assert the headers on BOTH the HTML document (`/`) and an API
+   *  response so the test gate matches what the browser actually enforces. */
+  const coiHeaders = async (path: string) => {
+    const res = await fetch(`${out.url}${path}`);
+    // Drain the body so the connection is released before teardown.
+    await res.arrayBuffer().catch(() => undefined);
+    return {
+      status: res.status,
+      coop: res.headers.get("cross-origin-opener-policy"),
+      coep: res.headers.get("cross-origin-embedder-policy"),
+      corp: res.headers.get("cross-origin-resource-policy"),
+    };
+  };
+
   try {
     const health = await getJson("/api/health");
     const timeline = await getJson("/api/timeline");
     const timelines = await getJson("/api/timelines");
     const diagnostics = await getJson("/api/diagnostics");
     const bad = await fetch(`${out.url}/api/nope`);
+    // The document (`/`) is what the browser checks for isolation; the API stream
+    // is a representative subresource that must stay CORP-compatible under COEP.
+    const isolationHtml = await coiHeaders("/");
+    const isolationApi = await coiHeaders("/api/health");
 
     const result = {
       ok: true,
@@ -72,6 +93,8 @@ async function main() {
         clean: diagnostics.body?.health?.clean,
       },
       badEndpointStatus: bad.status,
+      isolationHtml,
+      isolationApi,
     };
     console.log(JSON.stringify(result));
   } finally {

@@ -81,5 +81,16 @@ describe("preview server read endpoints (via bun probe)", () => {
     expect(out.diagnostics.ok).toBe(true);
 
     expect(out.badEndpointStatus).toBe(404);
+
+    // Cross-origin isolation (DESIGN-LIVE-PREVIEW §8.5): the HTML document must
+    // ship COOP `same-origin` + COEP `require-corp` (the precondition the browser
+    // checks for `crossOriginIsolated`), and every response — including the API
+    // subresources the isolated document loads under COEP — must be CORP-safe.
+    expect(out.isolationHtml.coop).toBe("same-origin");
+    expect(out.isolationHtml.coep).toBe("require-corp");
+    expect(out.isolationHtml.corp).toBe("same-origin");
+    expect(out.isolationApi.coop).toBe("same-origin");
+    expect(out.isolationApi.coep).toBe("require-corp");
+    expect(out.isolationApi.corp).toBe("same-origin");
   });
 });
