@@ -7,15 +7,17 @@ import { JobsPanel } from "./panels/JobsPanel";
 import { MediaPanel } from "./panels/MediaPanel";
 import { ProjectPanel } from "./panels/ProjectPanel";
 import { RenderPanel } from "./panels/RenderPanel";
+import { SetupPanel } from "./panels/SetupPanel";
 import { C } from "./panels/ui";
 
-type Tab = "media" | "render" | "jobs" | "project";
+type Tab = "media" | "render" | "jobs" | "project" | "setup";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "media", label: "Media" },
   { id: "render", label: "Render" },
   { id: "jobs", label: "Jobs" },
   { id: "project", label: "Project" },
+  { id: "setup", label: "Setup" },
 ];
 
 export function Sidebar({ project, route }: { project?: string; route?: string }) {
@@ -90,6 +92,7 @@ export function Sidebar({ project, route }: { project?: string; route?: string }
         {tab === "render" && <RenderPanel route={route} />}
         {tab === "jobs" && <JobsPanel project={project} />}
         {tab === "project" && <ProjectPanel project={project} />}
+        {tab === "setup" && <SetupPanel project={project} />}
       </div>
     </aside>
   );
