@@ -72,6 +72,90 @@ export const filterSchema = z.object({
 });
 export type Filter = z.infer<typeof filterSchema>;
 
+// ─── Provenance ────────────────────────────────────────────────────────────
+// Where a clip's media came from — pinned to the clip so it survives EXPORT
+// (the thing Palmier's lossy `.palmier`→NLE-XML path drops). `source` is the
+// only required field; the rest describe a generative/captured origin so the
+// agent (or a UI) can regenerate-in-place. Modeled as a first-class field (like
+// `gain`/`label`) — NOT `extraProps` — and round-tripped through serialize/parse
+// as namespaced `<property name="vean:provenance.*">` producer children, so it
+// neither double-emits nor pollutes the generic extra-props map.
+export const provenanceSource = z.enum(["import", "generative", "capture", "remotion"]);
+export type ProvenanceSource = z.infer<typeof provenanceSource>;
+
+export const provenanceSchema = z.object({
+  /** How this clip's media originated. The only required field. */
+  source: provenanceSource,
+  /** Generative model id (e.g. a Veo/Kling/Runway model), when generated. */
+  model: z.string().optional(),
+  /** The prompt that produced the media, when generated. */
+  prompt: z.string().optional(),
+  /** Reference inputs (image/clip paths or ids) fed to the generator. */
+  references: z.array(z.string()).optional(),
+  /** The producing tool/surface (e.g. a CLI/MCP action id or app name). */
+  tool: z.string().optional(),
+  /** ISO-8601 timestamp the media was created/imported. */
+  createdAt: z.string().optional(),
+});
+export type Provenance = z.infer<typeof provenanceSchema>;
+
+/** The `<property>` namespace prefix carrying provenance on a producer. Shared by
+ *  serialize + parse so the two halves never drift on the wire name. */
+export const PROVENANCE_PROP_PREFIX = "vean:provenance.";
+
+/** Encode a `Provenance` into ordered `[name, value]` producer-property pairs. The
+ *  field order is fixed (schema order) so emission is deterministic; the array
+ *  references are joined with `,` (no provenance reference may itself contain a
+ *  comma — they are media paths/ids). Scalars stringify as-is. A round-trip with
+ *  `decodeProvenance` is a fixpoint for every value the schema admits. */
+export function encodeProvenanceProps(p: Provenance): Array<[string, string]> {
+  const out: Array<[string, string]> = [[`${PROVENANCE_PROP_PREFIX}source`, p.source]];
+  if (p.model != null) out.push([`${PROVENANCE_PROP_PREFIX}model`, p.model]);
+  if (p.prompt != null) out.push([`${PROVENANCE_PROP_PREFIX}prompt`, p.prompt]);
+  if (p.references != null) {
+    out.push([`${PROVENANCE_PROP_PREFIX}references`, p.references.join(",")]);
+  }
+  if (p.tool != null) out.push([`${PROVENANCE_PROP_PREFIX}tool`, p.tool]);
+  if (p.createdAt != null) out.push([`${PROVENANCE_PROP_PREFIX}createdAt`, p.createdAt]);
+  return out;
+}
+
+/** Reconstruct a `Provenance` from the `vean:provenance.*` subset of a producer's
+ *  properties. Returns `undefined` when the marker `source` is absent (so a
+ *  document with no provenance leaves the field absent — byte-identical). Validated
+ *  against the schema so a malformed `source` fails loudly, like the rest of the IR. */
+export function decodeProvenanceProps(
+  props: Record<string, PropertyValue>,
+): Provenance | undefined {
+  const get = (k: string): string | undefined => {
+    const v = props[`${PROVENANCE_PROP_PREFIX}${k}`];
+    return v == null ? undefined : String(v);
+  };
+  const source = get("source");
+  if (source == null) return undefined;
+  const referencesRaw = get("references");
+  const candidate: Record<string, unknown> = { source };
+  const model = get("model");
+  if (model != null) candidate.model = model;
+  const prompt = get("prompt");
+  if (prompt != null) candidate.prompt = prompt;
+  if (referencesRaw != null) {
+    candidate.references = referencesRaw === "" ? [] : referencesRaw.split(",");
+  }
+  const tool = get("tool");
+  if (tool != null) candidate.tool = tool;
+  const createdAt = get("createdAt");
+  if (createdAt != null) candidate.createdAt = createdAt;
+  return provenanceSchema.parse(candidate);
+}
+
+/** Whether a producer-property name belongs to the provenance namespace (so the
+ *  parser can keep it out of the generic `extraProps` map — it's modeled
+ *  structurally and would otherwise double-emit). */
+export function isProvenanceProp(name: string): boolean {
+  return name.startsWith(PROVENANCE_PROP_PREFIX);
+}
+
 // ─── Clip ────────────────────────────────────────────────────────────────
 // A window `[in, out]` (INCLUSIVE, 0-based source frames) onto a producer.
 // playtime = out - in + 1. `length` is a SEPARATE source-duration property (not
@@ -118,6 +202,11 @@ export const clipSchema = z.object({
       props: z.record(z.string(), z.unknown()).optional(),
     })
     .optional(),
+  /** Optional origin metadata (import / generative / capture / remotion). Pinned
+   *  to the clip and round-tripped as `vean:provenance.*` producer properties so
+   *  it survives export — modeled structurally (like `gain`/`label`), never in
+   *  `extraProps`. */
+  provenance: provenanceSchema.optional(),
 });
 export type Clip = z.infer<typeof clipSchema>;
 

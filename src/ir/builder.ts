@@ -17,6 +17,7 @@ import type {
   Filter,
   Item,
   Profile,
+  Provenance,
   Timeline,
   Track,
   Tracks,
@@ -101,6 +102,9 @@ type ClipOpts = {
   /** Remotion-overlay identity — set when this clip is a baked alpha .mov from a
    *  Remotion composition. Flows verbatim onto `Clip.composition`. */
   composition?: { id: string; props?: Record<string, unknown> };
+  /** Optional origin metadata (import / generative / capture / remotion),
+   *  round-tripped as `vean:provenance.*` producer properties. */
+  provenance?: Provenance;
 };
 
 // Fades are stored as a marker filter the serializer resolves into the proven
@@ -141,6 +145,7 @@ function baseClip(
     filters: [...fadeFilters(opts), ...(opts.filters ?? [])],
     label: opts.label,
     composition: opts.composition,
+    provenance: opts.provenance,
   };
 }
 

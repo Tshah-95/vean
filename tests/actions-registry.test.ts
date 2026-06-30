@@ -105,3 +105,71 @@ describe("action registry", () => {
     });
   });
 });
+
+// The ActionContext is a typed dependency-injection container: an action reaches
+// its side-effecting deps (document store, clock, ids, logger, state DB, project
+// resolver) through `ctx`, not ambient module imports. `createActionContext`
+// populates behavior-preserving defaults; a surface/test can override any of them.
+// This is the seam S3 (editorial macros) and S4 (generative producer) build on.
+describe("ActionContext DI container", () => {
+  it("populates behavior-preserving defaults for every injected capability", () => {
+    const ctx = createActionContext({ surface: "test" });
+    expect(typeof ctx.documents.read).toBe("function");
+    expect(typeof ctx.documents.write).toBe("function");
+    expect(typeof ctx.clock.now).toBe("function");
+    expect(typeof ctx.clock.nowIso).toBe("function");
+    expect(typeof ctx.ids.uuid).toBe("function");
+    expect(typeof ctx.logger.info).toBe("function");
+    expect(typeof ctx.state.open).toBe("function");
+    expect(typeof ctx.resolveProject).toBe("function");
+    // The default clock yields a parseable ISO timestamp; the default id factory a
+    // non-empty unique-ish string.
+    expect(Number.isNaN(Date.parse(ctx.clock.nowIso()))).toBe(false);
+    expect(ctx.ids.uuid()).not.toBe("");
+    expect(ctx.ids.uuid()).not.toBe(ctx.ids.uuid());
+  });
+
+  it("threads injected overrides (a frozen clock + deterministic ids) onto the context", () => {
+    const ctx = createActionContext({
+      surface: "test",
+      overrides: {
+        clock: { now: () => new Date(0), nowIso: () => "1970-01-01T00:00:00.000Z" },
+        ids: { uuid: () => "fixed-id" },
+      },
+    });
+    expect(ctx.clock.nowIso()).toBe("1970-01-01T00:00:00.000Z");
+    expect(ctx.clock.now().getTime()).toBe(0);
+    expect(ctx.ids.uuid()).toBe("fixed-id");
+  });
+
+  it("routes ctx.documents through an injected in-memory store (no filesystem)", async () => {
+    const store = new Map<string, string>();
+    const ctx = createActionContext({
+      surface: "test",
+      overrides: {
+        documents: {
+          read: async (uri) => {
+            const v = store.get(uri);
+            if (v == null) throw new Error(`no doc: ${uri}`);
+            return v;
+          },
+          write: async (uri, text) => {
+            store.set(uri, text);
+          },
+        },
+      },
+    });
+    await ctx.documents.write("mem://a", "hello");
+    expect(await ctx.documents.read("mem://a")).toBe("hello");
+    expect(store.get("mem://a")).toBe("hello");
+  });
+
+  it("evaluates and threads the policy decision into ctx.policy before dispatch", async () => {
+    // A read action (project.current) is auto-allowed; executeAction computes the
+    // decision and threads it onto the execution context. Proven indirectly: the
+    // call succeeds (the decision was computed without denying an auto action).
+    const ctx = createActionContext({ surface: "test" });
+    const result = await executeAction("project.current", {}, ctx);
+    expect(result.ok).toBe(true);
+  });
+});

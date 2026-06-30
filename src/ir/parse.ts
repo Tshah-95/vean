@@ -35,9 +35,12 @@ import {
   type Item,
   type Profile,
   type PropertyValue,
+  type Provenance,
   type Timeline,
   type Track,
   type Transition,
+  decodeProvenanceProps,
+  isProvenanceProp,
   timelineSchema,
 } from "./types";
 
@@ -207,6 +210,9 @@ type ResolvedProducer = {
    *  `vean:compositionProps` — present iff the producer is a baked Remotion
    *  overlay. Routed onto `Clip.composition`. */
   composition?: { id: string; props?: Record<string, unknown> };
+  /** Origin metadata reconstructed from the `vean:provenance.*` producer
+   *  properties (modeled structurally, kept out of `extraProps`). */
+  provenance?: Provenance;
 };
 
 /** Producer `<property>` names the serializer carries STRUCTURALLY (modeled by a
@@ -382,11 +388,17 @@ function resolveProducer(node: Node): ResolvedProducer {
       out.composition.props = JSON.parse(compProps) as Record<string, unknown>;
     }
   }
+  // Reconstruct origin metadata from the `vean:provenance.*` properties (modeled
+  // structurally — see below for why they're then skipped from extraProps).
+  const provenance = decodeProvenanceProps(props);
+  if (provenance) out.provenance = provenance;
   // Preserve every non-structural producer property (caption, eof, aspect_ratio,
   // proxy hints, …) in document order, so the round-trip is genuinely lossless.
+  // The `vean:provenance.*` properties are carried structurally above, so they're
+  // skipped here — otherwise they'd double-emit (extraProps + the structural field).
   const extraProps: Record<string, PropertyValue> = {};
   for (const [k, v] of Object.entries(props)) {
-    if (STRUCTURAL_PRODUCER_PROPS.has(k)) continue;
+    if (STRUCTURAL_PRODUCER_PROPS.has(k) || isProvenanceProp(k)) continue;
     extraProps[k] = propValue(v);
   }
   if (Object.keys(extraProps).length > 0) out.extraProps = extraProps;
@@ -480,6 +492,7 @@ function buildClip(
   if (prod.service != null && prod.service !== "") clip.service = prod.service;
   if (prod.extraProps != null) clip.extraProps = prod.extraProps;
   if (prod.composition != null) clip.composition = prod.composition;
+  if (prod.provenance != null) clip.provenance = prod.provenance;
   // A color producer's authored window is always 0-based; its `length` is the
   // played count (the serializer regenerates it). Keep an explicit `length` when
   // present and meaningful (it's required for color in the IR? — optional there,

@@ -8,7 +8,7 @@ import {
   setActiveProject,
 } from "../project/context";
 import type { ResolvedProject } from "../project/context";
-import { defaultPolicyLevel } from "./policy";
+import { defaultPolicyLevel, evaluatePolicy } from "./policy";
 import { summarizeSchema } from "./schema-summary";
 import type {
   ActionContext,
@@ -16,6 +16,11 @@ import type {
   ActionDescriptor,
   ActionEffect,
   ActionEnvelope,
+  Clock,
+  DocumentStore,
+  IdFactory,
+  Logger,
+  StateAccess,
 } from "./types";
 
 const jsonString = z
@@ -266,19 +271,78 @@ function searchRegistry(
     .map((result, index) => ({ ...result, rank: index + 1 }));
 }
 
+/** The default filesystem-backed document store (Bun file IO). The historical
+ *  `readDoc`/`writeDoc` behavior, now injected through the context so a surface or
+ *  test can swap it. */
+const fsDocuments: DocumentStore = {
+  read: (uri) => readDoc(uri),
+  write: (uri, text) => writeDoc(uri, text),
+};
+
+/** The default system clock. */
+const systemClock: Clock = {
+  now: () => new Date(),
+  nowIso: () => new Date().toISOString(),
+};
+
+/** The default id factory (crypto.randomUUID, with a dependency-free fallback for
+ *  any runtime lacking it). */
+const cryptoIds: IdFactory = {
+  uuid: () => {
+    const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+    return c?.randomUUID
+      ? c.randomUUID()
+      : `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`;
+  },
+};
+
+/** The default console-backed logger. `debug` is intentionally quiet (the CLI is
+ *  not chatty by default); the rest map to their console channels. */
+const consoleLogger: Logger = {
+  debug: () => {},
+  info: (message, fields) => (fields ? console.info(message, fields) : console.info(message)),
+  warn: (message, fields) => (fields ? console.warn(message, fields) : console.warn(message)),
+  error: (message, fields) => (fields ? console.error(message, fields) : console.error(message)),
+};
+
+/** The default lazy state-DB access — imports `bun:sqlite` only on first open, so
+ *  constructing a context stays light. */
+const lazyState: StateAccess = {
+  open: async (repo) => {
+    const { openStateDb } = await import("../state/db");
+    return openStateDb(repo);
+  },
+};
+
 export function createActionContext(options: {
   cwd?: string;
   surface?: ActionContext["surface"];
   project?: string;
   env?: NodeJS.ProcessEnv;
+  /** Override any injected capability (tests, future surfaces). Anything omitted
+   *  falls back to the behavior-preserving default. */
+  overrides?: Partial<
+    Pick<ActionContext, "documents" | "clock" | "ids" | "logger" | "state" | "signal" | "policy">
+  >;
 }): ActionContext {
   const cwd = resolve(options.cwd ?? process.cwd());
   const env = options.env ?? process.env;
+  const o = options.overrides ?? {};
   return {
     cwd,
     surface: options.surface ?? "cli",
     env,
     project: resolveProject({ project: options.project, cwd, env }),
+    documents: o.documents ?? fsDocuments,
+    clock: o.clock ?? systemClock,
+    ids: o.ids ?? cryptoIds,
+    logger: o.logger ?? consoleLogger,
+    // The project resolver is bound to this context's cwd/env so actions resolve a
+    // reference without re-threading them (cwd/env supplied per call still win).
+    resolveProject: (resolveOptions) => resolveProject({ cwd, env, ...resolveOptions }),
+    state: o.state ?? lazyState,
+    signal: o.signal,
+    policy: o.policy,
   };
 }
 
@@ -482,7 +546,7 @@ const actions = [
         input.timeline ?? input.uri,
       );
       if ("ok" in timeline) return timeline;
-      const state = parseDoc(await readDoc(timeline.uri));
+      const state = parseDoc(await ctx.documents.read(timeline.uri));
       const { outcome, newState } = mutate(
         state,
         { op: resolvedOp.canonicalOp, args: input.args },
@@ -513,7 +577,7 @@ const actions = [
         } catch {
           /* autodetect is best-effort */
         }
-        await writeDoc(timeline.uri, serializeDoc(finalState));
+        await ctx.documents.write(timeline.uri, serializeDoc(finalState));
       }
       return {
         ...outcome,
@@ -578,7 +642,7 @@ const actions = [
         input.timeline ?? input.uri,
       );
       if ("ok" in timeline) return timeline;
-      const state = parseDoc(await readDoc(timeline.uri));
+      const state = parseDoc(await ctx.documents.read(timeline.uri));
       const outcome = preview(
         state,
         { op: resolvedOp.canonicalOp, args: input.args },
@@ -634,9 +698,10 @@ const actions = [
             ...input.inverse,
             op: (await import("../ops/catalog")).resolveOpName(input.inverse.op).canonicalOp,
           };
-      const state = parseDoc(await readDoc(timeline.uri));
+      const state = parseDoc(await ctx.documents.read(timeline.uri));
       const { outcome, newState } = undoTool(state, inverse, timeline.uri);
-      if (!isToolError(outcome) && newState) await writeDoc(timeline.uri, serializeDoc(newState));
+      if (!isToolError(outcome) && newState)
+        await ctx.documents.write(timeline.uri, serializeDoc(newState));
       return {
         ...outcome,
         uri: timeline.uri,
@@ -666,7 +731,7 @@ const actions = [
       if ("ok" in timeline) return timeline;
       return {
         ok: true,
-        ...diagnoseTool(parseDoc(await readDoc(timeline.uri))),
+        ...diagnoseTool(parseDoc(await ctx.documents.read(timeline.uri))),
         uri: timeline.uri,
         resolvedPath: timeline.resolvedPath,
         project: timeline.project,
@@ -702,7 +767,11 @@ const actions = [
       );
       if ("ok" in timeline) return timeline;
       return {
-        ...resolveTool(parseDoc(await readDoc(timeline.uri)), input.frame, input.target as never),
+        ...resolveTool(
+          parseDoc(await ctx.documents.read(timeline.uri)),
+          input.frame,
+          input.target as never,
+        ),
         uri: timeline.uri,
         resolvedPath: timeline.resolvedPath,
         project: timeline.project,
@@ -734,7 +803,7 @@ const actions = [
       );
       if ("ok" in timeline) return timeline;
       return {
-        ...referencesTool(parseDoc(await readDoc(timeline.uri)), input.query as never),
+        ...referencesTool(parseDoc(await ctx.documents.read(timeline.uri)), input.query as never),
         uri: timeline.uri,
         resolvedPath: timeline.resolvedPath,
         project: timeline.project,
@@ -1068,7 +1137,7 @@ const actions = [
           outPath: result.outPath,
           pixFmt: result.pixFmt,
           hasAlpha: result.hasAlpha,
-          createdAt: new Date().toISOString(),
+          createdAt: ctx.clock.nowIso(),
         });
         return {
           ok: true,
@@ -1140,7 +1209,7 @@ const actions = [
         input.timeline ?? input.uri,
       );
       if ("ok" in timeline) return timeline;
-      const state = parseDoc(await readDoc(timeline.uri));
+      const state = parseDoc(await ctx.documents.read(timeline.uri));
       const result = addGraphic(state, {
         clipPath: input.clipPath,
         position: input.position,
@@ -1153,7 +1222,7 @@ const actions = [
       if (!("state" in result)) {
         return { ok: false, kind: result.kind, detail: editErrorMsg(result), uri: timeline.uri };
       }
-      await writeDoc(timeline.uri, serializeDoc(result.state));
+      await ctx.documents.write(timeline.uri, serializeDoc(result.state));
       return {
         ok: true,
         consequences: result.consequences,
@@ -1330,7 +1399,7 @@ const actions = [
         videoTracks: input.videoTracks ?? 1,
         audioTracks: input.audioTracks ?? 1,
       });
-      await writeDoc(outPath, serializeDoc(tl));
+      await ctx.documents.write(outPath, serializeDoc(tl));
       let set = false;
       if (input.use !== false) {
         const { useTimeline } = await import("../state/timeline");
@@ -1392,7 +1461,7 @@ const actions = [
         input.timeline ?? input.uri,
       );
       if ("ok" in timeline) return timeline;
-      const state = parseDoc(await readDoc(timeline.uri));
+      const state = parseDoc(await ctx.documents.read(timeline.uri));
       // Resolve a (kind,index) track address to its id (addAudio takes a trackId).
       let trackId: string | undefined;
       if (input.track) {
@@ -1424,7 +1493,7 @@ const actions = [
       if (!("state" in result)) {
         return { ok: false, kind: result.kind, detail: editErrorMsg(result), uri: timeline.uri };
       }
-      await writeDoc(timeline.uri, serializeDoc(result.state));
+      await ctx.documents.write(timeline.uri, serializeDoc(result.state));
       return {
         ok: true,
         consequences: result.consequences,
@@ -1480,7 +1549,7 @@ const actions = [
         input.timeline ?? input.uri,
       );
       if ("ok" in timeline) return timeline;
-      const state = parseDoc(await readDoc(timeline.uri));
+      const state = parseDoc(await ctx.documents.read(timeline.uri));
       // Resolve a (kind,index) track address to its id (addFootage takes a trackId).
       let trackId: string | undefined;
       if (input.track) {
@@ -1527,7 +1596,7 @@ const actions = [
       if (!("state" in result)) {
         return { ok: false, kind: result.kind, detail: editErrorMsg(result), uri: timeline.uri };
       }
-      await writeDoc(timeline.uri, serializeDoc(result.state));
+      await ctx.documents.write(timeline.uri, serializeDoc(result.state));
       return {
         ok: true,
         consequences: result.consequences,
@@ -2137,8 +2206,15 @@ export async function executeAction(
       project: ctx.project,
     };
   }
+  // Thread the concrete policy decision through the context so an action (and the
+  // surfaces projecting from it) can read what level THIS invocation was gated at.
+  // Additive only — the deny gate above is unchanged, so behavior is identical.
+  const execCtx: ActionContext = {
+    ...ctx,
+    policy: ctx.policy ?? evaluatePolicy(definition, ctx, parsed.data),
+  };
   try {
-    const output = await definition.execute(ctx, parsed.data);
+    const output = await definition.execute(execCtx, parsed.data);
     const checked = definition.output.safeParse(output);
     if (!checked.success) {
       return {
