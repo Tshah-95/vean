@@ -13,7 +13,13 @@ import { type ProbeThresholds, probeDiagnostics } from "../diagnostics/probe";
 import type { Diagnostic } from "../diagnostics/types";
 import type { Clip, Timeline } from "../ir/types";
 import { getSettingValue } from "../state/settingsStore";
-import { probeSource } from "./probe";
+import {
+  danglingFileRefDiagnostic,
+  fileExists,
+  probeSource,
+  sourceColorspaceDiagnostic,
+  sourceUpscaleDiagnostic,
+} from "./probe";
 
 export type ProbeDiagnosticsOpts = {
   /** Directory to resolve RELATIVE clip resources against (the .mlt's own dir).
@@ -56,10 +62,11 @@ function probeableFile(clip: Clip): boolean {
 }
 
 /**
- * Probe every file-backed clip in `state` and return the fps diagnostics. Async +
- * I/O (ffprobe). Probes run in parallel; the probe cache dedups repeated sources to
- * one spawn. A clip whose file is missing/unreadable yields no diagnostic here
- * (a dangling FILE ref is a separate driver concern, not an fps judgement).
+ * Probe every file-backed clip in `state` and return the driver-layer diagnostics:
+ * fps, plus dangling-file-ref / source-upscale / source-colorspace. Async + I/O
+ * (ffprobe). Probes run in parallel; the probe cache dedups repeated sources to one
+ * spawn. A clip whose file is missing emits a dangling-file-ref (it cannot be probed,
+ * so no fps/upscale/colorspace judgement follows it).
  */
 export async function collectProbeDiagnostics(
   state: Timeline,
@@ -81,9 +88,20 @@ export async function collectProbeDiagnostics(
 
   const perClip = await Promise.all(
     targets.map(async ({ clip, trackId }) => {
-      const probe = await probeSource(resolvePath(clip.resource));
-      if (!probe) return [];
-      return probeDiagnostics(profile, probe, { clip: clip.id, track: trackId }, thresholds);
+      const loc = { clip: clip.id, track: trackId };
+      const resolvedPath = resolvePath(clip.resource);
+      // dangling-file-ref is an fs-existence check, independent of (and surviving) a
+      // failed probe — a missing file cannot be ffprobed, so it would otherwise go
+      // unseen. It only judges the file-backed clips `probeableFile` already selected.
+      const dangling = danglingFileRefDiagnostic(resolvedPath, fileExists(resolvedPath), loc);
+      const probe = await probeSource(resolvedPath);
+      if (!probe) return dangling;
+      return [
+        ...dangling,
+        ...probeDiagnostics(profile, probe, loc, thresholds),
+        ...sourceUpscaleDiagnostic(profile, probe, loc),
+        ...sourceColorspaceDiagnostic(profile, probe, loc),
+      ];
     }),
   );
 

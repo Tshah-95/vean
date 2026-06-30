@@ -365,32 +365,18 @@ function checkRedundantFilters(clip: Clip, track: Track): DiagnosticInput[] {
   return out;
 }
 
-// ─── 5. Dial value outside a known filter-param range ────────────────────────
-// A small, EXTENSIBLE table of the parameter ranges we model TODAY (the full
-// `melt -query` catalog is Move 5 — ROADMAP "Move 5+"). Each entry is a filter
-// service → param → `[min, max]` (a bound omitted = one-sided). We check ONLY a
-// STATIC scalar value against an entry that EXISTS in the table; an unmodeled
-// param, an animated value, or a unit-bearing token is skipped — so adding a row
-// can only ADD coverage, never a false positive on existing corpus values.
-type Range = { min?: number; max?: number; unit?: string };
-const PARAM_RANGES: Record<string, Record<string, Range>> = {
-  // brightness `level`: a non-negative multiplier (1 = unity). Shotcut's UI caps
-  // the slider at 200% (level 2.0); we use a generous 0..4 so a real grade never
-  // trips while a nonsensical negative / >4 does. (corpus values are 0..1.)
-  brightness: { level: { min: 0, max: 4 } },
-  // volume / gain `level`: a non-negative multiplier; > 8× (≈ +18 dB) is almost
-  // always an error. A `level` carrying a `dB` unit string is skipped by
-  // staticScalar (so the corpus's `20dB` max_gain never trips).
-  volume: { level: { min: 0, max: 8 }, gain: { min: 0, max: 8 } },
-  gain: { gain: { min: 0, max: 8 } },
-  // opacity-style 0..1 dials seen on common filters.
-  "frei0r.alpha0ps": { alpha: { min: 0, max: 1 } },
-};
-
-/** The audio-gain range, shared by the `volume`/`gain` FILTER check and the
- *  first-class `Clip.gain` FIELD check below — one source of truth so the same
- *  nonsensical multiplier is judged identically whichever form it lives in. */
-const GAIN_RANGE: Range = PARAM_RANGES.gain?.gain ?? { min: 0, max: 8 };
+// ─── 5. Audio gain FIELD outside its known range ─────────────────────────────
+// The catalog-backed `dial-out-of-range` rule for FILTER params lives in
+// `checks/dials.ts` (generated from `melt -query` — the single authority, e.g.
+// brightness `level` 0..15, not a hand-guessed cap). What stays HERE is the
+// first-class `Clip.gain` FIELD: gain is modeled as a clip field that only becomes a
+// `volume`/`gain` FILTER at serialize time (serialize.ts gainFilters), so the catalog
+// checker never sees it — yet `gain: 1000` (+60 dB) is exactly as nonsensical as a
+// `volume` filter at that level. We enforce the field against an audio-domain range
+// (0..8× ≈ +18 dB) so the gain Op and a hand/IR-set multiplier (both of which bypass
+// any clamp) are caught. Gain is always a static number on the IR field.
+type Range = { min?: number; max?: number };
+const GAIN_RANGE: Range = { min: 0, max: 8 };
 
 function checkDialRanges(clip: Clip, track: Track): DiagnosticInput[] {
   const out: DiagnosticInput[] = [];
@@ -426,37 +412,6 @@ function checkDialRanges(clip: Clip, track: Track): DiagnosticInput[] {
       );
     }
   }
-  clip.filters.forEach((f, fi) => {
-    const table = PARAM_RANGES[f.service];
-    if (!table) return;
-    for (const [param, range] of Object.entries(table)) {
-      const raw = f.properties[param];
-      if (raw == null) continue;
-      const n = staticScalar(raw);
-      if (n == null) continue; // animated / unit-bearing / non-numeric → skip
-      const belowMin = range.min != null && n < range.min;
-      const aboveMax = range.max != null && n > range.max;
-      if (belowMin || aboveMax) {
-        const bound = belowMin ? `min ${range.min}` : `max ${range.max}`;
-        out.push(
-          diag({
-            code: "dial-out-of-range",
-            severity: "warning",
-            message: `clip "${clip.id}" filter ${f.service}.${param} = ${n} is outside its known range [${range.min ?? "−∞"}, ${range.max ?? "∞"}] (past ${bound})`,
-            location: { clip: clip.id, track: track.id, filter: fi },
-            fix: `set ${f.service}.${param} within [${range.min ?? "−∞"}, ${range.max ?? "∞"}]`,
-            data: {
-              service: f.service,
-              param,
-              value: n,
-              ...(range.min != null ? { min: range.min } : {}),
-              ...(range.max != null ? { max: range.max } : {}),
-            },
-          }),
-        );
-      }
-    }
-  });
   return out;
 }
 

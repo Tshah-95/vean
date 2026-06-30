@@ -15,16 +15,7 @@
 // `extraProps`), exactly as the LSP would hold an in-progress document.
 import { describe, expect, it } from "vitest";
 import { collectDiagnostics } from "../src/diagnostics";
-import {
-  LANDSCAPE,
-  VERTICAL,
-  audioTrack,
-  clip,
-  filter,
-  resetIds,
-  timeline,
-  videoTrack,
-} from "../src/index";
+import { VERTICAL, audioTrack, clip, filter, resetIds, timeline, videoTrack } from "../src/index";
 import type { Clip, Profile, Timeline, Track } from "../src/ir/types";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -356,45 +347,12 @@ describe("media: redundant-filter + self-cancelling-filters", () => {
 
 // ─── 5. Dial value outside a known filter-param range ─────────────────────────
 describe("media: dial-out-of-range", () => {
-  it("FIRES on a brightness level above its modeled max (warning)", () => {
-    resetIds();
-    const tl = timeline(VERTICAL, {
-      video: [
-        videoTrack(
-          clip("/a.mp4", {
-            id: "hot",
-            dur: 60,
-            // brightness range is [0, 4]; 9 is well past it.
-            filters: [filter("brightness", { level: "9" })],
-          }),
-        ),
-      ],
-    });
-    const d = byCode(tl, "dial-out-of-range");
-    expect(d).toBeDefined();
-    expect(d?.severity).toBe("warning");
-    expect(d?.location.clip).toBe("hot");
-    expect(d?.location.filter).toBe(0);
-    expect(d?.data).toMatchObject({ service: "brightness", param: "level", value: 9, max: 4 });
-  });
-
-  it("FIRES on a negative volume level (below its modeled min)", () => {
-    resetIds();
-    const tl = timeline(LANDSCAPE, {
-      video: [
-        videoTrack(
-          clip("/a.mp4", {
-            id: "neg",
-            dur: 60,
-            filters: [filter("volume", { level: "-1" })], // < 0
-          }),
-        ),
-      ],
-    });
-    const d = byCode(tl, "dial-out-of-range");
-    expect(d?.data).toMatchObject({ service: "volume", param: "level", value: -1, min: 0 });
-  });
-
+  // The FILTER dial-range checks (a brightness / volume / etc. dial past a modeled
+  // range) moved to `checks/dials.ts` — catalog-backed against the real `melt -query`
+  // ranges (e.g. brightness `level` 0..15, not a hand-guessed 0..4) — and are tested
+  // in tests/dials.test.ts. The media checker keeps ONLY the first-class gain-FIELD
+  // check (below), plus the silence guards proving it never spuriously fires on a
+  // filter-bearing clip.
   it("is SILENT on an in-range brightness level (the corpus's 0..1 values)", () => {
     resetIds();
     const tl = timeline(VERTICAL, {
@@ -452,17 +410,8 @@ describe("media: dial-out-of-range", () => {
   // value is caught in one form and silently missed in the other.
   it("FIRES on an out-of-range Clip.gain FIELD (1000 = +60 dB)", () => {
     resetIds();
-    // Control: the same value as a volume FILTER fires (proves the bar).
-    const asFilter = timeline(VERTICAL, {
-      audio: [
-        audioTrack(
-          clip("/vo.wav", { id: "vf", dur: 120, filters: [filter("volume", { level: "1000" })] }),
-        ),
-      ],
-    });
-    expect(byCode(asFilter, "dial-out-of-range")?.data).toMatchObject({ value: 1000 });
-
-    // The defect-under-test: the SAME 1000 on the first-class field must also fire.
+    // The first-class gain FIELD: a nonsensical 1000 (+60 dB) must fire. The FILTER
+    // form of the same value is the catalog dials checker's job (dials.test.ts).
     const asField = timeline(VERTICAL, {
       audio: [audioTrack(clip("/vo.wav", { id: "vg", dur: 120, gain: 1000 }))],
     });
