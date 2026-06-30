@@ -952,12 +952,14 @@ const actions = [
           detail: `remotion.render is restricted to integer-fps profiles; "${profileName}" is ${profile.fps[0]}/${profile.fps[1]}`,
         };
       }
-      const { defaultRemotionEntry, renderComposition, RemotionError } = await import(
+      const { remotionWorkspaceForRepo, renderComposition, RemotionError } = await import(
         "../driver/remotion"
       );
       const cacheMod = await import("../state/remotionCache");
       const repo = repoFor(ctx, input.repo);
-      const entry = defaultRemotionEntry();
+      // Per-project workspace: a project's own remotion/ (its compositions + brand
+      // tokens) wins; falls back to vean's bundled workspace.
+      const { entry, bin } = remotionWorkspaceForRepo(repo);
       const profileFingerprint = `${profile.width}x${profile.height}@${profile.fps[0]}/${profile.fps[1]}`;
       const entryFingerprint = cacheMod.entryFingerprint(entry);
       const frameRange = input.frameRange ?? null;
@@ -994,6 +996,7 @@ const actions = [
       try {
         const result = await renderComposition(input.composition, outPath, {
           entry,
+          ...(bin ? { bin } : {}),
           props,
           ...(input.frameRange ? { frameRange: input.frameRange } : {}),
         });

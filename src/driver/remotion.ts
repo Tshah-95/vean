@@ -46,6 +46,23 @@ export function resolveRemotionBin(override?: string): string | null {
   return existsSync(local) ? local : null;
 }
 
+/** Resolve the Remotion workspace (entry + binary) for a PROJECT repo. Prefers
+ *  the project's OWN `<repo>/remotion/` workspace — so per-project compositions
+ *  and brand tokens (e.g. carlo) stay OUT of public vean — falling back to vean's
+ *  bundled workspace when the project has none. The binary is the resolved
+ *  workspace's own pinned install (or the env override). */
+export function remotionWorkspaceForRepo(repo: string): { entry: string; bin: string | null } {
+  const projectEntry = join(repo, "remotion", "src", "index.ts");
+  if (existsSync(projectEntry)) {
+    const projectBin = join(repo, "remotion", "node_modules", ".bin", "remotion");
+    return {
+      entry: projectEntry,
+      bin: process.env.VEAN_REMOTION_BIN ?? (existsSync(projectBin) ? projectBin : null),
+    };
+  }
+  return { entry: defaultRemotionEntry(), bin: resolveRemotionBin() };
+}
+
 export type RemotionRenderOpts = {
   /** Path to the remotion entry (default: <repo>/remotion/src/index.ts). */
   entry?: string;
