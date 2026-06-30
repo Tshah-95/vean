@@ -124,11 +124,52 @@ const descriptors: BaseDescriptor[] = [
       args: { uuid: "clip-3", delta: 10 },
     },
   ),
+  op(
+    "slip",
+    "Slip Clip",
+    "trim",
+    "Slide a clip's source window without moving it on the track.",
+    ["slip-trim"],
+    {
+      inverse: "slip",
+      prompt: "slip clip-3 source forward by 12 frames",
+      args: { uuid: "clip-3", delta: 12 },
+    },
+  ),
+  op(
+    "slide",
+    "Slide Clip",
+    "trim",
+    "Move a clip in time; its two neighbours absorb the shift.",
+    ["slide-trim"],
+    {
+      inverse: "slide",
+      prompt: "slide clip-3 later by 12 frames",
+      args: { uuid: "clip-3", delta: 12 },
+    },
+  ),
   op("move", "Move Clip", "placement", "Relocate a clip to a track and position.", [], {
     inverse: "move",
     prompt: "move clip-3 to the second video track",
     args: { uuid: "clip-3", toTrack: { kind: "video", index: 1 }, toPosition: 120 },
   }),
+  op(
+    "roll",
+    "Roll Edit",
+    "trim",
+    "Move the cut point between two adjacent clips; total duration unchanged.",
+    ["roll-edit"],
+    {
+      inverse: "roll",
+      prompt: "roll the cut between clip-2 and clip-3 later by 12 frames",
+      args: {
+        track: { kind: "video", index: 0 },
+        leftUuid: "clip-2",
+        rightUuid: "clip-3",
+        delta: 12,
+      },
+    },
+  ),
   op("dissolve", "Dissolve", "transition", "Create a same-track crossfade.", ["crossfade"], {
     inverse: "_removeDissolve",
     prompt: "crossfade these adjacent clips",

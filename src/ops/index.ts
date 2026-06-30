@@ -34,6 +34,9 @@ import {
 } from "./overwrite";
 import { reinsert, reinsertArgs, remove, samples as removeSamples } from "./remove";
 import { replace, samples as replaceSamples } from "./replace";
+import { roll, rollArgs, samples as rollSamples } from "./roll";
+import { slide, slideArgs, samples as slideSamples } from "./slide";
+import { slip, slipArgs, samples as slipSamples } from "./slip";
 import { split, samples as splitSamples, unsplit, unsplitArgs } from "./split";
 import {
   addTrack,
@@ -110,7 +113,10 @@ export const REGISTRY: Record<string, OpEntry<unknown>> = {
   replace: reg(replace, replaceArgs),
   trimIn: reg(trimIn, trimArgs),
   trimOut: reg(trimOut, trimArgs),
+  slip: reg(slip, slipArgs),
+  slide: reg(slide, slideArgs),
   move: reg(move, moveArgs),
+  roll: reg(roll, rollArgs),
   dissolve: reg(dissolve, dissolveArgs),
   fadeIn: reg(fadeIn, fadeArgs),
   fadeOut: reg(fadeOut, fadeArgs),
@@ -180,7 +186,10 @@ export const SAMPLES: Record<string, OpSample[]> = {
   replace: replaceSamples as OpSample[],
   trimIn: samplesTrimIn as OpSample[],
   trimOut: samplesTrimOut as OpSample[],
+  slip: slipSamples as OpSample[],
+  slide: slideSamples as OpSample[],
   move: moveSamples as OpSample[],
+  roll: rollSamples as OpSample[],
   dissolve: dissolveSamples as OpSample[],
   fadeIn: samplesFadeIn as OpSample[],
   fadeOut: samplesFadeOut as OpSample[],
@@ -206,7 +215,10 @@ export {
   replace,
   trimIn,
   trimOut,
+  slip,
+  slide,
   move,
+  roll,
   dissolve,
   fadeIn,
   fadeOut,
