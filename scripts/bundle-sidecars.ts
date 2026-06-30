@@ -370,12 +370,21 @@ function relocate(b: Built, t: Tools): void {
     rewriteDeps(f, haveLib);
     installNameTool(["-add_rpath", "@loader_path/..", f]);
   }
-  // 3. binaries: rewrite deps, rpath to ../lib (Contents/MacOS → ../Resources?).
-  //    For our flat dev tree bin/ and lib/ are siblings, so ../lib is correct;
-  //    in the .app the launcher passes MLT_REPOSITORY/MLT_DATA explicitly anyway.
+  // 3. binaries: rewrite deps, then add BOTH rpath layouts so the bins resolve
+  //    their dylibs in the dev tree AND the packaged .app:
+  //      • `@loader_path/../lib` — the dev tree, where bin/ and lib/ are siblings.
+  //      • `@loader_path/../Resources/sidecars/lib` — the packaged .app, where Tauri
+  //        puts the bins in `Contents/MacOS` and the dylibs in
+  //        `Contents/Resources/sidecars/lib`, so the sibling-relative ../lib misses
+  //        (points at the non-existent `Contents/lib`). Without this, the packaged
+  //        `ffprobe` crashes on launch (dyld: libavdevice not loaded) — which makes
+  //        `sourceHasAlpha` silently degrade every alpha overlay to an opaque proxy.
+  //        Baking the rpath fixes it WITHOUT relying on DYLD_FALLBACK_LIBRARY_PATH
+  //        (which renderer_env also sets, as a belt-and-suspenders backstop).
   for (const f of b.binFiles) {
     rewriteDeps(f, haveLib);
     installNameTool(["-add_rpath", "@loader_path/../lib", f]);
+    installNameTool(["-add_rpath", "@loader_path/../Resources/sidecars/lib", f]);
   }
   ok("install_name_tool rewrite complete");
 

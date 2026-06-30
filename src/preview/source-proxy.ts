@@ -93,9 +93,11 @@ export type SourceProxyResult = {
  *  if its proxy keeps the alpha — H.264 cannot, so an alpha source is proxied as
  *  VP9-with-alpha instead. Pixel formats with an alpha plane end in `a`
  *  (`yuva420p`, `yuva444p12le`, `rgba`, `bgra`, `argb`, `ya8`, …) — the robust,
- *  codec-agnostic signal. A probe failure returns false (the opaque H.264 path),
- *  never throwing: a proxy must always build. */
-async function sourceHasAlpha(resolvedSource: string): Promise<boolean> {
+ *  codec-agnostic signal. Never throws (a proxy must always build), but a probe
+ *  FAILURE is reported as `probed:false` (alpha UNKNOWN) — NOT as `hasAlpha:false`,
+ *  so the caller can log it loudly instead of silently degrading an alpha source to
+ *  an occluding opaque proxy (the shipped-app `chat.mov`-goes-black bug). */
+async function detectAlpha(resolvedSource: string): Promise<AlphaProbe> {
   try {
     const proc = Bun.spawn(
       [
@@ -112,13 +114,27 @@ async function sourceHasAlpha(resolvedSource: string): Promise<boolean> {
       ],
       { stdout: "pipe", stderr: "pipe" },
     );
-    const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-    if (code !== 0) return false;
+    const [out, stderr, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    // A NONZERO exit means ffprobe could not run (missing binary, a dyld failure in
+    // the packaged app, an unreadable file) — NOT "no alpha". Returning `probed:false`
+    // is what stops the caller from silently treating an alpha source as opaque (the
+    // bug that turned `chat.mov` into an occluding black scrim in the shipped app).
+    if (code !== 0) {
+      return {
+        hasAlpha: false,
+        probed: false,
+        detail: stderr.trim().slice(0, 200) || `exit ${code}`,
+      };
+    }
     const pixFmt = out.trim().toLowerCase();
     // Alpha pixel formats: yuva*, rgba/bgra/argb/abgr, ya8/ya16, gbrap, pal8 (LUT
     // may carry alpha). The decisive marker is an `a` in the channel layout — match
     // the well-known families rather than a brittle exact list.
-    return (
+    const hasAlpha =
       /^yuva/.test(pixFmt) ||
       /^ya\d/.test(pixFmt) ||
       /^gbra/.test(pixFmt) ||
@@ -127,11 +143,27 @@ async function sourceHasAlpha(resolvedSource: string): Promise<boolean> {
       pixFmt === "argb" ||
       pixFmt === "abgr" ||
       pixFmt.includes("rgba") ||
-      pixFmt.includes("bgra")
-    );
-  } catch {
-    return false;
+      pixFmt.includes("bgra");
+    return { hasAlpha, probed: true };
+  } catch (error) {
+    return {
+      hasAlpha: false,
+      probed: false,
+      detail: String((error as Error)?.message ?? error).slice(0, 200),
+    };
   }
+}
+
+/** The result of probing a source for an alpha plane. `probed:false` means ffprobe
+ *  could not be run at all — the alpha is UNKNOWN, distinct from a probed "no alpha".
+ *  The caller must NOT treat unknown as opaque silently (that corrupts alpha
+ *  overlays); it logs loudly and the failure is diagnosable. */
+interface AlphaProbe {
+  hasAlpha: boolean;
+  /** True iff ffprobe ran and reported a pixel format; false iff it failed. */
+  probed: boolean;
+  /** ffprobe's failure detail when `probed` is false (for the loud log). */
+  detail?: string;
 }
 
 /** Content-address key for a source proxy: a hash of the resolved source path, its
@@ -190,7 +222,19 @@ export async function buildSourceProxy(
   // decodes `vp09` with its alpha plane (proven: mediabunny `CanvasSink({alpha:true})`
   // returns the source's exact alpha in headless Chromium). H.264 has no alpha plane,
   // so an opaque H.264 proxy of an alpha source would occlude the layer below.
-  const hasAlpha = await sourceHasAlpha(resolvedSource);
+  const probe = await detectAlpha(resolvedSource);
+  if (!probe.probed) {
+    // LOUD, not silent: ffprobe could not determine alpha, so we fall back to the
+    // opaque H.264 path — but if the source actually HAS alpha, that opaque proxy will
+    // occlude the footage below (the exact `chat.mov`-goes-black bug). Surface it so
+    // it's diagnosable instead of a mystery black overlay. In the packaged app the
+    // usual cause is the bundled ffprobe failing to load its libav dylibs.
+    const detail = probe.detail ?? "unknown error";
+    console.warn(
+      `[vean] source-proxy: ffprobe could not probe ${resolvedSource} for an alpha plane (${detail}). Falling back to an OPAQUE proxy — if this source has alpha it will occlude the layer below. Check the renderer sidecars (DYLD_FALLBACK_LIBRARY_PATH / the bundled ffprobe must load its libav dylibs).`,
+    );
+  }
+  const hasAlpha = probe.hasAlpha;
   // The alpha (VP9) path ignores all-intra (see SourceProxyOpts.intra); record the
   // effective flag in the key so it matches what was actually encoded.
   const effectiveIntra = intra && !hasAlpha;

@@ -123,10 +123,27 @@ fn renderer_env(app: &AppHandle) -> Vec<(String, String)> {
             let data = sidecars.join("share").join("mlt");
             if melt.exists() && lib_mlt.is_dir() && data.is_dir() {
                 let s = |p: PathBuf| p.to_string_lossy().into_owned();
+                // The renderer dylib dir (`sidecars/lib`): the flat libav*/libmlt*
+                // closure the bundled melt/ffmpeg/ffprobe link against. In a packaged
+                // `.app` the bins live in `Contents/MacOS` but the dylibs are in
+                // `Contents/Resources/sidecars/lib`, so the bins' baked
+                // `@loader_path/../lib` rpath (which assumes bin/lib are siblings, the
+                // dev-tree layout) points at the non-existent `Contents/lib`. melt
+                // limps by on a Homebrew dev machine via a leftover
+                // `/opt/homebrew/.../lib` rpath, but `ffprobe` has only the broken
+                // rpath and CRASHES on launch (dyld: libavdevice not loaded) — which
+                // made `sourceHasAlpha` silently fail and degrade every alpha overlay
+                // to an opaque proxy. Pointing DYLD_FALLBACK_LIBRARY_PATH at the real
+                // lib dir makes all three bins resolve their dylibs regardless of baked
+                // rpath, on a clean Mac (no Homebrew). Fallback (not LIBRARY_PATH) so it
+                // only fills gaps and never shadows a system dylib.
+                let lib = sidecars.join("lib");
+                let dyld = format!("{}:/usr/local/lib:/usr/lib", s(lib));
                 return vec![
                     ("VEAN_MELT".into(), s(melt)),
                     ("VEAN_FFMPEG".into(), s(bin_dir.join(format!("ffmpeg{suffix}")))),
                     ("VEAN_FFPROBE".into(), s(bin_dir.join(format!("ffprobe{suffix}")))),
+                    ("DYLD_FALLBACK_LIBRARY_PATH".into(), dyld),
                     ("MLT_REPOSITORY".into(), s(lib_mlt)),
                     ("MLT_DATA".into(), s(data.clone())),
                     ("MLT_PROFILES_PATH".into(), s(data.join("profiles"))),
