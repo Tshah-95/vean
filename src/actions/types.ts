@@ -1,5 +1,7 @@
 import type { z } from "zod";
-import type { ResolvedProject } from "../project/context";
+import type { ResolveProjectOptions, ResolvedProject } from "../project/context";
+import type { StateDbHandle } from "../state/db";
+import type { PolicyDecision } from "./policy";
 import type { SchemaSummary } from "./schema-summary";
 
 export type ActionScope =
@@ -48,11 +50,84 @@ export type ActionSurfaces = {
   tauri?: { command?: string; windows?: string[] };
 };
 
+/** The surface an action is executing on (which adapter invoked it). */
+export type ActionSurface = "cli" | "mcp" | "lsp" | "tauri" | "test";
+
+// ─── Injected capabilities ─────────────────────────────────────────────────
+// An action's side-effecting dependencies, threaded through `ActionContext`
+// instead of reached via ambient module imports. The defaults (see
+// `createActionContext`) reproduce today's behavior exactly, so the migration is
+// mechanical and behavior-preserving; the seam is what lets a test or a future
+// surface (S3 editorial macros, S4 generative producer) inject a fake document
+// store, a frozen clock, or a deterministic id factory.
+
+/** Read/write timeline documents by URI (`file://…` or a bare path). Defaults to
+ *  the filesystem; a test can inject an in-memory store. */
+export type DocumentStore = {
+  read(uri: string): Promise<string>;
+  write(uri: string, text: string): Promise<void>;
+};
+
+/** The wall clock, injected so time-stamped output (cache rows, job timings) is
+ *  deterministic under test. Defaults to the real system clock. */
+export type Clock = {
+  now(): Date;
+  nowIso(): string;
+};
+
+/** Mints stable ids for runtime-created entities. Defaults to `crypto.randomUUID`;
+ *  a test can inject a deterministic counter. */
+export type IdFactory = {
+  uuid(): string;
+};
+
+/** A minimal structured logger. Defaults to a console-backed sink (quiet at
+ *  `debug`); a surface can route these to its own diagnostics channel. */
+export type Logger = {
+  debug(message: string, fields?: Record<string, unknown>): void;
+  info(message: string, fields?: Record<string, unknown>): void;
+  warn(message: string, fields?: Record<string, unknown>): void;
+  error(message: string, fields?: Record<string, unknown>): void;
+};
+
+/** Lazily open the repo-local state DB (`./db` `openStateDb`). Async so merely
+ *  CONSTRUCTING a context never eagerly pulls in `bun:sqlite` — the heavy module
+ *  loads only when an action actually touches state. The caller owns closing the
+ *  returned handle's `sqlite`, exactly as today. */
+export type StateAccess = {
+  open(repo?: string): Promise<StateDbHandle>;
+};
+
+/** Resolve a project reference against this context's cwd/env. Bound at context
+ *  construction so an action doesn't re-thread cwd/env to resolve. */
+export type ProjectResolver = (options?: ResolveProjectOptions) => ResolvedProject | undefined;
+
 export type ActionContext = {
   cwd: string;
-  surface: "cli" | "mcp" | "lsp" | "tauri" | "test";
+  surface: ActionSurface;
   project?: ResolvedProject;
   env: NodeJS.ProcessEnv;
+  // ── Injected capabilities (defaulted by `createActionContext`) ──
+  /** Read/write timeline documents (defaults to the filesystem). */
+  documents: DocumentStore;
+  /** The wall clock (defaults to the system clock). */
+  clock: Clock;
+  /** Stable id factory (defaults to `crypto.randomUUID`). */
+  ids: IdFactory;
+  /** Structured logger (defaults to a console-backed sink). */
+  logger: Logger;
+  /** Project resolver bound to this context's cwd/env. */
+  resolveProject: ProjectResolver;
+  /** Lazy repo-local state-DB access. */
+  state: StateAccess;
+  /** Cooperative cancellation for long-running actions (render, jobs). When the
+   *  invoking surface supports it (e.g. a Tauri cancel button), it's threaded
+   *  here; absent for one-shot CLI calls. */
+  signal?: AbortSignal;
+  /** The policy decision computed for this invocation, when the caller evaluated
+   *  it before dispatch (`executeAction` threads it through). Absent for direct
+   *  `definition.execute` calls that bypass policy. */
+  policy?: PolicyDecision;
 };
 
 export type ActionDefinition<I = unknown, O = unknown> = {

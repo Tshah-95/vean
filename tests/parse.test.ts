@@ -522,6 +522,123 @@ describe("round-trip with serialize (byte-identical)", () => {
   });
 });
 
+// Origin metadata (provenance) is pinned to the clip and round-trips as
+// namespaced `vean:provenance.*` producer properties so it survives EXPORT — the
+// thing Palmier's lossy `.palmier`→XML path drops. It's modeled structurally (like
+// `gain`/`label`), never via `extraProps`, so it must NOT double-emit, and the
+// same-IR→byte-identical contract must still hold both with and without it.
+describe("provenance round-trip (vean:provenance.* producer props)", () => {
+  function withProvenance() {
+    resetIds();
+    return timeline(VERTICAL, {
+      video: [
+        videoTrack(
+          clip("/abs/broll.mp4", {
+            id: "broll",
+            dur: 90,
+            provenance: {
+              source: "generative",
+              model: "veo-3.1",
+              prompt: "a slow drone shot over a misty forest at dawn",
+              references: ["/abs/ref-a.png", "/abs/ref-b.png"],
+              tool: "generate.broll",
+              createdAt: "2026-06-30T12:00:00.000Z",
+            },
+          }),
+        ),
+      ],
+    });
+  }
+
+  it("recovers the full provenance object through fromMlt(toMlt(tl))", () => {
+    const after = fromMlt(toMlt(withProvenance()));
+    const clipItem = must(must(after.tracks.video[0], "video track 0").items[0], "item 0");
+    if (clipItem.kind !== "clip") throw new Error("expected a clip");
+    expect(clipItem.provenance).toEqual({
+      source: "generative",
+      model: "veo-3.1",
+      prompt: "a slow drone shot over a misty forest at dawn",
+      references: ["/abs/ref-a.png", "/abs/ref-b.png"],
+      tool: "generate.broll",
+      createdAt: "2026-06-30T12:00:00.000Z",
+    });
+  });
+
+  it("a clip WITH provenance is byte-identical across serialize→parse→serialize", () => {
+    resetIds();
+    const xml1 = toMlt(withProvenance());
+    const xml2 = toMlt(fromMlt(xml1));
+    expect(xml2).toBe(xml1);
+    // The marker property is actually present on the wire (proves the field emits).
+    expect(xml1).toContain('<property name="vean:provenance.source">generative</property>');
+    expect(xml1).toContain(
+      '<property name="vean:provenance.references">/abs/ref-a.png,/abs/ref-b.png</property>',
+    );
+  });
+
+  it("does NOT sweep provenance props into extraProps (no double-emit)", () => {
+    const after = fromMlt(toMlt(withProvenance()));
+    const clipItem = must(must(after.tracks.video[0], "video track 0").items[0], "item 0");
+    if (clipItem.kind !== "clip") throw new Error("expected a clip");
+    // Reconstructed structurally → no `vean:provenance.*` key leaks into extraProps,
+    // and a single emission carries exactly one `source` marker (not two).
+    const extraKeys = Object.keys(clipItem.extraProps ?? {});
+    expect(extraKeys.some((k) => k.startsWith("vean:provenance."))).toBe(false);
+    const sourceMarkers = toMlt(withProvenance()).match(/vean:provenance\.source/g) ?? [];
+    expect(sourceMarkers).toHaveLength(1);
+  });
+
+  it("the minimal (source-only) provenance round-trips and re-emits byte-identically", () => {
+    resetIds();
+    const minimal = timeline(VERTICAL, {
+      video: [
+        videoTrack(
+          clip("/abs/import.mp4", { id: "imp", dur: 30, provenance: { source: "import" } }),
+        ),
+      ],
+    });
+    const xml1 = toMlt(minimal);
+    const after = fromMlt(xml1);
+    const clipItem = must(must(after.tracks.video[0], "video track 0").items[0], "item 0");
+    if (clipItem.kind !== "clip") throw new Error("expected a clip");
+    expect(clipItem.provenance).toEqual({ source: "import" });
+    expect(toMlt(after)).toBe(xml1);
+  });
+
+  it("a clip WITHOUT provenance leaves the field absent (same-IR byte-identity preserved)", () => {
+    resetIds();
+    const plain = timeline(VERTICAL, {
+      video: [videoTrack(clip("/abs/plain.mp4", { id: "plain", dur: 30 }))],
+    });
+    const xml1 = toMlt(plain);
+    expect(xml1).not.toContain("vean:provenance");
+    const after = fromMlt(xml1);
+    const clipItem = must(must(after.tracks.video[0], "video track 0").items[0], "item 0");
+    if (clipItem.kind !== "clip") throw new Error("expected a clip");
+    expect(clipItem.provenance).toBeUndefined();
+    expect(toMlt(after)).toBe(xml1);
+  });
+
+  it("an XML-special character in a prompt is escaped + recovered intact", () => {
+    resetIds();
+    const tricky = timeline(VERTICAL, {
+      video: [
+        videoTrack(
+          clip("/abs/x.mp4", {
+            id: "x",
+            dur: 30,
+            provenance: { source: "remotion", prompt: 'a "quote" & <tag> test' },
+          }),
+        ),
+      ],
+    });
+    const after = fromMlt(toMlt(tricky));
+    const clipItem = must(must(after.tracks.video[0], "video track 0").items[0], "item 0");
+    if (clipItem.kind !== "clip") throw new Error("expected a clip");
+    expect(clipItem.provenance?.prompt).toBe('a "quote" & <tag> test');
+  });
+});
+
 describe("validation", () => {
   it("throws on a document with no <mlt> root", () => {
     expect(() => fromMlt("<not-mlt/>")).toThrow(/<mlt>/);

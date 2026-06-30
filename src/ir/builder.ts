@@ -17,6 +17,7 @@ import type {
   Filter,
   Item,
   Profile,
+  Provenance,
   Timeline,
   Track,
   Tracks,
@@ -98,6 +99,9 @@ type ClipOpts = {
   filters?: Filter[];
   /** Optional human label for the .mlt. */
   label?: string;
+  /** Optional origin metadata (import / generative / capture / remotion),
+   *  round-tripped as `vean:provenance.*` producer properties. */
+  provenance?: Provenance;
 };
 
 // Fades are stored as a marker filter the serializer resolves into the proven
@@ -137,6 +141,7 @@ function baseClip(
     gain: opts.gain,
     filters: [...fadeFilters(opts), ...(opts.filters ?? [])],
     label: opts.label,
+    provenance: opts.provenance,
   };
 }
 

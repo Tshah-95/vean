@@ -47,11 +47,12 @@ import type {
   Item,
   Profile,
   PropertyValue,
+  Provenance,
   Timeline,
   Track,
   Transition,
 } from "./types";
-import { timelineSchema } from "./types";
+import { encodeProvenanceProps, timelineSchema } from "./types";
 
 // melt is forgiving about the version string; this matches the local toolchain
 // and the value real Shotcut documents carry.
@@ -135,6 +136,10 @@ type Prod = {
    *  …) preserved from parse, in document order — re-emitted verbatim so the
    *  round-trip is lossless. Empty/absent for vean's own emissions. */
   extraProps?: Record<string, PropertyValue>;
+  /** Origin metadata, emitted as `vean:provenance.*` producer properties so it
+   *  survives export. Modeled structurally (never via extraProps), so it never
+   *  double-emits. */
+  provenance?: Provenance;
   /** Emit the Shotcut identity/audio hints (true for real timeline producers;
    *  false would be a bare melt producer — we always emit a doc, so always true
    *  except the background, which sets its own). */
@@ -316,6 +321,15 @@ function prodXml(p: Prod): string {
     const uuid = p.uuid ?? shotcutUuid(p.id);
     lines.push(`    <property name="shotcut:uuid">${esc(uuid)}</property>`);
   }
+  // Origin metadata, emitted as namespaced `vean:provenance.*` CHILDREN in a fixed
+  // (schema) order — after the structural props + uuid, before the verbatim
+  // extra-props — a deterministic position the parser re-captures structurally, so
+  // a clip with provenance round-trips to a stable fixpoint.
+  if (p.provenance) {
+    for (const [name, value] of encodeProvenanceProps(p.provenance)) {
+      lines.push(`    <property name="${esc(name)}">${esc(value)}</property>`);
+    }
+  }
   // Non-structural producer metadata (caption, eof, aspect_ratio, proxy hints, …),
   // preserved from parse in document order for a lossless round-trip. Emitted
   // after the structural props + uuid, before the filters — a stable position the
@@ -447,6 +461,9 @@ function makeProd(
   // EVERY producer minted from it (solo, dissolve tail/head) so it survives the
   // round-trip regardless of which window the clip emits through.
   if (c.extraProps && Object.keys(c.extraProps).length > 0) prod.extraProps = c.extraProps;
+  // Carry origin metadata onto EVERY producer minted from the clip (solo, dissolve
+  // tail/head), so it survives the round-trip regardless of emission window.
+  if (c.provenance) prod.provenance = c.provenance;
   return prod;
 }
 
