@@ -9,6 +9,7 @@ import {
   listActions,
 } from "./actions";
 import { buildConfigCommand } from "./cli/config";
+import { buildFpsCommand } from "./cli/fps";
 import { type DoctorHost, type DoctorSurface, formatDoctorReport } from "./cli/doctor";
 
 const program = new Command();
@@ -1078,6 +1079,7 @@ jobsCommand
   });
 
 program.addCommand(buildConfigCommand());
+program.addCommand(buildFpsCommand());
 
 program.parseAsync().catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));
