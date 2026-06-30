@@ -562,16 +562,16 @@ renderer sidecars as the CLI; it does not become a second implementation.
 
 One timeline, footage + graphics.
 
-- [ ] Compositions become timeline clips: pre-rendered alpha (ProRes 4444,
+- [x] Compositions become timeline clips: pre-rendered alpha (ProRes 4444,
       `yuva444p10le`, partial `frameRange`) for export; `<Player>` for live preview.
-- [ ] Render cache keyed on (composition id + resolved input props + range).
-- [ ] Decide audio ownership (MLT mixes; Remotion clips rendered video-only).
+- [x] Render cache keyed on (composition id + resolved input props + range).
+- [x] Decide audio ownership (MLT mixes; Remotion clips rendered video-only).
 
-**Gate:**
-- [ ] `ffprobe` confirms alpha (`yuva444p10le`); the clip composites on an upper
+**Gate:** GREEN — see [GATE-MOVE5.md](GATE-MOVE5.md).
+- [x] `ffprobe` confirms alpha (`yuva444p10le`); the clip composites on an upper
       MLT track (still shows the overlay over footage).
-- [ ] Seeking the master clock moves the slaved `<Player>` (frameupdate event).
-- [ ] One real piece: footage + lower-third, previewed live and exported, matching.
+- [x] Seeking the master clock moves the slaved `<Player>` (frameupdate event).
+- [x] One real piece: footage + lower-third, previewed live and exported, matching.
 
 ---
 
