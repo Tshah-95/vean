@@ -1,0 +1,33 @@
+{
+  "$schema": "./skill.schema.json",
+  "version": "1.0.0",
+  "skills": [
+    {
+      "id": "drive",
+      "title": "Drive the vean app to prove a UI change works",
+      "description": "Drive the vean app to PROVE a UI change works — open the real editor in a headless (or headed) browser, click/inspect the thing you changed, record a screenshot/video clip into the temp dir, and reference it back in chat as proof. Use whenever you make a material UI change to viewer/ or the preview server and want to demonstrate the effect (not just assert it), confirm a feature behaves as imagined, or show before/after. Headless vs headed is indifferent — pick whichever proves it.",
+      "version": "1.0.0",
+      "path": ".agents/skills/drive/SKILL.md",
+      "tags": ["ui", "verification", "viewer"],
+      "surfaces": ["tauri", "agent"]
+    },
+    {
+      "id": "editing",
+      "title": "Edit a vean timeline as an agent",
+      "description": "How to edit a vean timeline as an agent — drive the .mlt through the MCP/CLI domain tools (apply-op / preview-op / undo / render / still), trust the ambient vean-lsp for diagnostics (never poll diagnose in the loop), read each tool's consequences + inverse + optional alerts, and use render→still as your eyes. Use when making any change to a .mlt document through the bridge (apply an op, fix a diagnostic, tighten a cut, duck audio, add a dissolve).",
+      "version": "1.0.0",
+      "path": ".agents/skills/editing/SKILL.md",
+      "tags": ["editing", "timeline", "agent"],
+      "surfaces": ["mcp", "cli", "lsp", "agent"]
+    },
+    {
+      "id": "setup",
+      "title": "Set up or verify a fresh vean clone",
+      "description": "Set up or verify a fresh vean clone for local development and agent use. Use when the user asks to bootstrap, install, doctor, verify, configure Claude Code, configure Codex, enable the vean LSP/MCP plugin, hoist skills, or make a new consumer machine/repo checkout ready to edit .mlt timelines.",
+      "version": "1.0.0",
+      "path": ".agents/skills/setup/SKILL.md",
+      "tags": ["setup", "install", "doctor"],
+      "surfaces": ["cli", "lsp", "mcp"]
+    }
+  ]
+}
