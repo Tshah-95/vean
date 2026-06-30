@@ -5,9 +5,37 @@ with the **vean lower-third** composited on an upper track (qtblend) plus an aud
 bed, proven end-to-end through the real renderer.
 
 ```
-demo.mlt          committed   the timeline: base + qtblend overlay + audio bed
-build-demo.ts     committed   authors demo.mlt + (re)renders the overlay
-lower-third.mov   gitignored  the Remotion alpha overlay (regenerated on demand)
+demo.mlt                  committed   the timeline: base + qtblend overlay + audio bed
+build-demo.ts             committed   authors demo.mlt + (re)renders the overlay
+lower-third.mov           gitignored  the Remotion alpha overlay (regenerated on demand)
+graphic-overlay.mlt       committed   the SIBLING fixture: base + a GRAPHIC overlay clip
+build-graphic-overlay.ts  committed   authors graphic-overlay.mlt (no render needed)
+```
+
+## The two overlay paths (why there are two fixtures)
+
+The viewer composites an upper-track overlay two different ways depending on what
+the clip **is** (`viewer/src/types.ts isGraphicClip`):
+
+| Fixture | Overlay clip | Composited by | Proven by |
+|---|---|---|---|
+| `demo.mlt` | a baked video **file** (`corpus/demo/lower-third.mov`) | the **footage** WebGL compositor (decoded + over-composited) | `bun run verify:move5` (melt export) |
+| `graphic-overlay.mlt` | a **graphic** clip (`.vean/cache/remotion/…`, `isGraphicClip` true) | the live **`@remotion/player`** overlay, seeked to the master clock | `bun run verify:live-overlay` (drive + browser) |
+
+`demo.mlt`'s overlay carries a `graphic:` label in the builder, but `label` does
+not serialize — and its resource isn't under `cache/remotion/` — so the parsed clip
+is **not** a graphic clip and the footage compositor (correctly) decodes it (commit
+`ba0948c`). `graphic-overlay.mlt` is the missing fixture that exercises the **live
+Remotion `<Player>` path**: its overlay resource lives in the Remotion render cache,
+so `isGraphicClip` is true, App `deriveOverlay` returns present:true, `resolveLayers`
+**skips** that track (the `<Player>` owns it), and the live `<Player>` draws the
+`LowerThird` over the footage. No binary is needed — the `<Player>` renders the
+composition from the viewer's Vite alias, not from a file.
+
+Regenerate it (deterministic, no render/melt/ffmpeg) with:
+
+```sh
+bun run graphic-overlay:build
 ```
 
 ## What's in the timeline

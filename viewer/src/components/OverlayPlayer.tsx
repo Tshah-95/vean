@@ -60,8 +60,46 @@ export function OverlayPlayer({ width, height, fps, durationInFrames, inputProps
     }
   }, [clock.playing, clockInstance]);
 
+  // Headless OVERLAY bridge (`window.__veanOverlay`) — the no-UI handle the
+  // §9-step-4 live-overlay gate uses to prove the Remotion seam end-to-end:
+  // (a) the bridge EXISTS only because this component mounted, which happens only
+  // when App `deriveOverlay` returned present:true (a real GRAPHIC clip), and
+  // (b) it reports the live `(playerFrame, masterFrame)` so the gate can assert the
+  // `<Player>` is SLAVED to the master clock — seek the clock, the Player follows.
+  // Side-effect only; mirrors the decode/edit/perf/audio/approx bridges. `present`
+  // is always true here (the component is conditionally rendered on overlayPresent).
+  useEffect(() => {
+    (
+      window as unknown as {
+        __veanOverlay?: () => {
+          present: boolean;
+          durationInFrames: number;
+          playerFrame: number | null;
+          masterFrame: number;
+        };
+      }
+    ).__veanOverlay = () => {
+      const player = playerRef.current;
+      let playerFrame: number | null = null;
+      try {
+        playerFrame = player ? player.getCurrentFrame() : null;
+      } catch {
+        playerFrame = null;
+      }
+      return {
+        present: true,
+        durationInFrames,
+        playerFrame,
+        masterFrame: clockInstance.getSnapshot().currentFrame,
+      };
+    };
+    return () => {
+      (window as unknown as { __veanOverlay?: unknown }).__veanOverlay = undefined;
+    };
+  }, [durationInFrames, clockInstance]);
+
   return (
-    <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+    <div data-testid="overlay-player" style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
       <Player
         ref={playerRef}
         component={LowerThird as never}

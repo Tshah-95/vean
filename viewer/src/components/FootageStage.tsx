@@ -549,6 +549,36 @@ export function FootageStage({
     };
   }, [approximate, stillUrl, requestExactStill]);
 
+  // Headless LAYERS bridge (`window.__veanLayers`) — the no-UI handle the
+  // §9-step-4 live-overlay gate uses to prove the footage compositor SKIPS a graphic
+  // (Remotion) track: it returns the resolved z-stack the compositor draws at a frame
+  // (the SAME `resolveLayers` the composite core runs), each layer's `kind` +
+  // `trackIndex`. For a timeline whose upper qtblend track is a GRAPHIC clip, the
+  // resolved stack EXCLUDES that track's index (the `<Player>` overlay owns it) while
+  // keeping the base footage below — exactly `resolveLayers`' overlayTrackIndices
+  // graphic-skip branch, observed live. Side-effect only; re-published on every IR
+  // change so the gate reads the current working IR.
+  useEffect(() => {
+    (
+      window as unknown as {
+        __veanLayers?: (
+          frame?: number,
+        ) => Array<{ kind: string; trackIndex: number; color?: string; uuid?: string }>;
+      }
+    ).__veanLayers = (frame) => {
+      const f = typeof frame === "number" ? frame : clockInstance.getSnapshot().currentFrame;
+      return resolveLayers(timeline, f).layers.map((l) => ({
+        kind: l.kind,
+        trackIndex: l.trackIndex,
+        ...(l.kind === "solid" ? { color: l.color } : {}),
+        ...("uuid" in l ? { uuid: (l as { uuid: string }).uuid } : {}),
+      }));
+    };
+    return () => {
+      (window as unknown as { __veanLayers?: unknown }).__veanLayers = undefined;
+    };
+  }, [timeline, clockInstance]);
+
   // Clear the composite debounce timer on unmount (the graph tears itself down in
   // its own effect's cleanup).
   useEffect(

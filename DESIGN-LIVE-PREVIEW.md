@@ -18,13 +18,14 @@
 > | 1 · keyframe resolver JS port | `viewer/src/keyframes.ts` | `tests/keyframes-port.test.ts` (89) runs core + port over the SHARED `keyframe-vectors.ts` — byte-for-byte |
 > | 2 · Tier 0 source-frame `<video>` | `viewer/src/resolveVisible.ts` | `tests/resolve-visible.test.ts` (14); superseded as the realtime source by Tier 1 (proxy-render kept only as a fallback) |
 > | 3 · mediabunny decode layer | `viewer/src/decode/{decode-worker,parallelDecoder}.ts` | mediabunny **inlined in the worker bundle, zero CDN refs**; `window.__veanDecode` decode-proof bridge |
-> | 4 · Tier 1 `renderFrame(ir,frame)` | `viewer/src/{resolveLayers,compositor/glCompositor}.ts` | demo.mlt previews fully in-browser — f45 `#0e5c63` (vs GATE-MOVE5 `#0d5c61`, within scaler drift §8.1), lower-third on top, **0 proxy-render**; `tests/resolve-layers.test.ts` (13) |
+> | 4 · Tier 1 `renderFrame(ir,frame)` | `viewer/src/{resolveLayers,compositor/glCompositor}.ts` | demo.mlt previews fully in-browser — f45 `#0e5c63` (vs GATE-MOVE5 `#0d5c61`, within scaler drift §8.1), overlay composited on top, **0 proxy-render**; the live `<Player>` overlay path (graphic clip → `deriveOverlay` present:true → Player slaved to the clock → footage compositor SKIPS the track) is drive-proven on `corpus/demo/graphic-overlay.mlt` by `bun run verify:live-overlay`; `tests/resolve-layers.test.ts` (13) + `tests/graphic-overlay-fixture.test.ts` (9) |
 > | 5 · Tier 2a perf | `viewer/src/decode/frameCache.ts` + worker pool | drive perf: composite median **0.05 ms/frame**, cache hitRate **0.998**, byte-bounded at 522/524 MB with `close()`-on-evict (6763 evicts, no leak), 4 workers, 0 stale-dropped; short-GOP H.264 proxy `-g 15` confirmed via ffprobe; `tests/frame-cache.test.ts` (12) |
 > | 6 · Tier 2b audio + melt-still | `viewer/src/{audio/audioGraph,resolveAudio}.ts` | AudioGraph 48 kHz slaved to clock; `window.__veanApprox` exact-still bridge (`requestExactStill`); `tests/resolve-audio.test.ts` (8) |
 >
 > **Tier-by-tier:** Tier 0 **green** (subsumed by Tier 1). Tier 1 **green** (multi-track
-> over-composite + dissolve + Remotion overlay, drive-proven on `corpus/demo/demo.mlt`
-> AND `projects/retire`). Tier 2a **green** (perf + bounded memory measured under the
+> over-composite + dissolve drive-proven on `corpus/demo/demo.mlt` AND `projects/retire`;
+> the live Remotion `<Player>` overlay path drive-proven on `corpus/demo/graphic-overlay.mlt`
+> via `bun run verify:live-overlay`). Tier 2a **green** (perf + bounded memory measured under the
 > budget). Tier 2b **green for video-locked audio + the on-demand still affordance**;
 > the longer-soak A/V-drift-over-minutes assertion (§8.6) is exercised structurally,
 > not yet over a literal multi-minute headless play.
@@ -367,11 +368,15 @@ preview `<video>` lands on the new source frame within one debounce window. A
 > **SHIPPED (green).** `viewer/src/compositor/glCompositor.ts` (WebGL2 stage, z-order
 > quads, premultiplied-alpha over-composite, gl-transitions fade/luma) +
 > `viewer/src/resolveLayers.ts` (the `walkTrack`-mirroring multi-track + dissolve +
-> fade/opacity resolver). Drive-proven on **two** projects: `corpus/demo/demo.mlt`
-> (footage cross-fade + LowerThird graphic overlay via the Remotion `<Player>`) AND
-> `projects/retire` (PXL footage base + a **baked** `chat.mov` overlay the footage
-> compositor decodes — the load-bearing correction in commit `ba0948c`: a non-graphic
-> over-composite clip is decoded, not handed to the `<Player>`). Both composite the
+> fade/opacity resolver). Drive-proven on **three** fixtures, covering BOTH overlay
+> compositing paths: `corpus/demo/demo.mlt` (footage cross-fade + a **baked**
+> `lower-third.mov` overlay the FOOTAGE compositor decodes) AND `projects/retire` (PXL
+> footage base + a **baked** `chat.mov` overlay — the load-bearing correction in commit
+> `ba0948c`: a non-graphic over-composite clip is decoded, not handed to the `<Player>`),
+> AND `corpus/demo/graphic-overlay.mlt` (footage cross-fade + a real GRAPHIC clip routed
+> to the live Remotion `<Player>` — `bun run verify:live-overlay` asserts `deriveOverlay`
+> present:true, the Player slaved to the clock, the footage compositor SKIPPING the
+> graphic track, and the `LowerThird` rendered over the footage). All composite the
 > overlay on top of live footage with **zero `proxy-render`**.
 
 **Goal:** the real `renderFrame(ir, frame)` — multiple video tracks, dissolves and
@@ -407,7 +412,23 @@ footage shows *through* the transparent overlay region and the lower-third rende
 on top — the same pixels the Move-5 gate already proved against a real `melt`
 export (`GATE-MOVE5.md`: f45 `#0d5c61`, lower-third `#11181f`), now produced by the
 browser compositor with **no `melt` call**. A two-track dissolve scrubs frame-exact
-across the overlap. Zero `proxy-render` requests during the session.
+across the overlap. Zero `proxy-render` requests during the session. (Here the
+overlay is a baked `.mov` the FOOTAGE compositor decodes — the `isGraphicClip`-false
+path.)
+
+**Acceptance gate (driveable), the live `<Player>` path:** `corpus/demo/graphic-overlay.mlt`
+(the SIBLING fixture — same footage cross-fade base, but the overlay is a real GRAPHIC
+clip whose resource lives in the Remotion render cache, so `isGraphicClip` is true).
+`bun run verify:live-overlay` drives it headless via `scripts/drive.ts` + `agent-browser`
+and asserts end-to-end: (a) `deriveOverlay` present:true → the `OverlayPlayer` mounts
+(`window.__veanOverlay` bridge), (b) the `@remotion/player` is slaved to the master
+clock (seek → `playerFrame === masterFrame`), (c) the footage compositor SKIPS the
+graphic track (`resolveLayers` via `window.__veanLayers` keeps the base, drops trackIndex
+1), and (d) the live `LowerThird` renders over the footage (DOM + screenshot). No
+`melt`/Remotion render — the `<Player>` draws the composition from the viewer's Vite
+alias. This is the path no committed fixture exercised before (the `<Player>` + the
+`deriveOverlay` present:true branch); the unit `tests/resolve-layers.test.ts`
+("EXCLUDES … GRAPHIC clip") pins the pure logic, this gate the live render.
 
 ### Tier 2 — performance: decode-ahead, LRU, workers, proxies, melt render-cache
 
