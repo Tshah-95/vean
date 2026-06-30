@@ -31,6 +31,7 @@ import {
   filter,
   resetIds,
   timeline,
+  transition,
   videoTrack,
 } from "../src/ir/builder";
 import { fromMlt } from "../src/ir/parse";
@@ -761,5 +762,72 @@ describe("move — ripple (remove + insert)", () => {
       }),
     );
     assertXmllintClean(r.state, "move-ripple");
+  });
+});
+
+describe("move: an over-composite transition follows the overlay clip it brackets", () => {
+  // The addGraphic shape: footage on V1 (main-tractor index 1), an alpha overlay on
+  // V2 (index 2) after a leading blank, and a `qtblend` compositing V2 over V1 for
+  // the overlay's exact span. Dragging the overlay along V2 must carry the qtblend
+  // with it, or the overlay keeps compositing at its old position (the "can't move
+  // the Remotion overlay" gap).
+  function overlayTimeline(): Timeline {
+    resetIds();
+    return timeline(
+      VERTICAL,
+      {
+        video: [
+          videoTrack(clip("/abs/footage.mp4", { id: "base", dur: 400 })),
+          videoTrack(blank(100), clip("/abs/overlay.mov", { id: "ovl", dur: 60 })),
+        ],
+      },
+      // qtblend a=1 (footage) b=2 (overlay) over the overlay's span [100,159].
+      { transitions: [transition("qtblend", 1, 2, 100, 159)] },
+    );
+  }
+
+  it("shifts the bracketing qtblend with a same-track non-ripple move; the inverse restores it", () => {
+    const tl = overlayTimeline();
+    // Drag the overlay back from frame 100 → 40 (into the leading blank).
+    const r = ok(
+      move(tl, {
+        uuid: "ovl",
+        toTrack: { kind: "video", index: 1 },
+        toPosition: 40,
+        ripple: false,
+        rippleAllTracks: false,
+      }),
+    );
+    const t = r.state.transitions[0];
+    expect(t).toBeDefined();
+    expect([t?.in, t?.out]).toEqual([40, 99]); // followed the clip
+    expect([t?.aTrack, t?.bTrack, t?.service]).toEqual([1, 2, "qtblend"]); // identity unchanged
+    // Source IR was not mutated (purity).
+    expect(tl.transitions[0]?.in).toBe(100);
+
+    // The inverse (move back to 100) restores the original span — move stays its
+    // own inverse with the transition in tow.
+    const back = ok(apply(r.inverse, r.state));
+    expect([back.state.transitions[0]?.in, back.state.transitions[0]?.out]).toEqual([100, 159]);
+  });
+
+  it("leaves a non-bracketing transition untouched (only an exact span match follows)", () => {
+    const tl = overlayTimeline();
+    // A qtblend whose span does NOT match the clip (a deliberate fixed-range blend).
+    tl.transitions.push(transition("qtblend", 1, 2, 0, 50));
+    const r = ok(
+      move(tl, {
+        uuid: "ovl",
+        toTrack: { kind: "video", index: 1 },
+        toPosition: 40,
+        ripple: false,
+        rippleAllTracks: false,
+      }),
+    );
+    // The bracketing one followed; the unrelated [0,50] one did not move.
+    expect(r.state.transitions.map((t) => [t.in, t.out])).toEqual([
+      [40, 99],
+      [0, 50],
+    ]);
   });
 });

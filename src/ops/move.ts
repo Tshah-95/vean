@@ -136,6 +136,22 @@ export const move: Op<MoveArgs> = (state, args): OpResult | EditError => {
     if (err) return err;
   }
 
+  // Keep an over-composite field transition IN SYNC with the overlay clip it
+  // brackets. A graphic/overlay clip (e.g. a Remotion-baked alpha .mov on an upper
+  // track) is composited over the footage by a `qtblend` `Transition` scoped to the
+  // clip's [in,out] span. When you drag that clip ALONG its track, the transition
+  // must FOLLOW it — otherwise the overlay keeps compositing at its old span and the
+  // clip appears un-movable (the "can't move the Remotion thing" gap). Shift any
+  // transition whose bTrack is this clip's track and whose span matches the clip's
+  // OLD placement to its NEW placement. Scoped to a same-track, non-ripple move (the
+  // body-drag gesture) where the shift is a clean translation; the inverse (move
+  // back) shifts it back symmetrically, so `move` stays its own inverse. A
+  // cross-track or ripple move leaves transitions untouched (rarer; the b_track /
+  // ripple math is not threaded through here).
+  if (!args.ripple && sameTrack && src.trackKind === "video") {
+    syncBracketingTransition(next, 1 + src.trackIndex, srcPosition, len, args.toPosition);
+  }
+
   // The clip ended up at (toTrack, toPosition); report the relocation.
   c.clipsMoved.push({
     uuid: moved.id,
@@ -160,6 +176,31 @@ export const move: Op<MoveArgs> = (state, args): OpResult | EditError => {
     },
   };
 };
+
+/** Shift any over-composite transition that BRACKETS the moved overlay clip so it
+ *  follows the clip. A transition "brackets" the clip when its `bTrack` is the
+ *  clip's track (`bTrackIndex`, a main-tractor index where the background producer
+ *  is 0) AND its span exactly matches the clip's OLD placement
+ *  (`[oldStart, oldStart+len-1]`). Matching transition(s) are re-spanned to the NEW
+ *  placement. Mutates `next.transitions` in place; a no-op when nothing matches (a
+ *  plain clip with no over-composite is untouched). */
+function syncBracketingTransition(
+  next: Timeline,
+  bTrackIndex: number,
+  oldStart: number,
+  len: number,
+  newStart: number,
+): void {
+  if (newStart === oldStart) return;
+  const oldIn = oldStart;
+  const oldOut = oldStart + len - 1;
+  for (const t of next.transitions) {
+    if (t.bTrack === bTrackIndex && t.in === oldIn && t.out === oldOut) {
+      t.in = newStart;
+      t.out = newStart + len - 1;
+    }
+  }
+}
 
 // ─── Non-ripple: lift the source, overwrite the destination ───────────────────
 /** LIFT the clip at the source (swap for a same-length blank, leave a gap) then
