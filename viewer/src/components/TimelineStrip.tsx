@@ -429,7 +429,15 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         onPointerUp={onLanePointerUp}
         onPointerLeave={onLanePointerUp}
       >
-        <div style={{ width: laneWidth, position: "relative" }}>
+        {/* width === laneWidth is the ONLY thing that should drive the horizontal
+            scrollbar (i.e. zoom: content wider than the pane). Frame-anchored
+            decorations — the CTI handle (centred, ±6.5px), the playhead line, and
+            the last ruler tick's label — extend a few px past laneWidth when the
+            playhead/last tick sits at the final frame; without clipping that few-px
+            poke flips overflowX:auto into a scrollbar that eats height and shoves the
+            UI up. Clip them at the content edge so the scrollbar reflects width, not
+            scroll/playhead position. */}
+        <div style={{ width: laneWidth, position: "relative", overflow: "hidden" }}>
           {/* Ruler — the ONLY scrub zone. Distinct background + a CTI flag handle. */}
           <div
             style={{
