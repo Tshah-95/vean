@@ -25,3 +25,6 @@ viewer/dist/
 *.log
 coverage/
 .vitest/
+
+# local vean projects (documents + comps + outputs; media stays in ~/Github/media)
+projects/
