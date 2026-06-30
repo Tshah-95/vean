@@ -1476,6 +1476,72 @@ const actions = [
     },
   }),
   action({
+    id: "media.probe",
+    title: "Probe Media",
+    description:
+      "ffprobe a media file (duration, fps, resolution, audio streams) and cache the result on its catalog row. Probe one asset by id, an arbitrary path, or every un-probed asset with --all.",
+    relatedDiscovery: ["media.list", "media.scan", "media.find"],
+    input: z.object({
+      repo: z.string().optional(),
+      id: z.string().optional(),
+      path: z.string().optional(),
+      all: z.boolean().default(false),
+    }),
+    output: z.unknown(),
+    scopes: ["media:read", "media:write", "process:execute", "fs:read"],
+    effect: {
+      kind: "update",
+      mutates: ["projectState", "process"],
+      openWorld: false,
+      destructive: false,
+      idempotency: "idempotent",
+      reversibility: "none-needed",
+      dryRun: "none",
+      approval: "auto",
+      audit: "metadata",
+      job: { mode: "inline", cancellable: true, retrySafe: true },
+    },
+    surfaces: { cli: { command: "media probe" }, mcp: { name: "media-probe" } },
+    async execute(ctx, input) {
+      const { probeMedia } = await import("../driver/melt");
+      const { getMediaAsset, listMediaAssets, setMediaProbe } = await import("../state/media");
+      const repo = input.repo ?? ctx.project?.rootPath ?? ctx.cwd;
+
+      // Ad-hoc path probe (not cataloged) → just return the probe.
+      if (input.path) {
+        return { path: input.path, probe: await probeMedia(uriToPath(input.path)) };
+      }
+      // Every un-probed cataloged asset.
+      if (input.all) {
+        const pending = listMediaAssets(repo).filter(
+          (a) => !a.probeJson || a.probeJson === "{}" || a.probeJson === "[]",
+        );
+        const probed: Array<{ id: string; relativePath: string }> = [];
+        for (const asset of pending) {
+          try {
+            setMediaProbe(repo, asset.id, await probeMedia(asset.path));
+            probed.push({ id: asset.id, relativePath: asset.relativePath });
+          } catch {
+            // skip un-probable files (non-media, missing) — leave probeJson as-is
+          }
+        }
+        return { probed: probed.length, of: pending.length, assets: probed };
+      }
+      // One cataloged asset by id.
+      if (input.id) {
+        const asset = getMediaAsset(repo, input.id);
+        if (!asset) return { ok: false, kind: "not-found", detail: `no media asset ${input.id}` };
+        const probe = await probeMedia(asset.path);
+        return { asset: setMediaProbe(repo, input.id, probe), probe };
+      }
+      return {
+        ok: false,
+        kind: "invalid-args",
+        detail: "media.probe needs one of: id, path, or --all",
+      };
+    },
+  }),
+  action({
     id: "media.list",
     title: "List Media Assets",
     description: "List cataloged media assets for the current project.",

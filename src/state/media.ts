@@ -232,6 +232,46 @@ export function findMediaAssets(repo: string, query: string): MediaAssetRecord[]
   }
 }
 
+/** One cataloged asset by id, or undefined. */
+export function getMediaAsset(repo: string, id: string): MediaAssetRecord | undefined {
+  const project = initializeProject(repo);
+  const handle = openStateDb(project.rootPath);
+  try {
+    return handle.db
+      .select()
+      .from(mediaAssets)
+      .where(and(eq(mediaAssets.projectId, project.id), eq(mediaAssets.id, id)))
+      .get();
+  } finally {
+    handle.sqlite.close();
+  }
+}
+
+/** Store an asset's structured ffprobe result in `probeJson`. Cache/coordination
+ *  state only — the media file stays the source of truth. Returns the updated row. */
+export function setMediaProbe(
+  repo: string,
+  id: string,
+  probe: unknown,
+): MediaAssetRecord | undefined {
+  const project = initializeProject(repo);
+  const handle = openStateDb(project.rootPath);
+  try {
+    handle.db
+      .update(mediaAssets)
+      .set({ probeJson: JSON.stringify(probe), updatedAt: nowIso() })
+      .where(and(eq(mediaAssets.projectId, project.id), eq(mediaAssets.id, id)))
+      .run();
+    return handle.db
+      .select()
+      .from(mediaAssets)
+      .where(and(eq(mediaAssets.projectId, project.id), eq(mediaAssets.id, id)))
+      .get();
+  } finally {
+    handle.sqlite.close();
+  }
+}
+
 export function setRouteAlias(repo: string, alias: string, target: string): RouteAliasRecord {
   const project = initializeProject(repo);
   const handle = openStateDb(project.rootPath);

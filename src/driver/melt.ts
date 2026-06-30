@@ -329,6 +329,86 @@ export async function probeMediaFrames(resource: string, fps: [number, number]):
   );
 }
 
+/** A structured `ffprobe` of a media file: container + first video/audio stream.
+ *  Cache/coordination metadata for the catalog — never canonical edit state. */
+export type MediaProbe = {
+  /** Container duration in seconds, or null if unknown. */
+  durationSec: number | null;
+  /** Container `format_name` (e.g. `mov,mp4,m4a,3gp,3g2,mj2`). */
+  format: string | null;
+  video: {
+    codec: string | null;
+    width: number | null;
+    height: number | null;
+    /** Rational frame rate `[num, den]` (kept rational — never a float). */
+    fps: [number, number] | null;
+    frames: number | null;
+  } | null;
+  audio: {
+    codec: string | null;
+    channels: number | null;
+    sampleRate: number | null;
+  } | null;
+};
+
+/** Probe a media file's container + first video/audio stream via `ffprobe`. Read
+ *  only; returns structured metadata for the media catalog (duration, fps,
+ *  resolution, audio streams). Throws `MeltError` if ffprobe fails. */
+export async function probeMedia(resource: string): Promise<MediaProbe> {
+  const { stdout } = await run("ffprobe", [
+    "-v",
+    "error",
+    "-show_entries",
+    "format=duration,format_name:stream=codec_type,codec_name,width,height,r_frame_rate,nb_frames,channels,sample_rate",
+    "-of",
+    "json",
+    resource,
+  ]);
+  const parsed = JSON.parse(stdout) as {
+    format?: { duration?: string; format_name?: string };
+    streams?: Array<{
+      codec_type?: string;
+      codec_name?: string;
+      width?: number;
+      height?: number;
+      r_frame_rate?: string;
+      nb_frames?: string;
+      channels?: number;
+      sample_rate?: string;
+    }>;
+  };
+  const video = parsed.streams?.find((s) => s.codec_type === "video");
+  const audio = parsed.streams?.find((s) => s.codec_type === "audio");
+  const fps = ((): [number, number] | null => {
+    const parts = video?.r_frame_rate?.split("/").map(Number);
+    if (parts && parts.length === 2 && Number.isFinite(parts[0]) && (parts[1] ?? 0) > 0) {
+      return [parts[0] as number, parts[1] as number];
+    }
+    return null;
+  })();
+  const dur = Number(parsed.format?.duration);
+  return {
+    durationSec: Number.isFinite(dur) ? dur : null,
+    format: parsed.format?.format_name ?? null,
+    video: video
+      ? {
+          codec: video.codec_name ?? null,
+          width: video.width ?? null,
+          height: video.height ?? null,
+          fps,
+          frames: Number(video.nb_frames) || null,
+        }
+      : null,
+    audio: audio
+      ? {
+          codec: audio.codec_name ?? null,
+          channels: audio.channels ?? null,
+          sampleRate: Number(audio.sample_rate) || null,
+        }
+      : null,
+  };
+}
+
 /** Tile evenly-spaced frames of `video` into one PNG (the motion at a glance).
  *
  *  Probes the true frame count, samples every `floor(total / cells)` frames via

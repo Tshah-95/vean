@@ -9,8 +9,8 @@ import {
   listActions,
 } from "./actions";
 import { buildConfigCommand } from "./cli/config";
-import { buildFpsCommand } from "./cli/fps";
 import { type DoctorHost, type DoctorSurface, formatDoctorReport } from "./cli/doctor";
+import { buildFpsCommand } from "./cli/fps";
 
 const program = new Command();
 
@@ -788,6 +788,21 @@ media
   });
 
 media
+  .command("probe")
+  .description("ffprobe media (duration/fps/resolution/audio) and cache it on the catalog row")
+  .option("--id <id>", "probe one cataloged asset by id")
+  .option("--path <path>", "probe an arbitrary file path (not cataloged)")
+  .option("--all", "probe every un-probed cataloged asset")
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(
+    async (opts: { id?: string; path?: string; all?: boolean; repo?: string; json?: boolean }) => {
+      const output = await printActionOutput("media.probe", opts, opts.json);
+      if (!opts.json) printJson(output);
+    },
+  );
+
+media
   .command("list")
   .description("List cataloged media assets")
   .option("--kind <kind>", "filter by kind: video, audio, image, timeline, unknown")
@@ -976,6 +991,55 @@ project
           `${output.project.rootPath} (${output.project.source}) state=${output.state?.exists}`,
         );
     }
+  });
+
+project
+  .command("doctor")
+  .description("Run vean doctor scoped to the resolved project")
+  .option("--project <id-or-path>", "project id or path")
+  .option(
+    "--surface <surface>",
+    "tool surface: all, cli, lsp, mcp, cli-lsp, mcp-lsp",
+    parseSurface,
+    "cli-lsp",
+  )
+  .option("--json", "emit JSON")
+  .action(async (opts: { project?: string; surface?: DoctorSurface; json?: boolean }) => {
+    const current = (await runAction("project.current", { project: opts.project })) as {
+      project: { rootPath: string } | null;
+    };
+    const repo = current.project?.rootPath;
+    if (!repo) {
+      console.error("No project resolved — run `vean project use <path>` first");
+      process.exit(1);
+    }
+    const report = await runAction("setup.doctor", { repo, surface: opts.surface, host: "all" });
+    if (opts.json) printJson(report);
+    else console.log(formatDoctorReport(report as never));
+    process.exit((report as { ok: boolean }).ok ? 0 : 1);
+  });
+
+project
+  .command("open")
+  .description("Reveal the resolved project's root folder in the OS file manager")
+  .option("--project <id-or-path>", "project id or path")
+  .action(async (opts: { project?: string }) => {
+    const current = (await runAction("project.current", { project: opts.project })) as {
+      project: { rootPath: string } | null;
+    };
+    const repo = current.project?.rootPath;
+    if (!repo) {
+      console.error("No project resolved — run `vean project use <path>` first");
+      process.exit(1);
+    }
+    const opener =
+      process.platform === "darwin"
+        ? "open"
+        : process.platform === "win32"
+          ? "explorer"
+          : "xdg-open";
+    Bun.spawn([opener, repo], { stdout: "ignore", stderr: "ignore" });
+    console.log(`Opening ${repo}`);
   });
 
 const jobsCommand = program.command("jobs").description("Inspect and manage local vean jobs");
