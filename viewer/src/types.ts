@@ -173,6 +173,13 @@ export interface SessionEditResult {
   canUndo: boolean;
   canRedo: boolean;
   dirty: boolean;
+  /** The author of the edit a next undo would revert, or null when the undo stack
+   *  is empty. The GUI labels/guards its undo with this so a human never silently
+   *  reverts an agent's edit (the agent-scoped undo boundary). Mirrors
+   *  `src/preview/session.ts`. */
+  nextUndoAuthor?: string | null;
+  /** The author of the edit a next redo would re-apply, or null when empty. */
+  nextRedoAuthor?: string | null;
   /** Monotonic per-session counter, bumped on every op/undo/redo. The live-preview
    *  compositor keys its recomposite on `(currentFrame, revision)` (the HMR
    *  trigger). Mirrors `src/preview/session.ts` SessionEditResult.revision. */

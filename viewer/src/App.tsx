@@ -162,7 +162,7 @@ function Viewer({ route }: { route: string | undefined }) {
           onSinkChange={setSinkId}
         />
       </div>
-      <Sidebar route={route} />
+      <Sidebar route={route} baseTitle={data.timeline.title} />
     </div>
   );
 }

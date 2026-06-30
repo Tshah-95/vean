@@ -52,13 +52,24 @@ import {
   serializeSession,
   undoSession,
 } from "./session";
-import type { TimelineSession } from "./session";
+import type { EditOptions, TimelineSession } from "./session";
 import type { ViteDevHandle } from "./viteDev";
 
 /** Actions that block their caller indefinitely and so must not be invoked through
  *  the synchronous `/api/action` bridge (the viewer is already hosted by a preview
  *  server; `preview.serve` would spin a second one and hang this request). */
 const BLOCKING_ACTIONS = new Set<string>(["preview.serve"]);
+
+/** Project the optional `author` / `allowCrossAuthor` fields of an edit request body
+ *  onto the session {@link EditOptions}. A request with neither field falls back to
+ *  the human author with a private (never-crossed) undo stack — the existing GUI
+ *  behavior — so this is a backward-compatible add. */
+function editAuthorOpts(body: { author?: string; allowCrossAuthor?: boolean }): EditOptions {
+  const opts: EditOptions = {};
+  if (typeof body.author === "string" && body.author.length > 0) opts.author = body.author;
+  if (body.allowCrossAuthor === true) opts.allowCrossAuthor = true;
+  return opts;
+}
 
 export type PreviewServerOptions = {
   repo: string;
@@ -438,7 +449,7 @@ export function createPreviewHandler(
     // explicit POST /api/save. Every mutation routes through the shared-core
     // session helpers (which call the edit algebra + diagnostics engine).
     if (path === "/api/apply-op" && req.method === "POST") {
-      let body: { route?: string; op?: string; args?: unknown } = {};
+      let body: { route?: string; op?: string; args?: unknown; author?: string } = {};
       try {
         body = (await req.json()) as typeof body;
       } catch {
@@ -452,12 +463,14 @@ export function createPreviewHandler(
       const route = body.route ?? defaultRoute ?? undefined;
       const got = getSession(sessions, repo, route);
       if ("error" in got) return got.error;
-      const outcome = applyOp(got.session, invocation);
+      // `author` tags the undo entry so a later undo can refuse to cross authorship
+      // (the GUI omits it → the human author; an agent passes its session id).
+      const outcome = applyOp(got.session, invocation, editAuthorOpts(body));
       return jsonResponse(outcome, outcome.ok ? 200 : 422);
     }
 
     if (path === "/api/undo" && req.method === "POST") {
-      let body: { route?: string } = {};
+      let body: { route?: string; author?: string; allowCrossAuthor?: boolean } = {};
       try {
         body = (await req.json()) as typeof body;
       } catch {
@@ -466,12 +479,12 @@ export function createPreviewHandler(
       const route = body.route ?? defaultRoute ?? undefined;
       const got = getSession(sessions, repo, route);
       if ("error" in got) return got.error;
-      const outcome = undoSession(got.session);
+      const outcome = undoSession(got.session, editAuthorOpts(body));
       return jsonResponse(outcome, outcome.ok ? 200 : 422);
     }
 
     if (path === "/api/redo" && req.method === "POST") {
-      let body: { route?: string } = {};
+      let body: { route?: string; author?: string; allowCrossAuthor?: boolean } = {};
       try {
         body = (await req.json()) as typeof body;
       } catch {
@@ -480,7 +493,7 @@ export function createPreviewHandler(
       const route = body.route ?? defaultRoute ?? undefined;
       const got = getSession(sessions, repo, route);
       if ("error" in got) return got.error;
-      const outcome = redoSession(got.session);
+      const outcome = redoSession(got.session, editAuthorOpts(body));
       return jsonResponse(outcome, outcome.ok ? 200 : 422);
     }
 
