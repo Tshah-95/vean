@@ -7,20 +7,31 @@ import { JobsPanel } from "./panels/JobsPanel";
 import { MediaPanel } from "./panels/MediaPanel";
 import { ProjectPanel } from "./panels/ProjectPanel";
 import { RenderPanel } from "./panels/RenderPanel";
+import { SessionsPanel } from "./panels/SessionsPanel";
 import { SetupPanel } from "./panels/SetupPanel";
 import { C } from "./panels/ui";
 
-type Tab = "media" | "render" | "jobs" | "project" | "setup";
+type Tab = "media" | "render" | "jobs" | "project" | "sessions" | "setup";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "media", label: "Media" },
   { id: "render", label: "Render" },
   { id: "jobs", label: "Jobs" },
   { id: "project", label: "Project" },
+  { id: "sessions", label: "Sessions" },
   { id: "setup", label: "Setup" },
 ];
 
-export function Sidebar({ project, route }: { project?: string; route?: string }) {
+export function Sidebar({
+  project,
+  route,
+  baseTitle,
+}: {
+  project?: string;
+  route?: string;
+  /** Title of the timeline loaded in the viewer (the diff/still compare baseline). */
+  baseTitle: string;
+}) {
   const [tab, setTab] = useState<Tab>("media");
   const [open, setOpen] = useState(true);
 
@@ -92,6 +103,7 @@ export function Sidebar({ project, route }: { project?: string; route?: string }
         {tab === "render" && <RenderPanel route={route} />}
         {tab === "jobs" && <JobsPanel project={project} />}
         {tab === "project" && <ProjectPanel project={project} />}
+        {tab === "sessions" && <SessionsPanel project={project} route={route} baseTitle={baseTitle} />}
         {tab === "setup" && <SetupPanel project={project} />}
       </div>
     </aside>

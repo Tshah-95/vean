@@ -93,20 +93,37 @@ async function postJson<T>(path: string, payload: unknown): Promise<T> {
   return body as T;
 }
 
-/** Apply one edit-algebra op to the route's working IR. Returns the new IR +
- *  consequences + the full ambient diagnostic set. */
-export async function applyOp(invocation: OpInvocation, route?: string): Promise<SessionEditResult> {
-  return postJson<SessionEditResult>("/api/apply-op", { route, ...invocation });
+/** Who is editing — the GUI operator (default) or a named agent/session. Tags the
+ *  undo entry so a later undo can refuse to cross authorship (mirrors the session
+ *  `EditAuthor` / `EditOptions`). */
+export interface EditAuthorOpts {
+  /** The edit's author. Omitted → the human operator. */
+  author?: string;
+  /** Permit an undo/redo to cross an authorship boundary (the GUI's explicit
+   *  "undo anyway" affordance). Omitted → false (the safe, never-cross default). */
+  allowCrossAuthor?: boolean;
 }
 
-/** Pop + apply the top inverse on the working IR. */
-export async function undoEdit(route?: string): Promise<SessionEditResult> {
-  return postJson<SessionEditResult>("/api/undo", { route });
+/** Apply one edit-algebra op to the route's working IR. Returns the new IR +
+ *  consequences + the full ambient diagnostic set. `opts.author` tags the undo
+ *  entry for the agent-scoped undo boundary. */
+export async function applyOp(
+  invocation: OpInvocation,
+  route?: string,
+  opts?: EditAuthorOpts,
+): Promise<SessionEditResult> {
+  return postJson<SessionEditResult>("/api/apply-op", { route, ...invocation, ...opts });
+}
+
+/** Pop + apply the top inverse on the working IR. Refuses to cross authorship
+ *  unless `opts.allowCrossAuthor` (returns a `cross-author-undo` error). */
+export async function undoEdit(route?: string, opts?: EditAuthorOpts): Promise<SessionEditResult> {
+  return postJson<SessionEditResult>("/api/undo", { route, ...opts });
 }
 
 /** Re-apply the top undone op on the working IR. */
-export async function redoEdit(route?: string): Promise<SessionEditResult> {
-  return postJson<SessionEditResult>("/api/redo", { route });
+export async function redoEdit(route?: string, opts?: EditAuthorOpts): Promise<SessionEditResult> {
+  return postJson<SessionEditResult>("/api/redo", { route, ...opts });
 }
 
 /** Serialize the working IR back to the .mlt on disk. */
@@ -132,6 +149,27 @@ export async function renderStill(
  *  server URL for it. */
 export async function renderVideo(route?: string): Promise<{ ok: true; videoUrl: string }> {
   return postJson("/api/render", { route });
+}
+
+/** This checkout's worktree identity — slug, branch, whether it's the canonical
+ *  tree, its state DB path, and the live drive session (if any). The read-only
+ *  answer to "which version am I looking at?" across concurrent worktrees
+ *  (mirrors `worktree.whereami` / DESIGN-WORKTREE §4.5). */
+export interface WhereAmI {
+  worktreePath: string;
+  slug: string;
+  branch: string | null;
+  isPrimary: boolean;
+  source: string;
+  stateDbPath: string;
+  driveSession: { name: string; url: string; port: number; status: string } | null;
+  veanBinResolvesTo: string | null;
+  veanBinMatchesCheckout: boolean;
+}
+
+/** Fetch this checkout's worktree identity via the `worktree.whereami` action. */
+export async function fetchWhereAmI(project?: string): Promise<WhereAmI> {
+  return runAction<WhereAmI>("worktree.whereami", {}, project);
 }
 
 /** Run any registered vean action through the local action bridge. Returns the

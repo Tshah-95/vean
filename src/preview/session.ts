@@ -34,6 +34,46 @@ import type { DiagnosticHealth } from "../diagnostics";
 import type { Timeline } from "../ir/types";
 import type { Consequences, OpInvocation } from "../ops";
 
+// ─── Authorship (the agent-scoped undo boundary) ─────────────────────────────
+// Multiple authors mutate ONE working IR: the human at the GUI, and one or more
+// agent sessions driving the same document through the bridge. A single LIFO undo
+// stack shared across them is a footgun (the Palmier `agentUndoStack` lesson): a
+// human's Cmd+Z would silently revert an agent's last edit, and an agent's `undo`
+// would revert the human's — neither author can reason about what their own undo
+// does. The fix is the same one Palmier reached for after the fact: tag every
+// applied op with WHO applied it, and refuse an undo/redo that would cross an
+// authorship boundary unless the caller explicitly opts in.
+//
+// This is metadata ALONGSIDE the history, never inside it. The `OpInvocation`
+// inverse stays canonical and untouched (op contract law: the inverse is exactly
+// what `apply` needs to undo the forward op) — authorship lives on the stack
+// ENTRY that wraps the inverse, so determinism and byte-faithful round-trips are
+// unaffected. Authorship is in-memory working-copy state, never serialized to the
+// `.mlt` (same as `revision` / `dirty`).
+
+/** Who applied an edit. `"human"` is the GUI operator; any other string is an
+ *  agent/session id (e.g. a worktree slug or an MCP session token). Free-form so a
+ *  caller can scope as finely as it wants (per-agent, per-session) without a schema
+ *  change; the ONLY semantics the session enforces is string equality. */
+export type EditAuthor = string;
+
+/** The default author when a caller does not name one — the GUI operator. The
+ *  existing viewer keyboard/gesture path applies ops with no author, so it keeps
+ *  behaving as a single human author with a private, never-crossed undo stack. */
+export const HUMAN_AUTHOR: EditAuthor = "human";
+
+/** One entry on the undo/redo history: the canonical inverse (re-applied to move
+ *  history) plus the author who created the edit it undoes/redoes. Keeping author
+ *  on the entry — not on the `OpInvocation` — is what lets the inverse stay
+ *  byte-canonical while the boundary check reads the wrapper. */
+export type AuthoredOp = {
+  /** The canonical invocation to re-apply (the inverse for an undo entry; the
+   *  forward op for a redo entry). Unchanged from the edit algebra's output. */
+  invocation: OpInvocation;
+  /** The author of the edit this entry undoes (undo stack) or redoes (redo stack). */
+  author: EditAuthor;
+};
+
 /** One route's live working copy: the in-memory IR + the undo/redo history. The
  *  `uri` is the resolved `.mlt` path (the same string the action runtime + the
  *  diagnostics surface use as a document id). */
@@ -43,11 +83,12 @@ export type TimelineSession = {
   /** The current in-memory IR. Mutated only by replacing the whole reference with
    *  the fresh state an op returns (ops are pure; we never mutate in place). */
   ir: Timeline;
-  /** Inverse invocations, newest last. Pop to undo. */
-  undoStack: OpInvocation[];
-  /** Forward invocations of undone ops, newest last. Pop to redo. Cleared by a
-   *  fresh apply. */
-  redoStack: OpInvocation[];
+  /** Authored inverse invocations, newest last. Pop to undo. Each entry carries the
+   *  author of the edit it undoes, so an undo can refuse to cross authorship. */
+  undoStack: AuthoredOp[];
+  /** Authored forward invocations of undone ops, newest last. Pop to redo. Cleared
+   *  by a fresh apply. Each entry carries the author of the edit it redoes. */
+  redoStack: AuthoredOp[];
   /** True once a mutation/undo/redo has diverged the working IR from the last
    *  saved (or loaded) on-disk content, so the UI can show an unsaved indicator. */
   dirty: boolean;
@@ -80,6 +121,14 @@ export type SessionEditResult = {
   canUndo: boolean;
   canRedo: boolean;
   dirty: boolean;
+  /** The author of the edit a NEXT undo would revert (top of the undo stack), or
+   *  `null` when the stack is empty. The GUI uses this to label/guard its undo —
+   *  e.g. disable a human's Cmd+Z, or warn, when the top edit belongs to an agent
+   *  so a human never silently reverts agent work (the agent-scoped undo boundary). */
+  nextUndoAuthor: EditAuthor | null;
+  /** The author of the edit a NEXT redo would re-apply (top of the redo stack), or
+   *  `null` when the stack is empty. Symmetric to `nextUndoAuthor`. */
+  nextRedoAuthor: EditAuthor | null;
   /** The session's monotonic revision AFTER this edit (see `TimelineSession`).
    *  The viewer's live-preview compositor keys its recomposite on this — every
    *  op/undo/redo returns a strictly greater value than the prior result, so the
@@ -92,7 +141,7 @@ export type SessionEditResult = {
 export type SessionEditError = {
   ok: false;
   /** The EditError kind (`clip-not-found`, `invalid-args`, …) or a session reason
-   *  (`nothing-to-undo`, `nothing-to-redo`). */
+   *  (`nothing-to-undo`, `nothing-to-redo`, `cross-author-undo`, `cross-author-redo`). */
   kind: string;
   detail: string;
 };
@@ -153,9 +202,42 @@ function editResult(session: TimelineSession, consequences: Consequences): Sessi
     canUndo: session.undoStack.length > 0,
     canRedo: session.redoStack.length > 0,
     dirty: session.dirty,
+    nextUndoAuthor: peekAuthor(session.undoStack),
+    nextRedoAuthor: peekAuthor(session.redoStack),
     revision: session.revision,
   };
 }
+
+/** The author at the top of a history stack (the next one an undo/redo would
+ *  touch), or `null` when the stack is empty. */
+function peekAuthor(stack: AuthoredOp[]): EditAuthor | null {
+  return stack.at(-1)?.author ?? null;
+}
+
+/** True when `author` is allowed to undo/redo the top entry of `stack`. The rule:
+ *  an author may only move history entries it authored, UNLESS it explicitly opts
+ *  into crossing the boundary (`allowCrossAuthor`). An empty stack is "allowed" so
+ *  the caller surfaces the canonical `nothing-to-undo`/`nothing-to-redo` reason
+ *  rather than a spurious authorship error. */
+function mayCross(stack: AuthoredOp[], author: EditAuthor, allowCrossAuthor: boolean): boolean {
+  const top = stack.at(-1);
+  if (!top) return true;
+  if (allowCrossAuthor) return true;
+  return top.author === author;
+}
+
+/** Options shared by `applyOp`/`undoSession`/`redoSession`. All optional, so every
+ *  existing single-author call site keeps compiling and behaving as the human. */
+export type EditOptions = {
+  /** The author of this edit (apply) or the author requesting the move (undo/redo).
+   *  Defaults to {@link HUMAN_AUTHOR}. */
+  author?: EditAuthor;
+  /** When true, an undo/redo may cross an authorship boundary (revert/redo an edit
+   *  authored by someone else). Defaults to false — the safe, Palmier-lesson
+   *  behavior where each author's undo is private. The GUI can set this for an
+   *  explicit "undo anyway" affordance; an agent should leave it false. */
+  allowCrossAuthor?: boolean;
+};
 
 /** Map a bridge `ToolOutcome` to a session outcome. On success, the caller has
  *  already advanced the session IR + history; we only need its `consequences` to
@@ -177,13 +259,20 @@ function fromToolOutcome(
  *  return the consequences + full diagnostics. On an `EditError` the IR + history
  *  are untouched and a typed error is returned (never a throw). Disk is NOT
  *  written here — that is `saveSession`. */
-export function applyOp(session: TimelineSession, invocation: OpInvocation): SessionEditOutcome {
+export function applyOp(
+  session: TimelineSession,
+  invocation: OpInvocation,
+  opts: EditOptions = {},
+): SessionEditOutcome {
+  const author = opts.author ?? HUMAN_AUTHOR;
   const { outcome, newState } = mutate(session.ir, invocation, session.uri);
   if (isToolError(outcome) || !newState) {
     return fromToolOutcome(session, outcome, outcome as never);
   }
   session.ir = newState;
-  session.undoStack.push(outcome.inverse);
+  // Tag the undo entry with the author who applied this edit; the inverse itself
+  // stays canonical (authorship is on the wrapper, never inside the invocation).
+  session.undoStack.push({ invocation: outcome.inverse, author });
   session.redoStack = [];
   session.dirty = true;
   session.revision++;
@@ -194,20 +283,33 @@ export function applyOp(session: TimelineSession, invocation: OpInvocation): Ses
  *  inverse (returned by applying it) is the FORWARD op that redoes the edit, which
  *  we push onto the redo stack. Stacks are swapped in spirit: undo feeds redo.
  *  Returns `nothing-to-undo` when the undo stack is empty. */
-export function undoSession(session: TimelineSession): SessionEditOutcome {
-  const inverse = session.undoStack.pop();
-  if (!inverse) {
+export function undoSession(session: TimelineSession, opts: EditOptions = {}): SessionEditOutcome {
+  const author = opts.author ?? HUMAN_AUTHOR;
+  // Authorship boundary: refuse to undo an edit `author` did not make (unless they
+  // explicitly opt in). Checked BEFORE the pop so the stack is untouched on refusal.
+  if (!mayCross(session.undoStack, author, opts.allowCrossAuthor ?? false)) {
+    const owner = peekAuthor(session.undoStack);
+    return {
+      ok: false,
+      kind: "cross-author-undo",
+      detail: `top of the undo stack was authored by "${owner}", not "${author}"; pass allowCrossAuthor to undo it anyway`,
+    };
+  }
+  const top = session.undoStack.pop();
+  if (!top) {
     return { ok: false, kind: "nothing-to-undo", detail: "undo stack is empty" };
   }
-  const { outcome, newState } = undoTool(session.ir, inverse, session.uri);
+  const { outcome, newState } = undoTool(session.ir, top.invocation, session.uri);
   if (isToolError(outcome) || !newState) {
     // Re-applying the inverse failed — restore the stack so history is consistent.
-    session.undoStack.push(inverse);
+    session.undoStack.push(top);
     return fromToolOutcome(session, outcome, outcome as never);
   }
   session.ir = newState;
-  // The inverse-of-the-inverse is the forward op that redoes this edit.
-  session.redoStack.push(outcome.inverse);
+  // The inverse-of-the-inverse is the forward op that redoes this edit. It carries
+  // the ORIGINAL author so a later redo is attributed to whoever made the edit, not
+  // to whoever undid it — the redo restores their work under their name.
+  session.redoStack.push({ invocation: outcome.inverse, author: top.author });
   session.dirty = true;
   session.revision++;
   return editResult(session, outcome.consequences);
@@ -216,19 +318,30 @@ export function undoSession(session: TimelineSession): SessionEditOutcome {
 /** redo — pop the top forward op off the redo stack and re-apply it. The op's
  *  inverse goes back onto the undo stack, restoring the pre-undo history shape.
  *  Returns `nothing-to-redo` when the redo stack is empty. */
-export function redoSession(session: TimelineSession): SessionEditOutcome {
-  const forward = session.redoStack.pop();
-  if (!forward) {
+export function redoSession(session: TimelineSession, opts: EditOptions = {}): SessionEditOutcome {
+  const author = opts.author ?? HUMAN_AUTHOR;
+  // Symmetric authorship boundary: refuse to redo an edit `author` did not author.
+  if (!mayCross(session.redoStack, author, opts.allowCrossAuthor ?? false)) {
+    const owner = peekAuthor(session.redoStack);
+    return {
+      ok: false,
+      kind: "cross-author-redo",
+      detail: `top of the redo stack was authored by "${owner}", not "${author}"; pass allowCrossAuthor to redo it anyway`,
+    };
+  }
+  const top = session.redoStack.pop();
+  if (!top) {
     return { ok: false, kind: "nothing-to-redo", detail: "redo stack is empty" };
   }
-  const { outcome, newState } = mutate(session.ir, forward, session.uri);
+  const { outcome, newState } = mutate(session.ir, top.invocation, session.uri);
   if (isToolError(outcome) || !newState) {
     // Re-applying the forward op failed — restore the redo stack.
-    session.redoStack.push(forward);
+    session.redoStack.push(top);
     return fromToolOutcome(session, outcome, outcome as never);
   }
   session.ir = newState;
-  session.undoStack.push(outcome.inverse);
+  // Restore the entry to the undo stack under its ORIGINAL author.
+  session.undoStack.push({ invocation: outcome.inverse, author: top.author });
   session.dirty = true;
   session.revision++;
   return editResult(session, outcome.consequences);
