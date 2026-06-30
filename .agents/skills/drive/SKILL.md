@@ -69,14 +69,15 @@ URL=$(bun run drive up --project /path/to/project)      # or: --timeline timelin
 
 # 2. Drive the REAL UI headless. Note: plain http:// (NOT https — vean's preview
 #    is loopback http; this contradicts the generic agent-browser skill's warning).
-agent-browser --session vean open "$URL"
+agent-browser --headed false --session vean open "$URL"   # --headed false: NEVER seize the screen
 agent-browser --session vean snapshot -i            # interactive elements → @refs
 agent-browser --session vean find text "Render" click
 agent-browser --session vean screenshot "$TMPDIR/drive-render-panel.png"
 
 # 3. Tear down (kills the sidecar, clears the session). ALWAYS do this.
 agent-browser --session vean close      # close the browser session
-bun run drive down                      # stop the preview sidecar
+bun run drive down                      # stop this session's preview sidecar
+# bun run drive down --all              # safety net: reap EVERY drive sidecar at once
 ```
 
 `bun run drive` is `scripts/drive.ts` — it owns only the server lifecycle
