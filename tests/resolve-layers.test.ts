@@ -160,19 +160,36 @@ describe("resolveLayers: z-order stack + Remotion-overlay track exclusion", () =
     expect((layers[1] as FootageLayer).uuid).toBe("mid");
   });
 
-  it("EXCLUDES the bTrack of a qtblend over-composite (the Remotion overlay track)", () => {
-    // The demo shape: V1 footage base + V2 graphic overlay, composited by a qtblend
-    // (aTrack=1=V1, bTrack=2=V2 in MAIN-tractor indices). V2 is drawn by the
-    // @remotion/player overlay, NOT the footage compositor — even though its
-    // resource isn't under cache/remotion/ and the `graphic:` label was dropped on
-    // the parse round-trip. This is the STRUCTURAL detection (DESIGN §4, §7).
+  it("EXCLUDES the bTrack of a qtblend ONLY when the covering clip is a GRAPHIC clip", () => {
+    // A qtblend over-composite whose bTrack clip IS a graphic (Remotion) overlay —
+    // a `graphic:`-labelled clip the @remotion/player redraws on top. V2 is excluded
+    // from the footage compositor (DESIGN §4, §7: two compositors, one editor track).
     const v1 = videoTrack("V1", [colorClip("base", "#FF0E5C63", 90)]);
-    const v2 = videoTrack("V2", [clip("gfx", "corpus/demo/lower-third.mov", 0, 89)]);
+    const v2 = videoTrack("V2", [
+      clip("gfx", "/cache/remotion/lower-third.mov", 0, 89, { label: "graphic:lower-third" }),
+    ]);
     const qtblend = { service: "qtblend", aTrack: 1, bTrack: 2, in: 0, out: 89, properties: {} };
     const { layers } = resolveLayers(tl([v1, v2], [qtblend]), 45);
-    expect(layers).toHaveLength(1); // only the footage base
+    expect(layers).toHaveLength(1); // only the footage base — the graphic is Player-owned
     expect((layers[0] as SolidLayer).color).toBe("#FF0E5C63");
-    expect(layers[0]?.trackIndex).toBe(0); // V2 (the overlay) excluded
+    expect(layers[0]?.trackIndex).toBe(0);
+  });
+
+  it("COMPOSITES a plain VIDEO-FILE overlay on a qtblend bTrack (not a graphic clip)", () => {
+    // The `projects/retire` shape: V1 footage base + V2 = `chat.mov`, a baked carlo
+    // overlay that is a plain ProRes video file (NO `graphic:` label, NOT under
+    // cache/remotion/). The @remotion/player NEVER renders it — so the FOOTAGE
+    // compositor must decode + composite it, exactly as `melt` over-composites it on
+    // export. Excluding it (the prior structural-only rule) dropped the overlay
+    // entirely. This is the load-bearing correction verified on `projects/retire`.
+    const v1 = videoTrack("V1", [clip("base", "/m/footage.mp4", 0, 89)]);
+    const v2 = videoTrack("V2", [clip("chat", "/projects/retire/renders/chat.mov", 0, 89)]);
+    const qtblend = { service: "qtblend", aTrack: 1, bTrack: 2, in: 0, out: 89, properties: {} };
+    const { layers } = resolveLayers(tl([v1, v2], [qtblend]), 45);
+    expect(layers).toHaveLength(2); // footage base + the composited video-file overlay
+    expect((layers[0] as FootageLayer).uuid).toBe("base");
+    expect((layers[1] as FootageLayer).uuid).toBe("chat"); // V2 composited, ON TOP
+    expect(layers[1]?.trackIndex).toBe(1);
   });
 
   it("hidden tracks contribute nothing", () => {

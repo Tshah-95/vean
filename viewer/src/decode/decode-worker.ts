@@ -74,10 +74,19 @@ async function openClip(req: OpenRequest): Promise<OpenResponse> {
     // `fit: contain` preserves the source aspect inside the output box (the
     // compositor letterboxes); `poolSize` bounds VRAM (§8.3). The proxy is already
     // downscaled server-side, so width/height here is the compositor's target box.
+    //
+    // `alpha: true` keeps transparency instead of compositing onto black — REQUIRED
+    // for over-composited overlays whose proxy carries an alpha plane (a
+    // VP9-with-alpha WebM proxy of an alpha source, e.g. retire's `chat.mov` scrim;
+    // see `src/preview/source-proxy.ts`). mediabunny merges the color+alpha planes
+    // via an internal WebGL2 pass and yields a straight-alpha canvas the compositor
+    // over-composites (§7 qtblend row). For an OPAQUE H.264 proxy this is a no-op —
+    // the frame is fully opaque (alpha 255), so an opaque source previews unchanged.
     const sink = new CanvasSink(track, {
       width,
       height,
       fit: "contain",
+      alpha: true,
       poolSize: SINK_POOL_SIZE,
     });
     resources.set(clipId, { input, track, sink });

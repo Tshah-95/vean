@@ -30,6 +30,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { resolveBin } from "../driver/melt";
 
 const STATE_DIR_NAME = ".vean";
 
@@ -58,7 +59,7 @@ export type SourceProxyOpts = {
 };
 
 export type SourceProxyResult = {
-  /** Absolute path to the produced short-GOP H.264 mp4. */
+  /** Absolute path to the produced proxy (mp4 for opaque, webm for alpha sources). */
   proxyPath: string;
   /** The content-address cache key (also the basename without extension). */
   key: string;
@@ -68,7 +69,61 @@ export type SourceProxyResult = {
   height: number;
   /** True iff served from cache (no re-encode). */
   cached: boolean;
+  /** True iff the source carries an alpha plane, so the proxy is VP9-with-alpha
+   *  (WebM) rather than H.264 (which has no alpha plane). The compositor relies on
+   *  this to over-composite the layer's transparency (e.g. retire's `chat.mov`
+   *  scrim over the footage); an opaque H.264 proxy of an alpha source would paint
+   *  black where the source was transparent and occlude the layer below. */
+  hasAlpha: boolean;
+  /** The proxy container's MIME type (`video/mp4` | `video/webm`) for serving. */
+  contentType: string;
 };
+
+/** ffprobe a source's first video-stream `pix_fmt` and decide whether it carries an
+ *  alpha plane. The live decode path can only over-composite a transparent overlay
+ *  if its proxy keeps the alpha — H.264 cannot, so an alpha source is proxied as
+ *  VP9-with-alpha instead. Pixel formats with an alpha plane end in `a`
+ *  (`yuva420p`, `yuva444p12le`, `rgba`, `bgra`, `argb`, `ya8`, …) — the robust,
+ *  codec-agnostic signal. A probe failure returns false (the opaque H.264 path),
+ *  never throwing: a proxy must always build. */
+async function sourceHasAlpha(resolvedSource: string): Promise<boolean> {
+  try {
+    const proc = Bun.spawn(
+      [
+        resolveBin("ffprobe"),
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=pix_fmt",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        resolvedSource,
+      ],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    if (code !== 0) return false;
+    const pixFmt = out.trim().toLowerCase();
+    // Alpha pixel formats: yuva*, rgba/bgra/argb/abgr, ya8/ya16, gbrap, pal8 (LUT
+    // may carry alpha). The decisive marker is an `a` in the channel layout — match
+    // the well-known families rather than a brittle exact list.
+    return (
+      /^yuva/.test(pixFmt) ||
+      /^ya\d/.test(pixFmt) ||
+      /^gbra/.test(pixFmt) ||
+      pixFmt === "rgba" ||
+      pixFmt === "bgra" ||
+      pixFmt === "argb" ||
+      pixFmt === "abgr" ||
+      pixFmt.includes("rgba") ||
+      pixFmt.includes("bgra")
+    );
+  } catch {
+    return false;
+  }
+}
 
 /** Content-address key for a source proxy: a hash of the resolved source path, its
  *  on-disk mtime + size (so replacing the file invalidates the proxy), and the
@@ -79,9 +134,10 @@ function proxyKey(
   size: number,
   maxEdge: number,
   gop: number,
+  alpha: boolean,
 ): string {
   return createHash("sha256")
-    .update(`${resolvedSource}::${mtimeMs}::${size}::${maxEdge}::g${gop}`)
+    .update(`${resolvedSource}::${mtimeMs}::${size}::${maxEdge}::g${gop}::a${alpha ? 1 : 0}`)
     .digest("hex")
     .slice(0, 32);
 }
@@ -110,11 +166,21 @@ export async function buildSourceProxy(
     throw new Error(`source-proxy: source not found: ${resolvedSource}`);
   }
   const stat = statSync(resolvedSource);
-  const key = proxyKey(resolvedSource, stat.mtimeMs, stat.size, maxEdge, gop);
+
+  // Decide the codec by whether the source carries an alpha plane. An alpha overlay
+  // (e.g. retire's `chat.mov`, a `yuva444p12le` scrim) MUST keep its transparency in
+  // the live decode path, so it is proxied as VP9-with-alpha (WebM) — WebCodecs
+  // decodes `vp09` with its alpha plane (proven: mediabunny `CanvasSink({alpha:true})`
+  // returns the source's exact alpha in headless Chromium). H.264 has no alpha plane,
+  // so an opaque H.264 proxy of an alpha source would occlude the layer below.
+  const hasAlpha = await sourceHasAlpha(resolvedSource);
+  const key = proxyKey(resolvedSource, stat.mtimeMs, stat.size, maxEdge, gop, hasAlpha);
 
   const dir = sourceProxyCacheDir(repo);
   mkdirSync(dir, { recursive: true });
-  const proxyPath = join(dir, `${key}.mp4`);
+  const ext = hasAlpha ? "webm" : "mp4";
+  const contentType = hasAlpha ? "video/webm" : "video/mp4";
+  const proxyPath = join(dir, `${key}.${ext}`);
 
   // Probe the source dimensions to compute the downscaled (aspect-preserving) box.
   // A probe failure falls back to maxEdge×maxEdge — the proxy still decodes; only
@@ -122,17 +188,51 @@ export async function buildSourceProxy(
   const { width, height } = await proxyDimensions(resolvedSource, maxEdge);
 
   if (!opts.force && existsSync(proxyPath)) {
-    return { proxyPath, key, width, height, cached: true };
+    return { proxyPath, key, width, height, cached: true, hasAlpha, contentType };
   }
 
-  // Drive melt to a small short-GOP H.264, NO audio (the decode path is video-only;
-  // audio stays on the old proxy `<video>` / Web Audio per the tiered plan). The
-  // `g`/`keyint`/`keyint_min` triple pins the GOP so EVERY ~15th frame is a
-  // keyframe — the random-access seek lever (§8.2). `bf=0` disables B-frames so the
-  // decoder never reorders (the spike's "push-N-then-collect" deadlock, §8.5, is
-  // avoided wholesale — mediabunny handles ordering, but an all-reference stream is
-  // strictly cheaper to seek). Scaling is done via a downscaled `scaleProfile`, NOT
-  // a consumer `s=` rescale, which stalls melt 7.38 at 99% (the proxy.ts lesson).
+  if (hasAlpha) {
+    // VP9-with-alpha WebM via ffmpeg directly (arm's-length subprocess, like the
+    // driver's contactSheet; never linking libav — Hard boundary #1). `yuva420p`
+    // carries the alpha plane; `-auto-alt-ref 0` is REQUIRED for VP9 alpha (alt-ref
+    // frames drop the alpha side-data otherwise). Short GOP (`-g`/`-keyint_min`) is
+    // the same random-access seek lever as the H.264 path (§8.2); `-an` keeps the
+    // decode proxy video-only. Scale with the `scale` filter to the aspect box.
+    await runFfmpeg([
+      "-y",
+      "-i",
+      resolvedSource,
+      "-vf",
+      `scale=${width}:${height}`,
+      "-c:v",
+      "libvpx-vp9",
+      "-pix_fmt",
+      "yuva420p",
+      "-auto-alt-ref",
+      "0",
+      "-g",
+      String(gop),
+      "-keyint_min",
+      String(gop),
+      "-deadline",
+      "realtime",
+      "-cpu-used",
+      "5",
+      "-an",
+      proxyPath,
+    ]);
+    return { proxyPath, key, width, height, cached: false, hasAlpha, contentType };
+  }
+
+  // Opaque source → the short-GOP H.264 path. Drive melt to a small short-GOP H.264,
+  // NO audio (the decode path is video-only; audio stays on the old proxy `<video>`
+  // / Web Audio per the tiered plan). The `g`/`keyint`/`keyint_min` triple pins the
+  // GOP so EVERY ~15th frame is a keyframe — the random-access seek lever (§8.2).
+  // `bf=0` disables B-frames so the decoder never reorders (the spike's
+  // "push-N-then-collect" deadlock, §8.5, is avoided wholesale — mediabunny handles
+  // ordering, but an all-reference stream is strictly cheaper to seek). Scaling is
+  // done via a downscaled `scaleProfile`, NOT a consumer `s=` rescale, which stalls
+  // melt 7.38 at 99% (the proxy.ts lesson).
   const { render } = await import("../driver/melt");
   await render(resolvedSource, proxyPath, {
     vcodec: "libx264",
@@ -149,7 +249,18 @@ export async function buildSourceProxy(
     ],
   });
 
-  return { proxyPath, key, width, height, cached: false };
+  return { proxyPath, key, width, height, cached: false, hasAlpha, contentType };
+}
+
+/** Shell `ffmpeg` arm's-length (a separate process — never linking libav, Hard
+ *  boundary #1), draining both pipes; throw with captured stderr on a nonzero exit.
+ *  Used for the VP9-with-alpha decode-proxy encode (the opaque path drives `melt`). */
+async function runFfmpeg(args: string[]): Promise<void> {
+  const proc = Bun.spawn([resolveBin("ffmpeg"), ...args], { stdout: "pipe", stderr: "pipe" });
+  const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+  if (code !== 0) {
+    throw new Error(`source-proxy: ffmpeg exited ${code}\n${stderr.slice(-1200)}`);
+  }
 }
 
 /** Probe a source file's video dimensions via ffprobe and compute an aspect-

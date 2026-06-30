@@ -27,6 +27,10 @@ export interface PreviewPaneProps {
   revision: number;
   /** The active route, scoping the `/api/media` source-serve allowlist. */
   route: string | undefined;
+  /** Whether the timeline has a GRAPHIC (Remotion) overlay clip the `<Player>`
+   *  should render on top. False → no Player mounts (a plain video-file overlay
+   *  composites on the footage canvas instead; see App `deriveOverlay`). */
+  overlayPresent: boolean;
   /** Overlay duration in frames. */
   overlayDuration: number;
   /** Props for the overlay composition. */
@@ -46,6 +50,7 @@ export function PreviewPane({
   timeline,
   revision,
   route,
+  overlayPresent,
   overlayDuration,
   overlayProps,
   volume,
@@ -94,13 +99,15 @@ export function PreviewPane({
           muted={muted}
           sinkId={sinkId}
         />
-        <OverlayPlayer
-          width={width}
-          height={height}
-          fps={fps}
-          durationInFrames={overlayDuration}
-          {...(overlayProps ? { inputProps: overlayProps } : {})}
-        />
+        {overlayPresent && (
+          <OverlayPlayer
+            width={width}
+            height={height}
+            fps={fps}
+            durationInFrames={overlayDuration}
+            {...(overlayProps ? { inputProps: overlayProps } : {})}
+          />
+        )}
       </div>
     </div>
   );

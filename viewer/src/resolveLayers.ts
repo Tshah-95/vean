@@ -38,29 +38,80 @@ function videoIndexOfMainTractor(mainIndex: number): number {
   return mainIndex - 1;
 }
 
-/** The over-composite (Remotion-overlay) field transitions vean emits: a `qtblend`
- *  (or `cairoblend`/`frei0r.cairoblend`) compositing the `bTrack` (graphic, higher
- *  index = ON TOP) over the `aTrack` (footage base). vean's graphic action always
- *  emits `qtblend` (`src/actions/graphic.ts`). The `bTrack` video track is owned by
- *  the `@remotion/player` overlay, NOT the footage compositor. */
+/** The over-composite field-transition services vean emits: a `qtblend` (or
+ *  `cairoblend`/`frei0r.cairoblend`) compositing the `bTrack` (higher index = ON
+ *  TOP) over the `aTrack` (the base below). vean's graphic action always emits
+ *  `qtblend` (`src/actions/graphic.ts`); but a `qtblend` is ALSO how any upper
+ *  video CLIP composites over the footage below — it is NOT a "this is a Remotion
+ *  overlay" marker. The Remotion-overlay marker is the clip being a GRAPHIC clip
+ *  (`isGraphic` — a `graphic:` label or a `cache/remotion/` resource), which
+ *  `resolveLayerOnTrack` already excludes per-clip (the `<Player>` draws it). */
 const OVERLAY_BLEND_SERVICES = new Set(["qtblend", "cairoblend", "frei0r.cairoblend"]);
 
-/** The 0-based `tracks.video` indices owned by the Remotion overlay — the `bTrack`
- *  of every over-composite transition. The footage compositor SKIPS these (the
- *  Remotion `<Player>` draws them on top, §4: two compositors, one editor track).
+/** The 0-based `tracks.video` indices the footage compositor SKIPS because the
+ *  `@remotion/player` overlay draws them ON TOP (§4: two compositors, one editor
+ *  track). A track is skipped ONLY when, AT THIS FRAME, it is the `bTrack` of an
+ *  over-composite transition AND the covering clip is an actual GRAPHIC clip — i.e.
+ *  the clip the live `<Player>` will redraw.
  *
- *  This is the STRUCTURAL truth that survives a parse round-trip even when the
- *  author-time `graphic:` label is dropped and the overlay resource isn't under
- *  `cache/remotion/` (e.g. the committed demo's `corpus/demo/lower-third.mov`). It
- *  is the same `aTrack`/`bTrack` mapping the serializer + graphic action use. */
-function overlayTrackIndices(transitions: Transition[]): Set<number> {
+ *  This is the load-bearing correction (verified on `projects/retire`): a plain
+ *  pre-rendered video file on a `qtblend` over-composite track (e.g. retire's
+ *  `chat.mov`, a baked carlo overlay; or the demo's `corpus/demo/lower-third.mov`)
+ *  is NOT a graphic clip and the `<Player>` never renders it — so the footage
+ *  compositor MUST decode + composite it, exactly as `melt` over-composites it on
+ *  export. Skipping it unconditionally (the prior structural-only rule) dropped the
+ *  overlay entirely and left the hardcoded `<Player>` `LowerThird` as the only thing
+ *  on top — wrong for every project that isn't the Move-5 demo. Graphic clips are
+ *  still excluded (here AND per-clip in `resolveLayerOnTrack`), so the Remotion seam
+ *  is unchanged where a real graphic clip is present. */
+function overlayTrackIndices(timeline: Timeline, frame: number): Set<number> {
   const out = new Set<number>();
-  for (const t of transitions) {
-    if (OVERLAY_BLEND_SERVICES.has(t.service)) {
-      out.add(videoIndexOfMainTractor(t.bTrack));
-    }
+  for (const t of timeline.transitions) {
+    if (!OVERLAY_BLEND_SERVICES.has(t.service)) continue;
+    const videoIndex = videoIndexOfMainTractor(t.bTrack);
+    const track = timeline.tracks.video[videoIndex];
+    if (!track) continue;
+    // Skip the track ONLY when the clip covering this frame is a graphic clip the
+    // `<Player>` owns. `resolveLayerOnTrack` returns a layer for a non-graphic clip
+    // and null for a graphic one; a non-null result here means "footage to draw".
+    const layer = resolveLayerOnTrack(track, videoIndex, frame);
+    if (layer === null && coversWithGraphic(track, frame)) out.add(videoIndex);
   }
   return out;
+}
+
+/** True iff a GRAPHIC clip covers `frame` on `track` — the case where
+ *  `resolveLayerOnTrack` returned null because the `<Player>` owns the layer (as
+ *  opposed to null for a blank / past-the-end, where nothing is drawn anyway).
+ *  Mirrors `resolveLayerOnTrack`'s dissolve-trimming placement walk so the coverage
+ *  test lines up frame-exactly. */
+function coversWithGraphic(track: Track, frame: number): boolean {
+  if (track.hidden) return false;
+  const items = track.items;
+  let cursor = 0;
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (!it) continue;
+    if (it.kind === "blank") {
+      cursor += it.length;
+      continue;
+    }
+    if (it.kind === "dissolve") {
+      cursor += it.frames;
+      continue;
+    }
+    const before = items[i - 1];
+    const after = items[i + 1];
+    const trimHead = before?.kind === "dissolve" ? before.frames : 0;
+    const trimTail = after?.kind === "dissolve" ? after.frames : 0;
+    const segLen = it.out - trimTail - (it.in + trimHead) + 1;
+    if (segLen <= 0) continue;
+    const start = cursor;
+    cursor += segLen;
+    if (frame < start || frame >= start + segLen) continue;
+    return isGraphic(it);
+  }
+  return false;
 }
 
 /** The fade-sentinel filter services the builder emits (mirror of
@@ -349,7 +400,7 @@ export function resolveLayers(timeline: Timeline, frame: number): ResolvedFrame 
   // Tracks owned by the Remotion overlay (the bTrack of a qtblend over-composite)
   // are drawn by the `@remotion/player`, NOT here — skip them so the footage base
   // shows as the compositor's footage and the overlay reveals it (§4, §7).
-  const overlayTracks = overlayTrackIndices(timeline.transitions);
+  const overlayTracks = overlayTrackIndices(timeline, frame);
   for (let i = 0; i < timeline.tracks.video.length; i++) {
     if (overlayTracks.has(i)) continue;
     const track = timeline.tracks.video[i];

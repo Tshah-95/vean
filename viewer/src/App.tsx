@@ -18,21 +18,28 @@ import type { TimelineResponse } from "./types";
 import { isGraphicClip, placeItems } from "./types";
 import { useTimelineEditor } from "./useTimelineEditor";
 
-/** Find the first graphic overlay clip in the timeline and read its placement +
- *  props, so the Player renders the right composition over the right span. */
+/** Find the first GRAPHIC overlay clip in the timeline and read its placement +
+ *  props, so the `@remotion/player` renders the right composition over the right
+ *  span. `present` is false when the timeline has NO graphic clip — in which case
+ *  the Player must NOT mount (it would otherwise draw its hardcoded `LowerThird`
+ *  over a timeline that never asked for it; the bug seen on `projects/retire`,
+ *  whose `chat.mov` overlay is a plain video file the FOOTAGE compositor composites,
+ *  not a Remotion graphic). */
 function deriveOverlay(data: TimelineResponse): {
+  present: boolean;
   duration: number;
   props: Record<string, unknown> | undefined;
 } {
   for (const track of data.timeline.tracks.video) {
     for (const placed of placeItems(track)) {
       if (placed.item.kind === "clip" && isGraphicClip(placed.item)) {
-        return { duration: placed.length, props: undefined };
+        return { present: true, duration: placed.length, props: undefined };
       }
     }
   }
-  // No overlay in the timeline → a 1-frame transparent overlay (no-op).
-  return { duration: data.totalFrames, props: undefined };
+  // No graphic clip → no Remotion overlay layer at all (footage-only / video-file
+  // overlays composite on the footage canvas).
+  return { present: false, duration: data.totalFrames, props: undefined };
 }
 
 function Viewer({ route }: { route: string | undefined }) {
@@ -182,7 +189,7 @@ function Stage({
 }: {
   data: TimelineResponse;
   route: string | undefined;
-  overlay: { duration: number; props: Record<string, unknown> | undefined };
+  overlay: { present: boolean; duration: number; props: Record<string, unknown> | undefined };
   volume: number;
   muted: boolean;
   sinkId: string;
@@ -201,6 +208,24 @@ function Stage({
   useEffect(() => {
     clock.setTotalFrames(editor.totalFrames);
   }, [clock, editor.totalFrames]);
+
+  // Headless EDIT BRIDGE (`window.__veanEdit`) — the no-UI handle the `drive` gate
+  // uses to apply ONE op through the REAL editor path (the same `editor.commit` every
+  // mutating gesture funnels through), so the working-IR React state + `revision`
+  // update and the footage stage recomposites with NO save. This is the product
+  // liveness path; a raw `/api/apply-op` fetch mutates only the server session and
+  // would NOT update the React working IR the compositor reads. Side-effect only,
+  // mirrors the decode bridge (`installDecodeBridge`); attaches nothing to the UI.
+  useEffect(() => {
+    (
+      window as unknown as {
+        __veanEdit?: (op: string, args: Record<string, unknown>) => Promise<unknown>;
+      }
+    ).__veanEdit = (op, args) => editor.commit({ op, args } as never);
+    return () => {
+      (window as unknown as { __veanEdit?: unknown }).__veanEdit = undefined;
+    };
+  }, [editor]);
 
   // Edit keyboard. Undo/redo/save use Cmd (meta); B blades the selected clip at the
   // playhead. Coexists with the play/pause/zoom keys (different keys / handlers).
@@ -242,6 +267,7 @@ function Stage({
         timeline={editor.timeline}
         revision={editor.revision}
         route={route}
+        overlayPresent={overlay.present}
         overlayDuration={overlay.duration}
         volume={volume}
         muted={muted}
