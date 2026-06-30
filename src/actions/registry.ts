@@ -2145,6 +2145,21 @@ const actions = [
   // ...skillActions,
 ];
 
+// ─── S4 (generative provenance import) registration — FLAGGED, commented ────────
+// The `timeline.importWithProvenance` action lives in `./generate-import` (a separate
+// file owned by stream S4) to avoid racing the shared registry while the parallel
+// streams land. To ENABLE it, the lead/PM should (in one step):
+//   1. add the import at the top of this file:
+//        import { importWithProvenanceAction } from "./generate-import";
+//   2. push it into the `actions` array (e.g. just before the closing `];` above):
+//        importWithProvenanceAction,
+// It is a complete, typed `ActionDefinition` (CLI: `timeline import-with-provenance`,
+// MCP: `import-with-provenance`) verified by tests/generate-import.test.ts. Left
+// commented so this stream touches the shared registry by ONE reviewable block only.
+//
+// import { importWithProvenanceAction } from "./generate-import";
+// actions.push(importWithProvenanceAction);
+
 const registry = new Map<string, ActionDefinition>(
   actions.map((definition) => [definition.id, definition]),
 );
