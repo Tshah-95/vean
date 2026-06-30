@@ -1,0 +1,31 @@
+#!/bin/sh
+# vean post-checkout hook (DESIGN-WORKTREE.md §4.4).
+#
+# `git worktree add` fires `post-checkout` inside the freshly created tree, so this
+# is exactly when a new worktree is born — the moment to stamp its identity slug and
+# carry over the gitignored-but-needed files git itself won't (the conductor.build
+# on-create model). Activated ONCE per machine via `git config core.hooksPath
+# .githooks`; because all worktrees share the common `.git`, that single setting
+# covers every future worktree (§4.4 / setup SKILL).
+#
+# Hook contract: post-checkout receives  $1=prev-HEAD  $2=new-HEAD  $3=branch-flag
+# ($3 is 1 for a branch checkout — which `git worktree add` always is — and 0 for a
+# file checkout). We act only on branch checkouts so an ordinary `git checkout -- file`
+# never triggers it.
+#
+# BEST-EFFORT, ALWAYS: this hook must NEVER fail a checkout. Every path exits 0; the
+# init is run detached from the checkout's success. It is idempotent (worktree-init
+# checks-then-acts), so a redundant fire is harmless.
+
+branch_flag="$3"
+
+# Only a branch checkout (includes `git worktree add`); skip file checkouts.
+if [ "$branch_flag" = "1" ]; then
+  if command -v bun >/dev/null 2>&1; then
+    # `bun run worktree:init` is package-relative → always worktree-correct (§4.3,
+    # §5: worktrees invoke through `bun run`, never the canonical global `vean` bin).
+    bun run worktree:init --quiet || true
+  fi
+fi
+
+exit 0

@@ -264,6 +264,14 @@ whose `rootPath` no longer exists (a cheap GC on read).
 6. De-hardcode `/Users/tejas/Github/vean` in `tests/policy.test.ts` (derive from
    the test's own location); leave docs as a follow-up sweep.
 7. `~/.vean/projects.json` GC-on-read for dead `rootPath`s (§4.6).
+8. **Gate hygiene** — nested task-chip worktrees live under `.claude/worktrees/`
+   (gitignored) and carry a full copy of `tests/` + `src/`. The primary checkout's
+   `vitest` and `biome` glob into them by default (vitest collected ~3.5k tests
+   from sibling branches; biome checked 606 files and failed on their drift). Root
+   `vitest.config.ts` excludes `**/.claude/worktrees/**`; `biome.json` `files.ignore`
+   adds `.claude/worktrees`. (`tsc` is already safe — its `include` is the explicit
+   `src`/`tests`/`scripts`, which doesn't recurse into `.claude`.) Without this a
+   sibling worktree's unrelated state fails the parent's gate.
 
 None of these require a Layer B decision; all are unambiguous.
 

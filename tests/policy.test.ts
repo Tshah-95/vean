@@ -2,12 +2,17 @@
 // action's native effect metadata (+ runtime context) into one approval level the
 // surfaces project down; these fixtures pin the four tiers and the outside-project
 // escalation so a destructive or escaping write can never silently downgrade.
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createActionContext, getAction } from "../src/actions";
 import { defaultPolicyLevel, evaluatePolicy } from "../src/actions/policy";
 import type { ActionContext } from "../src/actions/types";
 
-const repo = "/Users/tejas/Github/vean";
+// Derive the repo root from this test's own location (tests/ sits at <repo>/tests)
+// so the fixtures pass from any checkout — including a git worktree (DESIGN-WORKTREE
+// §2 sharp edge / §4.7 item 6). `repo` is only ever used as a base path for
+// inside-vs-outside-project policy projection, never matched as a literal string.
+const repo = resolve(import.meta.dirname, "..");
 
 function ctx(): ActionContext {
   // A context whose project root is the repo, so "inside vs outside project" is

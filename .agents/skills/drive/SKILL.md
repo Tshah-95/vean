@@ -62,29 +62,44 @@ over the computer every half-second"). This is a hard rule:
 
 ## The harness (three commands)
 
+The drive `--name` and the `agent-browser --session` **default to this
+checkout's worktree slug** (e.g. `main` on the canonical tree,
+`busy-moore-4604ba` in a `.claude/worktrees/<name>` chip). That's the one move
+that lets two worktrees drive concurrently without colliding on one browser tab.
+So capture the name once and pass it to every `agent-browser` call — never
+hardcode `vean`:
+
 ```bash
 # 1. Bring up a driveable instance against a project (free port, health-gated).
-#    Idempotent: a second `up` reuses a healthy session. Defaults to cwd as project.
+#    Idempotent: a second `up` reuses a healthy session. Project defaults to a
+#    recorded pointer (worktree-init) if present, else cwd.
 URL=$(bun run drive up --project /path/to/project)      # or: --timeline timeline:main
+SESSION=$(bun scripts/drive.ts name)   # = the worktree slug, unless you passed --name
 
 # 2. Drive the REAL UI headless. Note: plain http:// (NOT https — vean's preview
 #    is loopback http; this contradicts the generic agent-browser skill's warning).
-agent-browser --headed false --session vean open "$URL"   # --headed false: NEVER seize the screen
-agent-browser --session vean snapshot -i            # interactive elements → @refs
-agent-browser --session vean find text "Render" click
-agent-browser --session vean screenshot "$TMPDIR/drive-render-panel.png"
+agent-browser --headed false --session "$SESSION" open "$URL"   # --headed false: NEVER seize the screen
+agent-browser --session "$SESSION" snapshot -i            # interactive elements → @refs
+agent-browser --session "$SESSION" find text "Render" click
+agent-browser --session "$SESSION" screenshot "$TMPDIR/drive-render-panel.png"
 
 # 3. Tear down (kills the sidecar, clears the session). ALWAYS do this.
-agent-browser --session vean close      # close the browser session
-bun run drive down                      # stop this session's preview sidecar
-# bun run drive down --all              # safety net: reap EVERY drive sidecar at once
+agent-browser --session "$SESSION" close   # close the browser session
+bun run drive down                         # stop this session's preview sidecar
+# bun run drive down --all                 # safety net: reap EVERY drive sidecar at once
 ```
 
 `bun run drive` is `scripts/drive.ts` — it owns only the server lifecycle
-(`up`/`down`/`url`/`status`) so you never hand-roll free-port + wait-for-health +
-teardown. The session (pid/port/url) lives in the repo's gitignored
-`.vean/drive/<name>.json`; `--name` (default `vean`) maps 1:1 to
-`agent-browser --session <name>`. Run several at once with distinct `--name`s.
+(`up`/`down`/`url`/`status`/`name`) so you never hand-roll free-port +
+wait-for-health + teardown. The session (pid/port/url) lives in the repo's
+gitignored `.vean/drive/<name>.json`; the `--name` defaults to the **worktree
+slug** (resolved from `VEAN_WORKTREE` / the linked-worktree dir / the branch /
+`main`) and maps 1:1 to `agent-browser --session <name>`. `bun scripts/drive.ts
+name` echoes the resolved name so the `--session` you drive with always matches
+the one `up` created — that's why two worktrees don't fight over one tab. Pass an
+explicit `--name` to override (it wins everywhere), and run several at once with
+distinct `--name`s. `bun scripts/drive.ts status` reports which tree+session
+you're looking at (`slug`, `name`, `port`, `url`).
 
 Everything else is raw `agent-browser` (see the `agent-browser` skill for the full
 command set: `snapshot`, `find`, `click`, `fill`, `get`, `is`, `diff`, `wait`,
@@ -96,9 +111,10 @@ command set: `snapshot`, `find`, `click`, `fill`, `get`, `is`, `diff`, `wait`,
 `recordVideo` works — the "Claude in Chrome" *extension* can only make GIFs):
 
 ```bash
-agent-browser --session vean record start "$TMPDIR/feat-blade.webm"
+# $SESSION = $(bun scripts/drive.ts name) — the worktree slug, as above.
+agent-browser --session "$SESSION" record start "$TMPDIR/feat-blade.webm"
 # … drive the feature: click, edit, observe …
-agent-browser --session vean record stop
+agent-browser --session "$SESSION" record stop
 ```
 
 Then surface it: use **SendUserFile** to deliver the `.webm` / `.png` with a caption

@@ -644,35 +644,84 @@ program
     "Launch the local 127.0.0.1 web viewer: timeline strip + footage-proxy/Remotion-overlay composited preview on one master clock",
   )
   .option("--timeline <uri-or-route>", "timeline path, file:// URI, or route alias")
-  .option("--port <n>", "port to bind on 127.0.0.1", parseInteger, 5174)
+  .option(
+    "--port <n>",
+    "port to bind on 127.0.0.1 (default: an OS-assigned ephemeral port; honors VEAN_PREVIEW_PORT)",
+    parseInteger,
+  )
   .option("--no-open", "do not open the browser")
   .option("--dev", "reverse-proxy the Vite dev server instead of serving viewer/dist")
   .option("--repo <path>", "project repo path")
   .action(
     async (opts: {
       timeline?: string;
-      port: number;
+      port?: number;
       open?: boolean;
       dev?: boolean;
       repo?: string;
     }) => {
-      // Print the URL up front (the action then blocks until Ctrl-C).
-      console.error(`vean preview serving on http://127.0.0.1:${opts.port}`);
+      // The bound URL isn't known up front under the ephemeral default — the
+      // action prints it once the server binds. Just announce the mode here.
       console.error(
         opts.dev
-          ? "  mode: vite dev proxy (run `bun run viewer:dev` alongside)"
-          : "  mode: viewer/dist",
+          ? "vean preview: vite dev proxy (run `bun run viewer:dev` alongside)"
+          : "vean preview: serving viewer/dist",
       );
       console.error("  press Ctrl-C to stop");
       await runAction("preview.serve", {
         timeline: opts.timeline,
-        port: opts.port,
+        // Pass through only when the user set --port; otherwise the action resolves
+        // VEAN_PREVIEW_PORT or an ephemeral port (DESIGN-WORKTREE §4.2).
+        ...(opts.port != null ? { port: opts.port } : {}),
         open: opts.open !== false,
         dev: opts.dev ?? false,
         repo: opts.repo,
       });
     },
   );
+
+program
+  .command("whereami")
+  .description(
+    "Report this checkout's worktree identity (slug, branch, primary/linked), its state DB, the live drive session, and where the on-PATH vean resolves",
+  )
+  .option("--repo <path>", "checkout path to inspect")
+  .option("--json", "emit JSON")
+  .action(async (opts: { repo?: string; json?: boolean }) => {
+    const output = (await printActionOutput("worktree.whereami", opts, opts.json)) as {
+      worktreePath: string;
+      slug: string;
+      branch: string | null;
+      isPrimary: boolean;
+      source: string;
+      stateDbPath: string;
+      driveSession: { name: string; url: string; port: number; status: string } | null;
+      veanBinResolvesTo: string | null;
+      veanBinMatchesCheckout: boolean;
+    };
+    if (!opts.json) {
+      console.log(`worktree: ${output.worktreePath}`);
+      console.log(
+        `slug:     ${output.slug} (${output.isPrimary ? "primary" : "linked"}, via ${output.source})`,
+      );
+      console.log(`branch:   ${output.branch ?? "(detached)"}`);
+      console.log(`state db: ${output.stateDbPath}`);
+      console.log(
+        `drive:    ${
+          output.driveSession
+            ? `${output.driveSession.name} ${output.driveSession.url} (${output.driveSession.status})`
+            : "(no live session)"
+        }`,
+      );
+      console.log(
+        `vean bin: ${
+          output.veanBinResolvesTo
+            ? `${output.veanBinResolvesTo}${output.veanBinMatchesCheckout ? " (this checkout)" : " (NOT this checkout — use `bun run …` / `bun src/cli.ts …`)"}`
+            : "(not on PATH)"
+        }`,
+      );
+    }
+  });
 
 program
   .command("open [project]")

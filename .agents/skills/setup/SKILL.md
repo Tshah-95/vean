@@ -110,6 +110,47 @@ Default choices when the user does not answer and continuing is safe:
   is installed and the user wants the app build gate, run
   `bun run app:doctor -- --native`; it builds the local macOS `.app` bundle.
 
+## Worktree-native setup
+
+vean is checked out many times at once (Claude task chips spin off a `git
+worktree` per task; humans run parallel feature branches). One setup step makes
+every present and future worktree self-initializing. See `DESIGN-WORKTREE.md`
+§4.3–§4.4 for the full design.
+
+- **Activate the on-create hook once per machine.** From the canonical checkout,
+  run this single command:
+
+  ```bash
+  git config core.hooksPath .githooks
+  ```
+
+  All worktrees share the common `.git`, so `core.hooksPath` is set **once** and
+  covers every worktree created afterward. The committed `.githooks/post-checkout`
+  hook fires whenever `git worktree add` creates a tree (and on branch checkouts),
+  and runs `bun run worktree:init` best-effort — it never fails a checkout.
+
+- **What `worktree:init` does** (idempotent — safe to run twice):
+  1. resolves + persists this checkout's slug to `.vean/worktree.json` (the
+     identity used as the default drive `--name` / agent-browser `--session`);
+  2. optionally records a default `--project` pointer (`bun run worktree:init
+     --project <path>`) to `.vean/worktree-project` so `drive up` in this tree
+     knows which **shared** project to preview — by reference, never a copy;
+  3. copies only a small, explicit allowlist of gitignored-but-needed local
+     config from the primary checkout (the conductor `.env.*` analogue).
+
+- **What `worktree:init` does NOT do** (DESIGN-WORKTREE.md §4.4a, load-bearing):
+  it **never** copies `.vean/vean.db` (there is no timeline/clips table — the edit
+  lives in `.mlt`/`.tsx` files; copying the DB only drags absolute paths and stale
+  jobs across trees), **never** copies media (shared/external/referenced), and
+  **never** copies secrets, `node_modules/`, or `projects/` deliverables. It also
+  never runs `bun link` or `git config` — no global-state mutation.
+
+- **The `vean` bin belongs to the canonical checkout only.** Do not `bun link`
+  inside a worktree. The canonical tree owns `~/.bun/bin/vean`; inside a worktree,
+  agents and scripts invoke through `bun run <script>` (already worktree-relative)
+  or `bun src/cli.ts …`. Running `worktree:init` manually is the fallback when the
+  hook did not fire: `bun run worktree:init`.
+
 ## CLI provenance
 
 The main CLI is `src/cli.ts` and uses Commander for subcommands, help, and

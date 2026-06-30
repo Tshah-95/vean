@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { resolveBin } from "../driver/melt";
+import { resolveWorktreeSlug, worktreeStatePath } from "../state/worktree";
 
 export type DoctorHost = "all" | "claude-code" | "codex";
 export type DoctorSurface = "all" | "cli" | "lsp" | "mcp" | "cli-lsp" | "mcp-lsp";
@@ -52,6 +53,29 @@ function findCommand(command: string): string | null {
   );
   if (login.status === 0 && login.stdout.trim()) return login.stdout.trim().split("\n")[0] ?? null;
   return null;
+}
+
+/** Resolve where the on-PATH `vean` bin points relative to THIS checkout's
+ *  `src/cli.ts`, realpath-comparing both. Shared by the doctor `cli:path` /
+ *  worktree checks and the `worktree.whereami` action so version-skew is reported
+ *  identically everywhere (DESIGN-WORKTREE §4.3 / §4.5). `onPath` is the resolved
+ *  bin path (null when `vean` isn't on PATH); `matchesCheckout` is true only when
+ *  the global bin resolves to this tree's CLI. */
+export function resolveVeanBin(repo: string): {
+  onPath: string | null;
+  expected: string;
+  matchesCheckout: boolean;
+} {
+  const expected = realpathSync(join(repo, "src/cli.ts"));
+  const vean = findCommand("vean");
+  if (!vean) return { onPath: null, expected, matchesCheckout: false };
+  let actual: string;
+  try {
+    actual = realpathSync(vean);
+  } catch {
+    actual = vean;
+  }
+  return { onPath: actual, expected, matchesCheckout: actual === expected };
 }
 
 function commandCheck(
@@ -103,8 +127,8 @@ function validateCli(repo: string): DoctorCheck[] {
     );
   }
 
-  const vean = findCommand("vean");
-  if (!vean) {
+  const bin = resolveVeanBin(repo);
+  if (!bin.onPath) {
     checks.push(
       check(
         "cli:path",
@@ -114,13 +138,12 @@ function validateCli(repo: string): DoctorCheck[] {
     );
     return checks;
   }
-
-  const expected = realpathSync(join(repo, "src/cli.ts"));
-  const actual = realpathSync(vean);
-  if (actual === expected) {
-    checks.push(check("cli:path", "pass", `vean resolves to ${actual}`));
+  if (bin.matchesCheckout) {
+    checks.push(check("cli:path", "pass", `vean resolves to ${bin.onPath}`));
   } else {
-    checks.push(check("cli:path", "fail", `vean resolves to ${actual}, expected ${expected}`));
+    checks.push(
+      check("cli:path", "fail", `vean resolves to ${bin.onPath}, expected ${bin.expected}`),
+    );
   }
   return checks;
 }
@@ -439,6 +462,71 @@ async function validateState(repo: string): Promise<DoctorCheck[]> {
   return checks;
 }
 
+/**
+ * Worktree health (DESIGN-WORKTREE §4.3 / §4.5): is this checkout's identity
+ * persisted, is `.vean/` initialized, and does the global `vean` bin point at
+ * THIS tree? A linked worktree whose code differs from the canonical `bun link`
+ * is the EXPECTED version-skew condition (invariant 5), so the bin mismatch is a
+ * WARN, not a fail — it turns silent skew into a visible, expected note rather
+ * than breaking the readiness gate.
+ */
+function validateWorktree(repo: string): DoctorCheck[] {
+  const checks: DoctorCheck[] = [];
+  const identity = resolveWorktreeSlug(repo);
+
+  const statePath = worktreeStatePath(repo);
+  if (existsSync(statePath)) {
+    checks.push(
+      check("worktree:slug", "pass", `slug "${identity.slug}" persisted (.vean/worktree.json)`),
+    );
+  } else {
+    // Not yet stamped — harmless (it lazily writes on first state touch / whereami),
+    // so a warn with the slug doctor WOULD persist, not a fail.
+    checks.push(
+      check(
+        "worktree:slug",
+        "warn",
+        `slug "${identity.slug}" not yet persisted; run \`vean whereami\` or \`bun run worktree:init\` to stamp .vean/worktree.json`,
+      ),
+    );
+  }
+
+  checks.push(
+    check(
+      "worktree:state-dir",
+      existsSync(join(repo, ".vean")) ? "pass" : "warn",
+      existsSync(join(repo, ".vean"))
+        ? ".vean/ is initialized"
+        : ".vean/ not initialized yet; created on first state touch (run `vean state init`)",
+    ),
+  );
+
+  const bin = resolveVeanBin(repo);
+  if (!bin.onPath) {
+    checks.push(
+      check(
+        "worktree:bin",
+        "warn",
+        "vean is not on PATH; inside a worktree use `bun run <script>` / `bun src/cli.ts …` (the canonical checkout owns the global bin)",
+      ),
+    );
+  } else if (bin.matchesCheckout) {
+    checks.push(
+      check("worktree:bin", "pass", `global vean resolves to this checkout (${bin.onPath})`),
+    );
+  } else {
+    checks.push(
+      check(
+        "worktree:bin",
+        "warn",
+        `global vean resolves to ${bin.onPath}, not this checkout (${bin.expected}) — expected in a worktree; invoke via \`bun run <script>\` / \`bun src/cli.ts …\``,
+      ),
+    );
+  }
+
+  return checks;
+}
+
 export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorReport> {
   const repo = resolve(options.repo ?? process.cwd());
   const host = options.host ?? "all";
@@ -499,6 +587,7 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorRepo
   checks.push(skillResolutionCheck(repo, "skills/setup/SKILL.md", ".agents/skills/setup/SKILL.md"));
   checks.push(...validateRemotionParity(repo));
   checks.push(...(await validateState(repo)));
+  checks.push(...validateWorktree(repo));
 
   if (host === "all" || host === "claude-code") checks.push(...validateClaudeFiles(repo, surface));
   if (host === "all" || host === "codex") checks.push(...validateCodex(repo));

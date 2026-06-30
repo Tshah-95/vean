@@ -54,10 +54,39 @@ export function readProjectConfig(env: NodeJS.ProcessEnv = process.env): Project
   const path = projectConfigPath(env);
   if (!existsSync(path)) return { knownProjects: [] };
   const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<ProjectConfig>;
-  return {
+  const config: ProjectConfig = {
     activeProjectRoot: parsed.activeProjectRoot,
     knownProjects: Array.isArray(parsed.knownProjects) ? parsed.knownProjects : [],
   };
+  return gcProjectConfig(config, env);
+}
+
+// GC-on-read (DESIGN-WORKTREE §4.6): a removed worktree leaves no machine-global
+// trace except a stale `~/.vean/projects.json` entry. Prune `knownProjects` whose
+// `rootPath` no longer exists on disk, and clear `activeProjectRoot` if it points
+// at a now-missing path, so the implicit "active project" fallback never resolves
+// to a deleted tree. Conservative: the sweep is bounded to `knownProjects` (small)
+// and the precedence in `resolveProject` (--project > VEAN_PROJECT > cwd walk-up >
+// active fallback) is untouched. We only rewrite the file when something was
+// actually pruned, so the common read path stays a pure read.
+function gcProjectConfig(config: ProjectConfig, env: NodeJS.ProcessEnv): ProjectConfig {
+  const livingProjects = config.knownProjects.filter((p) => existsSync(p.rootPath));
+  const activeMissing =
+    config.activeProjectRoot !== undefined &&
+    !existsSync(resolveActiveRoot(config.activeProjectRoot));
+  if (livingProjects.length === config.knownProjects.length && !activeMissing) {
+    return config; // nothing dead — leave the file untouched.
+  }
+  const pruned: ProjectConfig = {
+    activeProjectRoot: activeMissing ? undefined : config.activeProjectRoot,
+    knownProjects: livingProjects,
+  };
+  writeProjectConfig(pruned, env);
+  return pruned;
+}
+
+function resolveActiveRoot(activeProjectRoot: string): string {
+  return isAbsolute(activeProjectRoot) ? activeProjectRoot : resolve(activeProjectRoot);
 }
 
 export function writeProjectConfig(
@@ -174,9 +203,7 @@ export function resolveProject(options: ResolveProjectOptions = {}): ResolvedPro
   }
 
   if (config.activeProjectRoot) {
-    const rootPath = isAbsolute(config.activeProjectRoot)
-      ? config.activeProjectRoot
-      : resolve(config.activeProjectRoot);
+    const rootPath = resolveActiveRoot(config.activeProjectRoot);
     const known = config.knownProjects.find((p) => p.rootPath === rootPath);
     return {
       rootPath,

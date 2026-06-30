@@ -695,8 +695,12 @@ export function createPreviewHandler(
 
     // ── Static (the built viewer) or Vite dev proxy ────────────────────────
     if (opts.dev) {
-      // Reverse-proxy non-/api routes to the Vite dev server on port+1.
-      const viteUrl = `http://127.0.0.1:${opts.port + 1}${path}${url.search}`;
+      // Reverse-proxy non-/api routes to the Vite dev server. With a fixed --port
+      // the convention is `port + 1`; with the ephemeral default (port 0) there is
+      // no stable base to derive from, so fall back to the viewer's own configured
+      // dev port (viewer/vite.config.ts: 5175 = the historical 5174 + 1).
+      const vitePort = opts.port > 0 ? opts.port + 1 : 5175;
+      const viteUrl = `http://127.0.0.1:${vitePort}${path}${url.search}`;
       try {
         const proxied = await fetch(viteUrl, {
           method: req.method,
@@ -706,7 +710,7 @@ export function createPreviewHandler(
         return new Response(proxied.body, { status: proxied.status, headers: proxied.headers });
       } catch {
         return new Response(
-          `Vite dev server not reachable on 127.0.0.1:${opts.port + 1}. Run \`bun run viewer:dev\` in another terminal, or omit --dev to serve viewer/dist.`,
+          `Vite dev server not reachable on 127.0.0.1:${vitePort}. Run \`bun run viewer:dev\` in another terminal, or omit --dev to serve viewer/dist.`,
           { status: 502 },
         );
       }

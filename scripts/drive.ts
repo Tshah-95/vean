@@ -14,10 +14,11 @@
 // free-port + wait-for-health + teardown on every run. Everything else (click,
 // snapshot, screenshot, record) is raw `agent-browser` — see the `drive` skill.
 //
-// Usage:
+// Usage (`--name` defaults to this worktree's slug — see below):
 //   bun scripts/drive.ts up [--project <path>] [--timeline <route>] [--port <n>] [--name <s>]
 //   bun scripts/drive.ts url   [--name <s>]   # bare URL on stdout (chainable)
-//   bun scripts/drive.ts status[--name <s>]   # health JSON on stdout
+//   bun scripts/drive.ts status[--name <s>]   # health JSON (slug/name/port/url) on stdout
+//   bun scripts/drive.ts name  [--name <s>]   # echo the resolved name (= slug) for agent-browser
 //   bun scripts/drive.ts down  [--name <s>]   # stop one sidecar, clear the session
 //   bun scripts/drive.ts down --all           # reap EVERY drive sidecar (safety net)
 //
@@ -27,8 +28,13 @@
 // instead of leaking a duplicate per call. The session record is written the
 // instant the child is spawned — BEFORE the health wait — and every spawn is
 // appended to a reap log, so no detached server is ever un-killable by `down`.
-// `--name` (default "vean") maps 1:1 to the `agent-browser --session <name>` you
-// drive with; distinct names give independent concurrent sessions.
+// `--name` defaults to this checkout's worktree SLUG (§4.1) — so two concurrent
+// worktrees get independent drive sessions AND independent `agent-browser
+// --session`s without the caller remembering to pass `--name`, instead of both
+// colliding on the literal "vean" (which shares one browser tab: the second
+// `open` navigates away from the first). An explicit `--name` still wins. The
+// name maps 1:1 to the `agent-browser --session <name>` you drive with; distinct
+// names give independent concurrent sessions.
 import { spawn } from "node:child_process";
 import {
   appendFileSync,
@@ -44,10 +50,21 @@ import {
 } from "node:fs";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
+import { resolveWorktreeSlug } from "@/state/worktree";
 
 const REPO = resolve(import.meta.dir, "..");
 const CLI = join(REPO, "src", "cli.ts");
 const DRIVE_DIR = join(REPO, ".vean", "drive");
+
+/** This checkout's worktree slug — the default `--name` / `agent-browser
+ *  --session` (§4.1). Resolved once against THIS script's own tree (not cwd), so
+ *  the default is stable no matter where the harness is invoked from. */
+const WORKTREE_SLUG = resolveWorktreeSlug(REPO).slug;
+
+/** The `--name` to use: explicit flag wins, else the worktree slug. */
+function resolveName(flags: Record<string, string>): string {
+  return flags.name ?? WORKTREE_SLUG;
+}
 /** Env marker stamped on every drive-spawned sidecar (identifies our processes). */
 const DRIVE_TAG = "VEAN_DRIVE";
 /** Append-only log of every pid we spawn, so `down --all` can reap even a session
@@ -67,6 +84,24 @@ interface Session {
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** Optional default `--project` pointer for `up` (§4.4a/§4.7 item 5):
+ *  `worktree-init` may record which shared project this code-worktree previews,
+ *  as a `defaultProject` key on `.vean/worktree.json`. Read defensively — the
+ *  field is optional and the state file is owned by `src/state/worktree.ts`;
+ *  absent/malformed → null and `up` falls back to today's cwd behavior. */
+function readDefaultProject(): string | null {
+  const path = join(REPO, ".vean", "worktree.json");
+  if (!existsSync(path)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as { defaultProject?: unknown };
+    return typeof parsed.defaultProject === "string" && parsed.defaultProject.trim()
+      ? parsed.defaultProject
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 function sessionPath(name: string): string {
   return join(DRIVE_DIR, `${name}.json`);
@@ -185,7 +220,7 @@ function parseFlags(argv: string[]): Record<string, string> {
 }
 
 async function up(flags: Record<string, string>): Promise<void> {
-  const name = flags.name ?? "vean";
+  const name = resolveName(flags);
   mkdirSync(DRIVE_DIR, { recursive: true });
 
   // Fast path: a healthy session already exists → reuse without locking.
@@ -220,7 +255,9 @@ async function up(flags: Record<string, string>): Promise<void> {
     const stale = readSession(name);
     if (stale) await stop(stale); // dead/unhealthy record → reap before restarting
 
-    const project = resolve(flags.project ?? process.cwd());
+    // Project precedence (§4.4a/§4.7 item 5): explicit `--project` → the
+    // worktree's recorded default pointer → today's cwd fallback.
+    const project = resolve(flags.project ?? readDefaultProject() ?? process.cwd());
     const port = flags.port ? Number.parseInt(flags.port, 10) : await freePort();
     const url = `http://127.0.0.1:${port}`;
 
@@ -354,7 +391,7 @@ async function downAll(): Promise<void> {
 
 async function down(flags: Record<string, string>): Promise<void> {
   if (flags.all !== undefined) return downAll();
-  const name = flags.name ?? "vean";
+  const name = resolveName(flags);
   const session = readSession(name);
   if (!session) {
     process.stderr.write(`drive: no session "${name}" to stop\n`);
@@ -365,7 +402,7 @@ async function down(flags: Record<string, string>): Promise<void> {
 }
 
 async function url(flags: Record<string, string>): Promise<void> {
-  const name = flags.name ?? "vean";
+  const name = resolveName(flags);
   const session = readSession(name);
   if (!session || !alive(session.pid)) {
     process.stderr.write(
@@ -376,17 +413,40 @@ async function url(flags: Record<string, string>): Promise<void> {
   process.stdout.write(`${session.url}\n`);
 }
 
+/** Echo the resolved drive `--name` (= worktree slug unless overridden) so the
+ *  `agent-browser --session "$(bun scripts/drive.ts name)"` pairing is
+ *  copy-pasteable and never drifts from `up`'s default (§4.7 item 2). */
+async function name(flags: Record<string, string>): Promise<void> {
+  process.stdout.write(`${resolveName(flags)}\n`);
+}
+
 async function status(flags: Record<string, string>): Promise<void> {
-  const name = flags.name ?? "vean";
-  const session = readSession(name);
+  const sessionName = resolveName(flags);
+  const session = readSession(sessionName);
+  // Echo the worktree slug even when there's no session, so a driver can confirm
+  // WHICH tree it's probing (§4.7 item 3). `slug` is this checkout's identity;
+  // `name` is the agent-browser `--session` (= slug unless `--name` overrides).
   if (!session) {
-    process.stdout.write(`${JSON.stringify({ ok: false, name, reason: "no session" })}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ ok: false, name: sessionName, slug: WORKTREE_SLUG, reason: "no session" })}\n`,
+    );
     return;
   }
   const live = alive(session.pid);
   const ok = live && (await healthy(session.url));
   process.stdout.write(
-    `${JSON.stringify({ ok, name, url: session.url, pid: session.pid, alive: live, project: session.project })}\n`,
+    `${JSON.stringify({
+      ok,
+      name: session.name,
+      slug: WORKTREE_SLUG,
+      url: session.url,
+      port: session.port,
+      pid: session.pid,
+      alive: live,
+      status: session.status,
+      project: session.project,
+      timeline: session.timeline,
+    })}\n`,
   );
 }
 
@@ -402,9 +462,11 @@ async function main(): Promise<void> {
       return url(flags);
     case "status":
       return status(flags);
+    case "name":
+      return name(flags);
     default:
       process.stderr.write(
-        "usage: bun scripts/drive.ts <up|down|url|status> " +
+        "usage: bun scripts/drive.ts <up|down|url|status|name> " +
           "[--project <path>] [--timeline <route>] [--port <n>] [--name <s>] [--all]\n",
       );
       process.exit(cmd ? 1 : 0);

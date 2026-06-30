@@ -849,8 +849,11 @@ const actions = [
     input: z.object({
       repo: z.string().optional(),
       timeline: z.string().optional(),
-      // 0 = let the OS pick a free ephemeral port (used by tests/CI).
-      port: z.number().int().nonnegative().default(5174),
+      // 0 = let the OS pick a free ephemeral port (the worktree-native default,
+      // DESIGN-WORKTREE §4.2). A caller that wants a stable port passes one
+      // explicitly (the Tauri shell does for its WKWebView); `VEAN_PREVIEW_PORT`
+      // overrides the default for direct invocations without touching the flag.
+      port: z.number().int().nonnegative().default(0),
       open: z.boolean().default(true),
       dev: z.boolean().default(false),
       /** When true (tests/CI), start the server and return immediately instead
@@ -882,12 +885,26 @@ const actions = [
     async execute(ctx, input) {
       const { startPreviewServer } = await import("../preview/server");
       const repo = repoFor(ctx, input.repo);
+      // Port precedence: an explicit non-zero `--port` wins; otherwise honor
+      // VEAN_PREVIEW_PORT when it parses to a valid port; otherwise 0 (the OS
+      // picks a free ephemeral port and the bound port is read back below).
+      let port = input.port ?? 0;
+      if (port === 0) {
+        const envPort = Number.parseInt(ctx.env.VEAN_PREVIEW_PORT ?? "", 10);
+        if (Number.isInteger(envPort) && envPort >= 0 && envPort <= 65_535) port = envPort;
+      }
       const handle = startPreviewServer({
         repo,
         ...(input.timeline ? { timeline: input.timeline } : {}),
-        port: input.port ?? 5174,
+        port,
         dev: input.dev ?? false,
       });
+      // Echo the ACTUAL bound URL: with the ephemeral default the CLI can't know
+      // the port up front, so the action is the only place that has it (and
+      // `vean whereami` / `drive status` echo it too, DESIGN-WORKTREE §4.2).
+      if (!input.detached) {
+        process.stderr.write(`vean preview ready on ${handle.url}\n`);
+      }
       // Detached mode (tests/CI): return the handle's URL and a stop hook so the
       // caller can probe endpoints and shut it down. Default mode keeps the server
       // alive (the CLI command awaits an unresolved promise) and opens a browser.
@@ -1613,6 +1630,64 @@ const actions = [
     async execute(ctx, input) {
       const { resolveRouteAlias } = await import("../state/media");
       return resolveRouteAlias(input.repo ?? ctx.project?.rootPath ?? ctx.cwd, input.alias) ?? null;
+    },
+  }),
+  action({
+    id: "worktree.whereami",
+    title: "Where Am I",
+    description:
+      "Report this checkout's worktree identity: slug, branch, primary/linked, its state DB path, the live drive session (if any), and where the on-PATH `vean` resolves. The read-only answer to 'which version am I looking at?' across concurrent worktrees.",
+    relatedDiscovery: ["setup.doctor", "project.current"],
+    input: repoInput,
+    output: z.unknown(),
+    scopes: ["state:read"],
+    effect: baseEffects.stateRead,
+    surfaces: { cli: { command: "whereami" }, mcp: { name: "whereami" } },
+    async execute(ctx, input) {
+      const { readOrInitWorktreeState } = await import("../state/worktree");
+      const { stateDbPath } = await import("../state/db");
+      const { resolveVeanBin } = await import("../cli/doctor");
+      const repo = repoFor(ctx, input.repo);
+      // Persist the slug on first whereami so it stays stable across the session
+      // (the same place doctor points to for stamping .vean/worktree.json).
+      const identity = readOrInitWorktreeState(repo);
+      // Read the drive session keyed by THIS worktree's slug directly off disk —
+      // the drive script (scripts/drive.ts) owns the file; we never import it.
+      let driveSession: { name: string; url: string; port: number; status: string } | null = null;
+      try {
+        const { readFileSync, existsSync } = await import("node:fs");
+        const { join } = await import("node:path");
+        const sessionPath = join(repo, ".vean", "drive", `${identity.slug}.json`);
+        if (existsSync(sessionPath)) {
+          const s = JSON.parse(readFileSync(sessionPath, "utf8")) as {
+            name?: string;
+            url?: string;
+            port?: number;
+            status?: string;
+          };
+          driveSession = {
+            name: s.name ?? identity.slug,
+            url: s.url ?? "",
+            port: s.port ?? 0,
+            status: s.status ?? "unknown",
+          };
+        }
+      } catch {
+        // A missing/malformed drive session is simply "no live session".
+        driveSession = null;
+      }
+      const bin = resolveVeanBin(repo);
+      return {
+        worktreePath: repo,
+        slug: identity.slug,
+        branch: identity.branch,
+        isPrimary: identity.isPrimary,
+        source: identity.source,
+        stateDbPath: stateDbPath(repo),
+        driveSession,
+        veanBinResolvesTo: bin.onPath,
+        veanBinMatchesCheckout: bin.matchesCheckout,
+      };
     },
   }),
   action({

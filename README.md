@@ -108,7 +108,7 @@ This repo is also a Claude Code plugin root:
 Use it directly from this checkout:
 
 ```bash
-claude --plugin-dir /Users/tejas/Github/vean
+claude --plugin-dir "$(pwd)"   # run from this checkout's root
 ```
 
 Verify the host-facing setup with:
