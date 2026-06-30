@@ -33,6 +33,92 @@ export function newTimeline(args: NewTimelineArgs): Timeline {
   return buildTimeline(profile, { video, audio }, { title: args.title });
 }
 
+export type AddFootageArgs = {
+  resource: string;
+  durationFrames: number;
+  inFrame: number;
+  /** Target video track id; when omitted, the first video track (or a fresh one). */
+  trackId?: string;
+  label?: string;
+  createTrackIfMissing: boolean;
+};
+
+export type AddFootageResult = {
+  state: Timeline;
+  consequences: Consequences;
+  inverse: OpInvocation[];
+  trackId: string;
+  createdTrack: boolean;
+};
+
+/**
+ * Append a footage (video) clip — e.g. a phone capture — to a video track,
+ * optionally creating the track. The label defaults to "footage" and is forced
+ * away from any `graphic`-prefixed value, so the preview proxy keeps it as
+ * footage rather than stripping it as a Remotion overlay (see proxy.ts
+ * `isGraphicClip`). Wraps the existing `addTrack` + `append` ops, so the result
+ * carries proper consequences + an ordered inverse sequence (UNDO order). Pure:
+ * never mutates `state`. Returns an EditError on a typed precondition.
+ */
+export function addFootage(state: Timeline, args: AddFootageArgs): AddFootageResult | EditError {
+  const aggregate = emptyConsequences();
+  const inverseStack: OpInvocation[] = [];
+  let work = state;
+  let createdTrack = false;
+
+  // Resolve the target video track (footage lands on the FIRST/bottom video
+  // track by default; graphics live above it).
+  let trackId: string | undefined = args.trackId;
+  if (trackId) {
+    const exists = work.tracks.video.some((t) => t.id === trackId);
+    if (!exists) return { kind: "track-not-found", track: trackId };
+  } else if (work.tracks.video.length > 0) {
+    trackId = (work.tracks.video[0] as { id: string }).id;
+  } else {
+    if (!args.createTrackIfMissing) {
+      return {
+        kind: "precondition",
+        detail: "addFootage: no video track and createTrackIfMissing is false",
+      };
+    }
+    const addInv: OpInvocation = { op: "addTrack", args: { kind: "video", name: "V1" } };
+    const added = apply(addInv, work);
+    if (isEditError(added)) return added;
+    work = added.state;
+    mergeConsequences(aggregate, added.consequences);
+    inverseStack.push(added.inverse);
+    createdTrack = true;
+    trackId = (work.tracks.video[work.tracks.video.length - 1] as { id: string }).id;
+  }
+
+  // A `graphic`-prefixed label would make the proxy treat this as a stripped
+  // overlay — footage must never be labelled that way.
+  const label = args.label && !/^graphic\b/i.test(args.label) ? args.label : "footage";
+  const footageClip = buildClip(args.resource, {
+    id: uuid(),
+    in: args.inFrame,
+    dur: args.durationFrames,
+    label,
+  });
+  const appendInv: OpInvocation = {
+    op: "append",
+    args: { track: { trackId }, clip: footageClip },
+  };
+  const appended = apply(appendInv, work);
+  if (isEditError(appended)) return appended;
+  work = appended.state;
+  mergeConsequences(aggregate, appended.consequences);
+  inverseStack.push(appended.inverse);
+
+  return {
+    state: work,
+    consequences: aggregate,
+    inverse: [...inverseStack].reverse(),
+    trackId,
+    createdTrack,
+  };
+}
+
 export type AddAudioArgs = {
   resource: string;
   durationFrames: number;

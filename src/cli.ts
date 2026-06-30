@@ -438,6 +438,45 @@ timeline
     },
   );
 
+timeline
+  .command("add-footage")
+  .alias("add-clip")
+  .description(
+    "Append a footage (video) clip — e.g. a phone capture — to a video track; duration auto-probed if omitted",
+  )
+  .requiredOption("--resource <path>", "absolute path to the video file")
+  .option("--duration <frames>", "clip duration in frames (auto-probed if omitted)", parseInteger)
+  .option("--in <frame>", "source in-point", parseInteger, 0)
+  .option("--track-id <id>", "target video track id")
+  .option("--label <label>", "clip label")
+  .option("--timeline <uri-or-route>", "timeline path, file:// URI, or route alias")
+  .option("--json", "emit JSON")
+  .action(
+    async (opts: {
+      resource: string;
+      duration?: number;
+      in: number;
+      trackId?: string;
+      label?: string;
+      timeline?: string;
+      json?: boolean;
+    }) => {
+      const output = await printActionOutput(
+        "timeline.addFootage",
+        {
+          resource: opts.resource,
+          durationFrames: opts.duration,
+          inFrame: opts.in,
+          track: opts.trackId ? { trackId: opts.trackId } : undefined,
+          label: opts.label,
+          timeline: opts.timeline,
+        },
+        opts.json,
+      );
+      if (!opts.json) printJson(output);
+    },
+  );
+
 function timelineEditInput(
   opOrUri: string,
   maybeOp: string | undefined,

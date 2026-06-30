@@ -1252,6 +1252,110 @@ const actions = [
     },
   }),
   action({
+    id: "timeline.addFootage",
+    title: "Add Footage Clip",
+    description:
+      "Append a footage (video) clip — e.g. a phone capture — to a video track. Duration is auto-probed from the file when omitted; footage lands on the first/bottom video track by default, below any graphics.",
+    aliases: ["add-clip", "add-video"],
+    relatedDiscovery: ["timeline.ops.describe"],
+    input: z.object({
+      uri: z.string().optional(),
+      timeline: z.string().optional(),
+      resource: z.string().min(1),
+      durationFrames: z.number().int().positive().optional(),
+      inFrame: frame.default(0),
+      track: trackAddrInput.optional(),
+      label: z.string().optional(),
+      createTrackIfMissing: z.boolean().default(true),
+    }),
+    output: z.unknown(),
+    scopes: ["timeline:write", "fs:read", "fs:write"],
+    effect: {
+      kind: "update",
+      mutates: ["timeline", "filesystem"],
+      openWorld: false,
+      destructive: false,
+      idempotency: "non-idempotent",
+      reversibility: "inverse-op",
+      dryRun: "supported",
+      approval: "ask",
+      audit: "full-input",
+    },
+    surfaces: { cli: { command: "timeline add-footage" }, mcp: { name: "add-footage" } },
+    async execute(ctx, input) {
+      const { parseDoc, serializeDoc } = await import("../bridge/tools/core");
+      const { resolveTimelineTarget } = await import("../state/timeline");
+      const { addFootage } = await import("./timelineBuild");
+      const project = projectFor(ctx);
+      const timeline = resolveTimelineTarget(
+        project.rootPath,
+        project,
+        input.timeline ?? input.uri,
+      );
+      if ("ok" in timeline) return timeline;
+      const state = parseDoc(await readDoc(timeline.uri));
+      // Resolve a (kind,index) track address to its id (addFootage takes a trackId).
+      let trackId: string | undefined;
+      if (input.track) {
+        if ("trackId" in input.track) trackId = input.track.trackId;
+        else {
+          const list = state.tracks[input.track.kind];
+          const t = list[input.track.index];
+          if (!t) {
+            return {
+              ok: false,
+              kind: "track-not-found",
+              detail: `no ${input.track.kind} track at index ${input.track.index}`,
+              uri: timeline.uri,
+            };
+          }
+          trackId = t.id;
+        }
+      }
+      // Auto-probe the clip length from the file when the caller didn't pass one.
+      let durationFrames = input.durationFrames;
+      if (durationFrames == null) {
+        const { probeMediaFrames } = await import("../driver/melt");
+        try {
+          durationFrames = await probeMediaFrames(input.resource, state.profile.fps);
+        } catch (e) {
+          return {
+            ok: false,
+            kind: "probe-failed",
+            detail: `could not auto-probe duration for ${input.resource}: ${
+              e instanceof Error ? e.message : String(e)
+            }. Pass --duration <frames>.`,
+            uri: timeline.uri,
+          };
+        }
+      }
+      const result = addFootage(state, {
+        resource: input.resource,
+        durationFrames,
+        inFrame: input.inFrame ?? 0,
+        ...(trackId ? { trackId } : {}),
+        ...(input.label ? { label: input.label } : {}),
+        createTrackIfMissing: input.createTrackIfMissing ?? true,
+      });
+      if (!("state" in result)) {
+        return { ok: false, kind: result.kind, detail: editErrorMsg(result), uri: timeline.uri };
+      }
+      await writeDoc(timeline.uri, serializeDoc(result.state));
+      return {
+        ok: true,
+        consequences: result.consequences,
+        inverse: result.inverse,
+        trackId: result.trackId,
+        createdTrack: result.createdTrack,
+        durationFrames,
+        uri: timeline.uri,
+        resolvedPath: timeline.resolvedPath,
+        touchedUris: [timeline.uri],
+        project: timeline.project,
+      };
+    },
+  }),
+  action({
     id: "media.root.add",
     title: "Add Media Root",
     description: "Register a project media root with a role and lightweight policy.",

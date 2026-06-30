@@ -276,6 +276,37 @@ async function probeFrameCount(video: string): Promise<number> {
   return Math.trunc(total);
 }
 
+/** Fast frame-count estimate for placing a whole clip on the timeline. Unlike
+ *  `probeFrameCount` (which `-count_frames`-decodes the WHOLE stream, exact but
+ *  slow), this reads only container metadata: the stream's `nb_frames`, falling
+ *  back to `duration × fps`. Good enough to size a footage clip; the user can
+ *  trim afterwards. Throws if neither field is readable. */
+export async function probeMediaFrames(resource: string, fps: [number, number]): Promise<number> {
+  const { stdout } = await run("ffprobe", [
+    "-v",
+    "error",
+    "-select_streams",
+    "v:0",
+    "-show_entries",
+    "stream=nb_frames,duration:format=duration",
+    "-of",
+    "json",
+    resource,
+  ]);
+  const parsed = JSON.parse(stdout) as {
+    streams?: Array<{ nb_frames?: string; duration?: string }>;
+    format?: { duration?: string };
+  };
+  const stream = parsed.streams?.[0];
+  const nb = Number(stream?.nb_frames);
+  if (Number.isFinite(nb) && nb > 0) return Math.trunc(nb);
+  const dur = Number(stream?.duration ?? parsed.format?.duration);
+  if (Number.isFinite(dur) && dur > 0) return Math.max(1, Math.round((dur * fps[0]) / fps[1]));
+  throw new Error(
+    `probeMediaFrames: could not determine frame count of ${resource} (no nb_frames/duration)`,
+  );
+}
+
 /** Tile evenly-spaced frames of `video` into one PNG (the motion at a glance).
  *
  *  Probes the true frame count, samples every `floor(total / cells)` frames via
