@@ -1647,7 +1647,12 @@ const actions = [
       const { readOrInitWorktreeState } = await import("../state/worktree");
       const { stateDbPath } = await import("../state/db");
       const { resolveVeanBin } = await import("../cli/doctor");
-      const repo = repoFor(ctx, input.repo);
+      // Anchor to the CHECKOUT you are standing in (cwd), NOT repoFor's resolved
+      // project. A fresh worktree has no `.vean/vean.db`, so project resolution
+      // falls back to the GLOBAL active-project pointer (~/.vean/projects.json)
+      // and would report a different tree (e.g. projects/retire) — the exact
+      // failure whereami exists to prevent. An explicit `--repo` still wins.
+      const repo = input.repo ?? ctx.cwd;
       // Persist the slug on first whereami so it stays stable across the session
       // (the same place doctor points to for stamping .vean/worktree.json).
       const identity = readOrInitWorktreeState(repo);
