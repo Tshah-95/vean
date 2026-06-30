@@ -48,7 +48,7 @@
     <property name="shotcut:uuid">clip-3</property>
   </producer>
   <producer id="producer5" in="0" out="89">
-    <property name="resource">/Users/tejas/Github/vean/corpus/tone.wav</property>
+    <property name="resource">corpus/tone.wav</property>
     <property name="shotcut:uuid">clip-5</property>
     <filter mlt_service="volume">
       <property name="shotcut:filter">volume</property>

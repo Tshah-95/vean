@@ -13,7 +13,6 @@
 // Resources are self-contained: color clips need no media, and audio references
 // `corpus/tone.wav` (a committed 4 s 48 kHz sine) so every file renders headless
 // with `melt` from the corpus directory.
-import { join } from "node:path";
 import {
   LANDSCAPE,
   type Timeline,
@@ -30,9 +29,15 @@ import {
   videoTrack,
 } from "../src/index";
 
-/** Absolute path to the committed tone used by audio tracks. Kept absolute so a
- *  caller in any cwd resolves it; melt also accepts it relative to the .mlt. */
-export const TONE = join(import.meta.dirname, "tone.wav");
+/** Repo-relative path to the committed tone used by audio tracks. Deliberately
+ *  RELATIVE, not absolute: this string is serialized verbatim into the committed
+ *  `vean-multitrack.mlt` golden, and an `import.meta.dirname` absolute path would
+ *  bake the author's checkout location into it — so the golden only matched in the
+ *  main checkout and drifted in every worktree/CI/clone. `melt` resolves this
+ *  against its cwd (the repo root, where the corpus/render gates run); a video
+ *  render tolerates an unresolved audio producer regardless, so the SSIM gate is
+ *  unaffected. Run melt from the repo root (as the gates do) for audio to resolve. */
+export const TONE = "corpus/tone.wav";
 
 // ── vean-multitrack ─────────────────────────────────────────────────────────
 // 2 video tracks + 1 audio track. V1: black (fade-in) → dissolve → gold (fade-
