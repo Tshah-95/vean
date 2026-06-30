@@ -8,9 +8,9 @@ import {
   setActiveProject,
 } from "../project/context";
 import type { ResolvedProject } from "../project/context";
+import { importWithProvenanceAction } from "./generate-import";
 import { defaultPolicyLevel, evaluatePolicy } from "./policy";
 import { summarizeSchema } from "./schema-summary";
-import { importWithProvenanceAction } from "./generate-import";
 import { skillActions } from "./skills";
 import type {
   ActionContext,
