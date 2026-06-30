@@ -36,8 +36,8 @@ import {
   existsSync,
   mkdirSync,
   openSync,
-  readdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -255,7 +255,10 @@ async function up(flags: Record<string, string>): Promise<void> {
       status: "starting",
     };
     writeFileSync(sessionPath(name), `${JSON.stringify(session, null, 2)}\n`);
-    appendFileSync(SPAWN_LOG, `${JSON.stringify({ pid: child.pid, port, name, at: session.startedAt })}\n`);
+    appendFileSync(
+      SPAWN_LOG,
+      `${JSON.stringify({ pid: child.pid, port, name, at: session.startedAt })}\n`,
+    );
 
     let ok = false;
     for (let i = 0; i < 150; i++) {
@@ -272,7 +275,9 @@ async function up(flags: Record<string, string>): Promise<void> {
       } catch {}
       rmSync(sessionPath(name), { force: true });
       const tail = existsSync(logPath) ? readFileSync(logPath, "utf8").slice(-800) : "";
-      throw new Error(`preview sidecar did not become healthy on ${url}\n--- log tail ---\n${tail}`);
+      throw new Error(
+        `preview sidecar did not become healthy on ${url}\n--- log tail ---\n${tail}`,
+      );
     }
 
     session.status = "ready";
@@ -363,7 +368,9 @@ async function url(flags: Record<string, string>): Promise<void> {
   const name = flags.name ?? "vean";
   const session = readSession(name);
   if (!session || !alive(session.pid)) {
-    process.stderr.write(`drive: no live session "${name}" — run \`bun scripts/drive.ts up\` first\n`);
+    process.stderr.write(
+      `drive: no live session "${name}" — run \`bun scripts/drive.ts up\` first\n`,
+    );
     process.exit(1);
   }
   process.stdout.write(`${session.url}\n`);

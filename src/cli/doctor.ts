@@ -384,7 +384,11 @@ function validateRemotionParity(repo: string): DoctorCheck[] {
         `${pkg} drift: viewer has ${viewer}, remotion/ has ${producer} — live preview and ProRes export would run different ${pkg} versions; pin both package.json to the same exact version and reinstall`,
       );
     }
-    return check(`remotion-parity:${pkg}`, "pass", `${pkg} ${viewer} matches across viewer/ + remotion/`);
+    return check(
+      `remotion-parity:${pkg}`,
+      "pass",
+      `${pkg} ${viewer} matches across viewer/ + remotion/`,
+    );
   });
 }
 

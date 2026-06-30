@@ -35,9 +35,9 @@ describe("default policy", () => {
     expect(decide("timeline.applyOp", {}).level).toBe("ask");
     expect(decide("project.init", {}).level).toBe("ask");
     // render writes only inside .vean/cache here → ask, not ask-strong.
-    expect(decide("render.still", { uri: `${repo}/a.mlt`, frame: 0, out: `${repo}/.vean/x.png` }).level).toBe(
-      "ask",
-    );
+    expect(
+      decide("render.still", { uri: `${repo}/a.mlt`, frame: 0, out: `${repo}/.vean/x.png` }).level,
+    ).toBe("ask");
   });
 
   it("escalates to ask-strong for a write that escapes the project", () => {
