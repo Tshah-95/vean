@@ -8,6 +8,7 @@ import { fetchDiagnostics, fetchProjects, fetchTimeline, type ProjectEntry, rend
 import { ClockProvider, useClockInstance } from "./ClockProvider";
 import { Header } from "./components/Header";
 import { PreviewPane } from "./components/PreviewPane";
+import { Sidebar } from "./components/Sidebar";
 import { TimelineStrip } from "./components/TimelineStrip";
 import { Transport } from "./components/Transport";
 import type { TimelineResponse } from "./types";
@@ -134,37 +135,40 @@ function Viewer({ route }: { route: string | undefined }) {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <Header
-        title={data.timeline.title}
-        route={data.route}
-        fps={data.fps}
-        width={data.profile.width}
-        height={data.profile.height}
-        diagnostics={diag}
-        projects={projects}
-        currentResolvedPath={data.resolvedPath}
-      />
-      <PreviewPane
-        width={data.profile.width}
-        height={data.profile.height}
-        fps={data.fps}
-        proxyUrl={proxyUrl}
-        overlayDuration={overlay.duration}
-        volume={volume}
-        muted={muted}
-        sinkId={sinkId}
-        {...(overlay.props ? { overlayProps: overlay.props } : {})}
-      />
-      <Transport
-        volume={volume}
-        muted={muted}
-        onVolumeChange={setVolume}
-        onMutedChange={setMuted}
-        sinkId={sinkId}
-        onSinkChange={setSinkId}
-      />
-      <EditorSurface data={data} route={route} />
+    <div style={{ display: "flex", height: "100%" }}>
+      <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
+        <Header
+          title={data.timeline.title}
+          route={data.route}
+          fps={data.fps}
+          width={data.profile.width}
+          height={data.profile.height}
+          diagnostics={diag}
+          projects={projects}
+          currentResolvedPath={data.resolvedPath}
+        />
+        <PreviewPane
+          width={data.profile.width}
+          height={data.profile.height}
+          fps={data.fps}
+          proxyUrl={proxyUrl}
+          overlayDuration={overlay.duration}
+          volume={volume}
+          muted={muted}
+          sinkId={sinkId}
+          {...(overlay.props ? { overlayProps: overlay.props } : {})}
+        />
+        <Transport
+          volume={volume}
+          muted={muted}
+          onVolumeChange={setVolume}
+          onMutedChange={setMuted}
+          sinkId={sinkId}
+          onSinkChange={setSinkId}
+        />
+        <EditorSurface data={data} route={route} />
+      </div>
+      <Sidebar />
     </div>
   );
 }
