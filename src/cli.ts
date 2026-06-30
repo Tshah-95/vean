@@ -650,22 +650,27 @@ program
     parseInteger,
   )
   .option("--no-open", "do not open the browser")
-  .option("--dev", "reverse-proxy the Vite dev server instead of serving viewer/dist")
+  .option(
+    "--prod",
+    "serve the pre-built viewer/dist snapshot instead of the live HMR dev viewer (the default)",
+  )
   .option("--repo <path>", "project repo path")
   .action(
     async (opts: {
       timeline?: string;
       port?: number;
       open?: boolean;
-      dev?: boolean;
+      prod?: boolean;
       repo?: string;
     }) => {
+      // Dev (live Vite + HMR) is the default; --prod opts into the dist snapshot.
+      const dev = !opts.prod;
       // The bound URL isn't known up front under the ephemeral default — the
       // action prints it once the server binds. Just announce the mode here.
       console.error(
-        opts.dev
-          ? "vean preview: vite dev proxy (run `bun run viewer:dev` alongside)"
-          : "vean preview: serving viewer/dist",
+        dev
+          ? "vean preview: live viewer (Vite + HMR, auto-started) — edits to viewer/ show live"
+          : "vean preview: serving the viewer/dist snapshot (--prod)",
       );
       console.error("  press Ctrl-C to stop");
       await runAction("preview.serve", {
@@ -674,7 +679,7 @@ program
         // VEAN_PREVIEW_PORT or an ephemeral port (DESIGN-WORKTREE §4.2).
         ...(opts.port != null ? { port: opts.port } : {}),
         open: opts.open !== false,
-        dev: opts.dev ?? false,
+        dev,
         repo: opts.repo,
       });
     },
@@ -731,9 +736,16 @@ program
     "--dev",
     "for the app: the hot-reloading dev build (tauri:dev) instead of the installed app",
   )
+  .option(
+    "--prod",
+    "for the browser: serve the viewer/dist snapshot instead of the live HMR dev viewer (the default)",
+  )
   .option("--port <n>", "for the browser view: port to bind on 127.0.0.1", parseInteger, 5174)
   .action(
-    async (project: string | undefined, opts: { view: string; dev?: boolean; port: number }) => {
+    async (
+      project: string | undefined,
+      opts: { view: string; dev?: boolean; prod?: boolean; port: number },
+    ) => {
       // Select the project so the app/preview boots straight at it (the app reads
       // the persisted active project at startup).
       const used = (await runAction("project.use", { project })) as {
@@ -743,8 +755,11 @@ program
       const label = used.activeProject.title ?? root;
 
       if (opts.view === "browser") {
-        console.error(`vean: opening ${label} in the browser on http://127.0.0.1:${opts.port} …`);
-        await runAction("preview.serve", { repo: root, port: opts.port, open: true });
+        const dev = !opts.prod;
+        console.error(
+          `vean: opening ${label} in the browser on http://127.0.0.1:${opts.port} (${dev ? "live HMR viewer" : "viewer/dist snapshot"}) …`,
+        );
+        await runAction("preview.serve", { repo: root, port: opts.port, open: true, dev });
         return;
       }
       if (opts.view !== "app") {

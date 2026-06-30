@@ -116,7 +116,12 @@ async function main(): Promise<void> {
   copyFileSync(CORPUS_MLT, mlt);
   const expectedFrames = totalFrames(fromMlt(await Bun.file(mlt).text()));
 
-  const server = startPreviewServer({ repo: projectRoot, timeline: mlt, port: 0, dev: false });
+  const server = await startPreviewServer({
+    repo: projectRoot,
+    timeline: mlt,
+    port: 0,
+    dev: false,
+  });
   try {
     const renderRes = await withWatchdog(
       "POST /api/proxy-render",

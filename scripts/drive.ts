@@ -265,6 +265,10 @@ async function up(flags: Record<string, string>): Promise<void> {
     const log = openSync(logPath, "w");
     const args = [CLI, "preview", "--no-open", "--port", String(port), "--repo", project];
     if (flags.timeline) args.push("--timeline", flags.timeline);
+    // Dev (live Vite + HMR) is the default so a drive always reflects THIS
+    // worktree's current viewer code — proving a UI change, not a stale snapshot.
+    // `--prod` opts into the viewer/dist snapshot (e.g. to reproduce the shipped app).
+    if (flags.prod !== undefined) args.push("--prod");
 
     // Detached so the sidecar outlives this short-lived `up`; its own process group
     // lets `down` reap render/probe children with one signal. Stamped with
@@ -297,8 +301,13 @@ async function up(flags: Record<string, string>): Promise<void> {
       `${JSON.stringify({ pid: child.pid, port, name, at: session.startedAt })}\n`,
     );
 
+    // Generous health window: in dev mode (the default) the preview only answers
+    // /api/health AFTER its managed Vite is ready, and a first-ever Vite cold start
+    // (dep pre-bundling) can take tens of seconds. A genuine failure still exits the
+    // child early — `!alive` breaks the loop immediately — so the long cap only
+    // applies to a slow-but-healthy boot, never to a hang.
     let ok = false;
-    for (let i = 0; i < 150; i++) {
+    for (let i = 0; i < 600; i++) {
       if (await healthy(url)) {
         ok = true;
         break;

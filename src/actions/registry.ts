@@ -855,7 +855,11 @@ const actions = [
       // overrides the default for direct invocations without touching the flag.
       port: z.number().int().nonnegative().default(0),
       open: z.boolean().default(true),
-      dev: z.boolean().default(false),
+      // Dev is the DEFAULT: serve the live Vite/HMR viewer so anything you open
+      // reflects the current checkout's UI code. `dev: false` (CLI `--prod`) serves
+      // the pre-built `viewer/dist` snapshot — used by the shipped Mac app and the
+      // test probe, which must not spin up a Vite child.
+      dev: z.boolean().default(true),
       /** When true (tests/CI), start the server and return immediately instead
        *  of blocking the process; the caller stops it. */
       detached: z.boolean().default(false),
@@ -893,11 +897,11 @@ const actions = [
         const envPort = Number.parseInt(ctx.env.VEAN_PREVIEW_PORT ?? "", 10);
         if (Number.isInteger(envPort) && envPort >= 0 && envPort <= 65_535) port = envPort;
       }
-      const handle = startPreviewServer({
+      const handle = await startPreviewServer({
         repo,
         ...(input.timeline ? { timeline: input.timeline } : {}),
         port,
-        dev: input.dev ?? false,
+        dev: input.dev ?? true,
       });
       // Echo the ACTUAL bound URL: with the ephemeral default the CLI can't know
       // the port up front, so the action is the only place that has it (and

@@ -28,9 +28,12 @@ async function main() {
   await executeAction("project.init", { repo: projectRoot }, ctx);
   await executeAction("timeline.use", { repo: projectRoot, target: mlt }, ctx);
 
+  // dev:false — this probe exercises the READ API + the dist static host, not the
+  // live viewer. preview.serve now DEFAULTS to dev (auto-starts a Vite child); the
+  // vitest gate must not, so opt into the prod/dist path explicitly.
   const served = await executeAction(
     "preview.serve",
-    { repo: projectRoot, port: 0, open: false, detached: true },
+    { repo: projectRoot, port: 0, open: false, detached: true, dev: false },
     ctx,
   );
   if (!served.ok) throw new Error(`preview.serve failed: ${JSON.stringify(served)}`);

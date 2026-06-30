@@ -43,6 +43,17 @@ describe("preview.serve registry shape", () => {
     expect(action).toBeTruthy();
     expect(action?.surfaces.cli).toEqual({ command: "preview" });
   });
+
+  it("defaults dev to true — the live HMR viewer; only --prod / explicit dev:false serves dist", () => {
+    const action = getAction("preview.serve");
+    if (!action) throw new Error("preview.serve action missing");
+    // The default-applied input: an empty call resolves dev → true (live viewer).
+    // (getAction erases the input generic to `unknown`, so narrow the parsed shape.)
+    const parse = (raw: unknown) => action.input.parse(raw) as { dev: boolean };
+    expect(parse({}).dev).toBe(true);
+    // The opt-out is explicit (CLI `--prod` → dev:false → the viewer/dist snapshot).
+    expect(parse({ dev: false }).dev).toBe(false);
+  });
 });
 
 describe("preview server read endpoints (via bun probe)", () => {

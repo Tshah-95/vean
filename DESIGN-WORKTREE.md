@@ -50,6 +50,7 @@ the current source so the design tracks reality, not intention.
 | LSP / MCP | stdio, launched from `${CLAUDE_PLUGIN_ROOT}`, one process per session, no ports | `.lsp.json`, `.mcp.json` |
 | Settings | project-scoped `app_meta` rows in `.vean/vean.db` | `src/state/settingsStore.ts` |
 | `.vean/cache/*` (render, proxy, remotion) | per-worktree; proxy is content-addressed so a shared source renders once | `src/preview/server.ts`, `src/preview/proxy.ts` |
+| Dev viewer (Vite) | dev is the preview default; `startPreviewServer` auto-starts a managed Vite on its OWN freshly-allocated ephemeral port and reverse-proxies to it — so two worktrees driving live never collide on a fixed Vite port, and teardown reaps it (shared process group + explicit `stop()`) | `src/preview/viteDev.ts`, `src/preview/server.ts` |
 
 ### Sharp edges (Layer A fixes these — §4)
 
@@ -57,7 +58,7 @@ the current source so the design tracks reality, not intention.
 |---|---|---|
 | The `vean` bin | `setup:cli` = `bun link` → one global symlink, last-writer-wins. Silent **version skew**: bare `vean` runs the canonical tree's code against another worktree's cwd. | `package.json` `"setup:cli": "bun link"` |
 | Driver identity | `agent-browser --session` and drive `--name` both default to the literal `"vean"`. agent-browser runs one global daemon with per-session profiles → two worktrees driving `--session vean` share the **same browser tab**; the second `open` navigates away from the first. This is the "which version am I viewing?" problem. | `scripts/drive.ts` (`name = flags.name ?? "vean"`); `.agents/skills/drive/SKILL.md` |
-| Fixed default ports | `preview.serve` defaults to **5174**; viewer Vite dev 5173; Remotion studio 3000. Only bite when run *directly* (the drive path is already ephemeral), but a collision reads as a confusing "address in use". | `src/actions/registry.ts` `port: …default(5174)`; `src/cli.ts` |
+| Fixed default ports | `preview.serve` port now defaults to **0** (OS-ephemeral) and its dev Vite is auto-allocated ephemeral too (above); Remotion studio still 3000. A hand-started `bun run viewer:dev` falls back to a fixed 5175. Only bites when those are run *directly*, and reads as a confusing "address in use". | `src/actions/registry.ts`; `viewer/vite.config.ts`; `src/cli.ts` |
 | `~/.vean/projects.json` | A **global** mutable singleton in `$HOME`: the active-project pointer. Resolution prefers `--project` → `VEAN_PROJECT` → cwd walk-up → this fallback, so it only bites when you rely on the implicit "current project," but it is last-writer-wins across every worktree. | project context resolver |
 | Hardcoded repo path | `/Users/tejas/Github/vean` is baked into `tests/policy.test.ts` (will **fail** from a worktree) and README/AGENTS (cosmetic). | `tests/policy.test.ts` |
 

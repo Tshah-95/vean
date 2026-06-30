@@ -27,10 +27,20 @@ export default defineConfig({
   },
   server: {
     host: "127.0.0.1",
-    // The dev server runs on port+1; the vean preview server (port) reverse-
-    // proxies non-/api routes to it. Default 5175 = 5174 + 1.
-    port: 5175,
-    strictPort: false,
+    // The vean preview server reverse-proxies non-/api routes to this dev server.
+    // When it auto-starts us (the default dev path) it assigns a free ephemeral
+    // port via `VEAN_VIEWER_PORT` and we MUST bind exactly that (strictPort) so the
+    // proxy finds us. `server.hmr.clientPort` then points the browser's HMR socket
+    // straight at this port: the page is served through the proxy on a DIFFERENT
+    // port and Vite's ws is not proxied, so the standard "Vite behind a proxy"
+    // config is required for edits to live-push. Absent the env (a hand-started
+    // `bun run viewer:dev`) we fall back to the historical 5175 (= 5174 + 1).
+    ...(process.env.VEAN_VIEWER_PORT
+      ? (() => {
+          const port = Number(process.env.VEAN_VIEWER_PORT);
+          return { port, strictPort: true, hmr: { host: "127.0.0.1", clientPort: port } };
+        })()
+      : { port: 5175, strictPort: false }),
   },
   build: {
     outDir: "dist",

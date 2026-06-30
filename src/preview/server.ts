@@ -53,6 +53,7 @@ import {
   undoSession,
 } from "./session";
 import type { TimelineSession } from "./session";
+import type { ViteDevHandle } from "./viteDev";
 
 /** Actions that block their caller indefinitely and so must not be invoked through
  *  the synchronous `/api/action` bridge (the viewer is already hosted by a preview
@@ -64,8 +65,14 @@ export type PreviewServerOptions = {
   /** The default timeline route the viewer loads (default timeline:main). */
   timeline?: string;
   port: number;
-  /** Serve the Vite dev server (reverse-proxied) instead of viewer/dist. */
+  /** Serve the live Vite dev server (reverse-proxied, HMR) — the DEFAULT. When
+   *  false, serve the pre-built `viewer/dist` snapshot. `startPreviewServer`
+   *  auto-manages a Vite child when this is true (see `vitePort`). */
   dev?: boolean;
+  /** The loopback port of the managed Vite dev server to reverse-proxy to. Set by
+   *  `startPreviewServer` after it starts Vite; when absent the dev branch falls
+   *  back to the `port + 1` / 5175 convention (a hand-started `bun run viewer:dev`). */
+  vitePort?: number;
   /** Repo root holding the viewer/ workspace (default: the vean repo root). */
   veanRoot?: string;
 };
@@ -693,13 +700,13 @@ export function createPreviewHandler(
       );
     }
 
-    // ── Static (the built viewer) or Vite dev proxy ────────────────────────
+    // ── Live Vite dev server (HMR, the default) or the static dist snapshot ──
     if (opts.dev) {
-      // Reverse-proxy non-/api routes to the Vite dev server. With a fixed --port
-      // the convention is `port + 1`; with the ephemeral default (port 0) there is
-      // no stable base to derive from, so fall back to the viewer's own configured
-      // dev port (viewer/vite.config.ts: 5175 = the historical 5174 + 1).
-      const vitePort = opts.port > 0 ? opts.port + 1 : 5175;
+      // Reverse-proxy non-/api routes to the Vite dev server. `startPreviewServer`
+      // starts a managed Vite and passes its port as `opts.vitePort`; if that's
+      // absent (a hand-started `bun run viewer:dev`) fall back to the convention:
+      // `port + 1` for a fixed --port, else the viewer's configured dev port.
+      const vitePort = opts.vitePort ?? (opts.port > 0 ? opts.port + 1 : 5175);
       const viteUrl = `http://127.0.0.1:${vitePort}${path}${url.search}`;
       try {
         const proxied = await fetch(viteUrl, {
@@ -710,7 +717,7 @@ export function createPreviewHandler(
         return new Response(proxied.body, { status: proxied.status, headers: proxied.headers });
       } catch {
         return new Response(
-          `Vite dev server not reachable on 127.0.0.1:${vitePort}. Run \`bun run viewer:dev\` in another terminal, or omit --dev to serve viewer/dist.`,
+          `Live viewer (Vite) not reachable on 127.0.0.1:${vitePort}. It is normally auto-started; run \`bun run viewer:dev\` to debug, or pass \`--prod\` to serve the viewer/dist snapshot.`,
           { status: 502 },
         );
       }
@@ -738,9 +745,28 @@ export function createPreviewHandler(
 }
 
 /** Start the preview server on 127.0.0.1:port. Returns a handle with the URL and
- *  a `stop()`. The caller (the `preview.serve` action) keeps the process alive. */
-export function startPreviewServer(opts: PreviewServerOptions): PreviewServerHandle {
-  const handle = createPreviewHandler(opts);
+ *  a `stop()`. The caller (the `preview.serve` action) keeps the process alive.
+ *
+ *  In dev mode (the default) this also starts and owns a managed Vite dev server
+ *  so the live HMR viewer "just works" with no second terminal — `stop()` tears
+ *  down BOTH the HTTP server and Vite. It is async because it waits for Vite to be
+ *  ready before binding, so "ready" means the UI is ready, not just the API. */
+export async function startPreviewServer(opts: PreviewServerOptions): Promise<PreviewServerHandle> {
+  const veanRoot = opts.veanRoot ?? veanRepoRoot();
+
+  // Dev (default): bring up a managed Vite child and proxy to its actual port.
+  // Prod (--prod): no Vite — serve the viewer/dist snapshot.
+  let vite: ViteDevHandle | null = null;
+  if (opts.dev) {
+    const { ensureViteDevServer } = await import("./viteDev");
+    vite = await ensureViteDevServer({ veanRoot });
+  }
+
+  const handle = createPreviewHandler({
+    ...opts,
+    veanRoot,
+    ...(vite ? { vitePort: vite.port } : {}),
+  });
   const server = Bun.serve({
     port: opts.port,
     hostname: "127.0.0.1",
@@ -752,6 +778,9 @@ export function startPreviewServer(opts: PreviewServerOptions): PreviewServerHan
   return {
     url: `http://127.0.0.1:${boundPort}`,
     port: boundPort,
-    stop: () => server.stop(true),
+    stop: () => {
+      server.stop(true);
+      vite?.stop();
+    },
   };
 }

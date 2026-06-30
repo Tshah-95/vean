@@ -98,22 +98,37 @@ function primaryToplevel(repo: string): string | null {
   return null;
 }
 
+/** Install `node_modules` in `dir` iff absent. Returns whether it was already
+ *  present, freshly installed, or failed. */
+function installDepsIfMissing(dir: string): "present" | "installed" | "failed" {
+  if (existsSync(resolve(dir, "node_modules"))) return "present";
+  const install = spawnSync("bun", ["install"], { cwd: dir, stdio: "ignore" });
+  return install.status === 0 && !install.error ? "installed" : "failed";
+}
+
 /**
  * Bootstrap dependencies for a fresh worktree. `git worktree add` does NOT carry
  * `node_modules` (gitignored), so any command pulling in the action registry
  * (whereami, `drive up`, diagnose, …) would throw until deps exist — proven: a
  * depless worktree fails on `z.ZodNativeEnum` instanceof. This is the conductor
- * "run install on worktree creation" step. Gated on node_modules ABSENCE so a
+ * "run install on worktree creation" step. Two workspaces need deps: the repo
+ * ROOT and `viewer/` (its OWN package.json — the root install does NOT populate
+ * it, and `vean preview`'s default live HMR viewer needs it). Gated on absence so a
  * plain branch switch in an established tree is a no-op; opt out with
  * VEAN_WORKTREE_INIT_INSTALL=0. Best-effort: a failure is reported, never thrown.
  */
 function bootstrapDeps(repo: string): DepBootstrap {
-  if (existsSync(resolve(repo, "node_modules"))) return "present";
+  const viewerDir = resolve(repo, "viewer");
+  const rootPresent = existsSync(resolve(repo, "node_modules"));
+  const viewerPresent = !existsSync(viewerDir) || existsSync(resolve(viewerDir, "node_modules"));
+  if (rootPresent && viewerPresent) return "present";
   if (process.env.VEAN_WORKTREE_INIT_INSTALL === "0") return "skipped";
   const bun = spawnSync("bun", ["--version"], { encoding: "utf8" });
   if (bun.status !== 0 || bun.error) return "skipped";
-  const install = spawnSync("bun", ["install"], { cwd: repo, stdio: "ignore" });
-  return install.status === 0 && !install.error ? "installed" : "failed";
+  const root = rootPresent ? "present" : installDepsIfMissing(repo);
+  const viewer = viewerPresent ? "present" : installDepsIfMissing(viewerDir);
+  if (root === "failed" || viewer === "failed") return "failed";
+  return root === "installed" || viewer === "installed" ? "installed" : "present";
 }
 
 /** Parse `--project <path>` / `--quiet` with the same shape drive.ts uses. */

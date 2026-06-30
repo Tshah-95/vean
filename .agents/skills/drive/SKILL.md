@@ -24,6 +24,17 @@ the real `viewer/` app **and** the whole API (`/api/action`, `/api/apply-op`,
 `/api/undo`, `/api/still`, `/api/render`, …). The viewer talks to the backend over
 **same-origin HTTP** (`viewer/src/api.ts`) — **not** `window.__TAURI__.invoke`.
 
+**Dev is the default — `drive up` serves your CURRENT viewer code, live.** `vean
+preview` (and therefore `drive up`) now defaults to a **live Vite dev server with
+HMR**, auto-started for you (no second terminal): edits under `viewer/` hot-reload
+into the open page. This is exactly what you want when proving a UI change — the
+proof reflects the code you just wrote, not a stale build. Pass **`--prod`** (`bun
+run drive up --prod`) to instead serve the pre-built `viewer/dist` snapshot — the
+same static viewer the **shipped Mac app** renders (the WKWebView always runs
+`--prod`). So the one nuance: `drive` shows your *latest* UI by default; the native
+app window shows the *built* snapshot. Reach for `--prod` only when you need to
+reproduce exactly what the shipped app draws.
+
 Consequence:
 
 - You **cannot** attach a CDP/Chromium agent to the **native WKWebView window** —
@@ -72,8 +83,10 @@ hardcode `vean`:
 ```bash
 # 1. Bring up a driveable instance against a project (free port, health-gated).
 #    Idempotent: a second `up` reuses a healthy session. Project defaults to a
-#    recorded pointer (worktree-init) if present, else cwd.
-URL=$(bun run drive up --project /path/to/project)      # or: --timeline timeline:main
+#    recorded pointer (worktree-init) if present, else cwd. DEV by default: a live
+#    Vite/HMR viewer is auto-started (first-ever boot pre-bundles deps, so the
+#    health wait is generous). Add `--prod` to serve the viewer/dist snapshot.
+URL=$(bun run drive up --project /path/to/project)      # or: --timeline timeline:main ; or: --prod
 SESSION=$(bun scripts/drive.ts name)   # = the worktree slug, unless you passed --name
 
 # 2. Drive the REAL UI headless. Note: plain http:// (NOT https — vean's preview

@@ -164,6 +164,12 @@ fn spawn_sidecar(project: &PathBuf, port: u16, env: &[(String, String)]) -> std:
     cmd.arg(cli)
         .arg("preview")
         .arg("--no-open")
+        // The app serves the pre-built viewer/dist snapshot — `vean preview` now
+        // defaults to the live Vite/HMR dev server, which the shipped bundle has no
+        // source (or `bun`/Vite) to run. `--prod` pins it to the static viewer it
+        // ships. (Live HMR is the *web* dev path: `drive` / `vean preview` / `vean
+        // open --view browser`, not the native window.)
+        .arg("--prod")
         .arg("--port")
         .arg(port.to_string())
         .arg("--repo")
