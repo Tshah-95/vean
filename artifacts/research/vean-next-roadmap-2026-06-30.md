@@ -270,21 +270,18 @@ The unprobed I/O diagnostics (a.2) aren't bugs — they're correctness we get fo
 
 ---
 
-## 7. The genuine decisions (need Tejas)
+## 7. The genuine decisions — DECIDED (2026-06-30)
 
-Everything above is actionable without you **except** these real forks — they change *what* gets built, not
-just *when*:
+The three forks below changed *what* gets built. All three resolved to the recommended path:
 
-1. **Transcription / media-intelligence backend & privacy shape.** Local sidecar (whisper.cpp — on-thesis:
-   no-network, bundled like melt) vs hosted API (faster, but breaks the "core has no network/secrets"
-   boundary and needs an install/privacy story). Per the standing note, media intelligence is *deliberately
-   not first-party until this is decided.* **Recommendation: local whisper.cpp sidecar** — it preserves the
-   no-network core boundary and the cross-platform/headless story, and it's the differentiated posture.
-2. **Generative posture.** (a) *Import-with-provenance only* — vean never generates; you bring a clip you
-   made elsewhere and we pin/round-trip its provenance (minimal, fully on-thesis, zero network in core). (b)
-   *Pluggable in-app generation* behind an explicitly-opted job/network adapter (Palmier-parity, more
-   magical, more surface). **Recommendation: ship (a) now, design (b) as an opt-in adapter** so the core
-   stays clean and we still get regenerate-in-place that *survives export*.
-3. **Sequencing priority.** Media-intelligence-first (comparison doc's call) vs UI-polish-first vs
-   dogfood-demo-first. **Recommendation: media-intelligence-first**, because it unblocks the most and is the
-   widest gap vs Palmier — but the dogfood demo (T13) should be the visible target the whole time.
+1. **Transcription / media-intelligence backend → local `whisper.cpp` sidecar.** Bundled like
+   `melt`/`ffmpeg`, preserves the "core has no network/secrets" boundary and the cross-platform/headless
+   story. This unblocks media intelligence as first-party (the standing "not first-party until decided" note
+   is now resolved).
+2. **Generative posture → import-with-provenance now; in-app generation designed as an opt-in adapter
+   later.** vean never generates in core: you bring a clip generated elsewhere and we pin + round-trip its
+   provenance (prompt/model/refs) in the typed IR so it survives export. The pluggable generate.* job/network
+   adapter is a designed-later opt-in, never a core dependency.
+3. **Sequencing → first pass = the 3 heads (H1 `ActionContext` DI, H2 IR `provenance` field, H3
+   transcription-job interface) + all of bucket (a) obvious substrate wins**, then fan out S1–S8 with
+   media-intelligence (S1→T1) as the critical path. The dogfood demo (T13) is the standing visible target.
