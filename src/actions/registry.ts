@@ -1105,6 +1105,15 @@ const actions = [
       newTrack: z.boolean().default(false),
       blendService: z.string().default("qtblend"),
       label: z.string().optional(),
+      // Remotion-overlay identity for a NEW baked overlay — flows onto
+      // Clip.composition so the viewer recognizes it (and round-trips through the
+      // `vean:composition` producer property). Omit for plain alpha overlays.
+      composition: z
+        .object({
+          id: z.string().min(1),
+          props: z.record(z.string(), z.unknown()).optional(),
+        })
+        .optional(),
     }),
     output: z.unknown(),
     scopes: ["timeline:write", "fs:read", "fs:write"],
@@ -1139,6 +1148,7 @@ const actions = [
         newTrack: input.newTrack ?? false,
         blendService: input.blendService ?? "qtblend",
         ...(input.label ? { label: input.label } : {}),
+        ...(input.composition ? { composition: input.composition } : {}),
       });
       if (!("state" in result)) {
         return { ok: false, kind: result.kind, detail: editErrorMsg(result), uri: timeline.uri };
@@ -1157,6 +1167,131 @@ const actions = [
         touchedUris: [timeline.uri],
         project: timeline.project,
       };
+    },
+  }),
+  action({
+    id: "graphic.rebake",
+    title: "Re-bake Remotion Overlay",
+    description:
+      "Re-render a Remotion overlay's alpha .mov from its composition + props, refreshing the render cache. Identify the overlay either directly by composition id (+ props) or by an in-timeline clip uuid whose vean:composition metadata is read back. Drives the remotion CLI as a subprocess; always re-renders (force) and re-records the cache entry.",
+    relatedDiscovery: ["remotion.render", "timeline.addGraphic"],
+    input: z
+      .object({
+        // Direct identity: name the composition and the props it was baked with.
+        composition: z.string().min(1).optional(),
+        props: z.record(z.string(), z.unknown()).default({}),
+        // In-timeline identity: resolve the overlay clip by uuid on a timeline and
+        // read its `vean:composition` metadata as the bake inputs.
+        uri: z.string().optional(),
+        timeline: z.string().optional(),
+        clipUuid: z.string().min(1).optional(),
+        frameRange: z.tuple([frame, frame]).optional(),
+        out: z.string().optional(),
+        profile: z
+          .enum(["vertical", "square", "landscape", "landscape-2997", "landscape-23976"])
+          .default("vertical"),
+        repo: z.string().optional(),
+      })
+      // Exactly one identification mode: a composition id OR a clip uuid.
+      .refine((v) => Boolean(v.composition) !== Boolean(v.clipUuid), {
+        message: "provide exactly one of `composition` or `clipUuid`",
+      }),
+    output: z.unknown(),
+    scopes: [
+      "timeline:read",
+      "render:execute",
+      "process:execute",
+      "fs:read",
+      "fs:write",
+      "state:read",
+      "state:write",
+    ],
+    effect: {
+      kind: "render",
+      mutates: ["filesystem", "process"],
+      openWorld: false,
+      destructive: false,
+      // A re-bake re-runs the same deterministic render and overwrites the same
+      // cache entry → idempotent (the prior bake of identical inputs is replaced
+      // by a byte-equivalent one). It always shells out (force), so retry-safe.
+      idempotency: "idempotent",
+      reversibility: "manual",
+      dryRun: "none",
+      approval: "ask",
+      audit: "metadata",
+      job: { mode: "inline", cancellable: true, retrySafe: true },
+    },
+    surfaces: { cli: { command: "remotion rebake" }, mcp: { name: "rebake-graphic" } },
+    async execute(ctx, input) {
+      // Resolve the bake identity. Direct mode uses the input composition + props.
+      // Clip mode reads the overlay clip's `vean:composition` metadata off the
+      // timeline (the same shape `timeline.addGraphic` stamps + the parser reads
+      // back), so editing the timeline clip and re-baking stay in lockstep.
+      let composition = input.composition;
+      let props = input.props ?? {};
+      if (input.clipUuid) {
+        const { parseDoc } = await import("../bridge/tools/core");
+        const { resolveTimelineTarget } = await import("../state/timeline");
+        const project = projectFor(ctx, input.repo);
+        const timeline = resolveTimelineTarget(
+          project.rootPath,
+          project,
+          input.timeline ?? input.uri,
+        );
+        if ("ok" in timeline) return timeline;
+        const state = parseDoc(await readDoc(timeline.uri));
+        const clip = [...state.tracks.video, ...state.tracks.audio]
+          .flatMap((track) => track.items)
+          .find((item) => item.kind === "clip" && item.id === input.clipUuid);
+        if (!clip || clip.kind !== "clip") {
+          return {
+            ok: false,
+            kind: "clip-not-found",
+            detail: `no clip ${input.clipUuid} on ${timeline.uri}`,
+            uri: timeline.uri,
+          };
+        }
+        if (!clip.composition) {
+          return {
+            ok: false,
+            kind: "not-a-remotion-overlay",
+            detail: `clip ${input.clipUuid} has no vean:composition metadata; it is not a Remotion overlay`,
+            uri: timeline.uri,
+          };
+        }
+        composition = clip.composition.id;
+        // The clip's baked props are the bake inputs; a non-empty `props` input
+        // still overrides them when the caller re-bakes with edited inputs.
+        props = Object.keys(props).length > 0 ? props : (clip.composition.props ?? {});
+      }
+      if (!composition) {
+        return {
+          ok: false,
+          kind: "invalid-args",
+          detail: "graphic.rebake could not resolve a composition id",
+        };
+      }
+      // Delegate the actual render + cache refresh to remotion.render with
+      // force:true — identical render flags, alpha check, and cache record, so a
+      // re-bake is exactly a forced bake of the resolved identity (DRY, not a
+      // second copy of the render block).
+      const envelope = await executeAction(
+        "remotion.render",
+        {
+          composition,
+          props,
+          ...(input.frameRange ? { frameRange: input.frameRange } : {}),
+          ...(input.out ? { out: input.out } : {}),
+          profile: input.profile ?? "vertical",
+          ...(input.repo ? { repo: input.repo } : {}),
+          force: true,
+        },
+        ctx,
+      );
+      if (!envelope.ok) {
+        return { ok: false, kind: envelope.kind, detail: envelope.detail };
+      }
+      return { ...(envelope.output as Record<string, unknown>), rebaked: true, composition, props };
     },
   }),
   action({

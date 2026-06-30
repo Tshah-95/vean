@@ -52,6 +52,12 @@ export type AddGraphicArgs = {
   blendService?: string;
   /** Human label for the clip (defaults to `graphic`). */
   label?: string;
+  /** Remotion-overlay identity for a NEW baked overlay. When set, it flows onto
+   *  the overlay clip's `Clip.composition` so the viewer recognizes it (and it
+   *  round-trips through the `vean:composition` producer property) — this is how a
+   *  freshly-baked overlay carries its composition id + render props. An EXISTING
+   *  overlay placed without it is instead enriched by the preview read-adapter. */
+  composition?: { id: string; props?: Record<string, unknown> };
 };
 
 export type AddGraphicResult = {
@@ -177,6 +183,9 @@ export function addGraphic(state: Timeline, args: AddGraphicArgs): AddGraphicRes
     out: playLen - 1,
     length: playLen,
     label: `${label}:${args.clipPath}`,
+    // A NEW baked overlay carries its Remotion identity so the viewer recognizes
+    // it as a footage-composited overlay; flows verbatim onto Clip.composition.
+    ...(args.composition ? { composition: args.composition } : {}),
   });
   const overwriteInv: OpInvocation = {
     op: "overwrite",

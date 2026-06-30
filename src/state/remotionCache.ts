@@ -107,6 +107,26 @@ export function lookup(repo: string, key: string): CacheEntry | null {
   return entry;
 }
 
+/** Every recorded entry, regardless of key. Resilient: a missing/corrupt index
+ *  yields `[]`, never throws — the preview read-adapter enriches the wire IR from
+ *  this and must degrade to no enrichment, not fail the timeline read. */
+export function listEntries(repo: string): CacheEntry[] {
+  return Object.values(readIndex(repo));
+}
+
+/** Find the recorded entry whose baked artifact is `outPath` (compared as an
+ *  absolute path — the index stores absolutes). Used to recover a baked overlay's
+ *  composition identity from its clip `resource` so the preview server can enrich
+ *  an EXISTING overlay placed without `vean:composition` metadata. Returns the
+ *  first match, or null. Resilient: a missing/corrupt index → null, never throws. */
+export function findByOutPath(repo: string, outPath: string): CacheEntry | null {
+  const target = resolve(outPath);
+  for (const entry of listEntries(repo)) {
+    if (resolve(entry.outPath) === target) return entry;
+  }
+  return null;
+}
+
 /** Record (or overwrite) an entry. Atomic: write a temp index then rename over
  *  the real one, so a concurrent reader never sees a half-written file. */
 export function record(repo: string, entry: CacheEntry): CacheEntry {

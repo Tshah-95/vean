@@ -40,7 +40,7 @@ import { fromMlt } from "../ir/parse";
 import type { OpInvocation } from "../ops";
 import { listKnownProjects, resolveProject } from "../project/context";
 import type { ResolvedProject } from "../project/context";
-import { remotionCacheDir } from "../state/remotionCache";
+import { findByOutPath, remotionCacheDir } from "../state/remotionCache";
 import { resolveTimelineTarget } from "../state/timeline";
 import { listTimelines } from "../state/timeline";
 import { buildFootageProxy, proxyCacheDir, totalFrames } from "./proxy";
@@ -214,6 +214,38 @@ function referencedResources(timeline: ReturnType<typeof fromMlt>): Set<string> 
   return out;
 }
 
+/** Enrich the WIRE IR with Remotion-overlay identity recovered from the render
+ *  cache index, for clips that don't already carry it. An EXISTING baked overlay
+ *  (e.g. retire's `renders/chat.mov`, placed before the `vean:composition`
+ *  metadata existed) has no `composition` field in the canonical .mlt; the viewer
+ *  recognizes a Remotion overlay only by that field. So this READ-ADAPTER walks
+ *  the parsed timeline and, for any clip whose `resource` matches the `outPath` of
+ *  a cache entry, attaches `composition: { id, props }` — IN THE RETURNED IR ONLY.
+ *  Nothing is written back to disk (the canonical .mlt stays untouched), so the
+ *  demo works without editing it. A clip that already carries `composition` is
+ *  left alone (don't clobber an authored identity). Resilient by construction:
+ *  `findByOutPath` degrades to null on a missing/corrupt index, so an absent cache
+ *  simply yields no enrichment and never throws.
+ *
+ *  Resources are resolved relative to the .mlt's own directory (the same base the
+ *  probe/driver layers use for relative clip resources) before comparing, since
+ *  the index `outPath` is absolute. */
+function enrichWithComposition(
+  repo: string,
+  resolvedPath: string,
+  timeline: ReturnType<typeof fromMlt>,
+): void {
+  const baseDir = dirname(resolvedPath);
+  for (const track of [...timeline.tracks.video, ...timeline.tracks.audio]) {
+    for (const item of track.items) {
+      if (item.kind !== "clip" || item.composition) continue;
+      const abs = resolve(baseDir, item.resource);
+      const entry = findByOutPath(repo, abs);
+      if (entry) item.composition = { id: entry.compositionId, props: entry.props };
+    }
+  }
+}
+
 /** Read a timeline route to its parsed IR + frame/fps metadata, or a typed error
  *  response. Shared by /api/timeline and /api/proxy-render. */
 function readTimeline(
@@ -325,6 +357,9 @@ export function createPreviewHandler(
       const read = readTimeline(repo, route);
       if ("error" in read) return read.error;
       const { timeline, resolvedPath } = read;
+      // Read-adapter enrichment: recover Remotion-overlay identity for baked
+      // overlays placed without `vean:composition` metadata, in the wire IR only.
+      enrichWithComposition(repo, resolvedPath, timeline);
       return jsonResponse({
         ok: true,
         resolvedPath,
