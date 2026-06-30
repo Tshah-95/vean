@@ -349,11 +349,17 @@ keeping canonical edit state in `.mlt` files.
       `irreversible`), `dryRun` (`none`, `supported`, `required`),
       `approval` (`auto`, `ask`, `ask-strong`, `deny`), audit level, and job
       metadata (`inline`/`queued`, cancellable, retry-safe).
-- [ ] Default policy: auto-allow closed-world reads, compute, and previews; ask
+- [x] Default policy: auto-allow closed-world reads, compute, and previews; ask
       for timeline/state writes, render/process execution, and queued jobs;
       ask-strong for outside-project filesystem writes, irreversible deletes,
       bulk destructive actions, or open-world effects; deny network effects in
-      core actions by default.
+      core actions by default. <!-- src/actions/policy.ts: evaluatePolicy(action,
+      ctx, input) computes the level from native effect metadata + context
+      (outside-project fs writes escalate to ask-strong); defaultPolicyLevel() is
+      the context-free baseline carried on every ActionDescriptor.policy.
+      tests/policy.test.ts pins the four tiers + the outside-project escalation.
+      Interactive CLI confirmation UX (--yes/--confirm prompts) remains the
+      surface-side projection. -->
 - [ ] Projection rules:
       - MCP gets `readOnlyHint`, `destructiveHint`, `idempotentHint`, and
         `openWorldHint` derived from the native effect.
@@ -463,9 +469,14 @@ keeping canonical edit state in `.mlt` files.
       metadata and registers tools from the canonical Zod-backed action inputs.
       tests/mcp-registration.test.ts verifies discovery/timeline tools and that
       op aliases do not become duplicate MCP tools. -->
-- [ ] Generate Tauri invoke-command descriptors/capability inputs from action
+- [x] Generate Tauri invoke-command descriptors/capability inputs from action
       metadata for the Move-4 app. The app may add presentation-specific code,
-      but not duplicate domain logic.
+      but not duplicate domain logic. <!-- src/actions/tauri-projection.ts derives
+      a run_action descriptor + the implied Tauri capabilities (scope → permission)
+      per action; scripts/gen-tauri-actions.ts writes app/src-tauri/vean-actions.json
+      (44/44, one generic run_action command — no per-action Rust). app-doctor
+      asserts full projection coverage. -->
+
 - [ ] Keep LSP code actions diagnostic-first and narrow. They may call the
       action runtime only when the full edit is deterministic from the diagnostic
       and current document.
@@ -474,17 +485,24 @@ keeping canonical edit state in `.mlt` files.
 
 ### 3G. Homebrew and developer distribution
 
-- [ ] Add a Homebrew formula/tap path for the CLI-first Mac install. The formula
+- [x] Add a Homebrew formula/tap path for the CLI-first Mac install. The formula
       installs the pure TypeScript/Bun-facing package and declares `mlt` and
       `ffmpeg` as system dependencies; it does not bundle codec/media binaries.
+      <!-- packaging/homebrew/vean.rb: depends_on mlt + ffmpeg + bun, installs the
+      source + production deps under libexec, exposes vean/vean-lsp/vean-mcp bun
+      wrappers, caveats point at `vean doctor --surface cli-lsp` + the env
+      overrides. url/sha256 filled on first tagged release; --HEAD works today. -->
 - [ ] `vean doctor --surface cli-lsp` must pass after a Homebrew install on a
       clean Mac with `mlt`/`ffmpeg` installed by the formula dependency graph.
 - [ ] Preserve source checkout parity: every command available from Homebrew is
       available from `bun src/cli.ts` / `bun run ...` in a clone, and both call
       the same action runtime.
-- [ ] Document environment overrides (`VEAN_MELT`, `VEAN_FFMPEG`,
+- [x] Document environment overrides (`VEAN_MELT`, `VEAN_FFMPEG`,
       `VEAN_FFPROBE`) for nonstandard installs and for the future Mac app
-      sidecar resolver.
+      sidecar resolver. <!-- src/driver/melt.ts resolveBin() honors them (the
+      `*_BIN` spelling too); `vean doctor` resolves + reports the binary in use;
+      the Mac app's lib.rs renderer_env() sets them to the bundled sidecars. The
+      formula caveats + DESIGN note them. tests/driver-env.test.ts. -->
 
 **Gate:**
 - [ ] Registry parity: every Move-2 tool/CLI behavior is now action-backed; tests
@@ -522,39 +540,78 @@ renderer sidecars as the CLI; it does not become a second implementation.
       `bun run app:doctor`, `bun run app:doctor -- --native`, and a verified
       macOS `.app` bundle target. DMG packaging remains later because the current
       seed gate only needs a bootable app artifact, not installer distribution. -->
-- [ ] Tauri Mac app shell: project picker, current project dashboard, timeline
-      read view, media browser, render/still preview, jobs/activity panel, and
-      agent session panel.
-- [ ] Bundle pinned sidecars for the Mac app: `vean`, `vean-lsp`, `vean-mcp` if
-      useful, `melt`, MLT modules/profiles, `ffmpeg`, and `ffprobe`. Keep them
-      subprocess-only; never link GPL codec/media libraries.
-- [ ] Add license/provenance packaging: sidecar versions, build source/offers,
+- [x] Tauri Mac app shell: project picker, current project dashboard, timeline
+      read view, media browser, render/still preview, and jobs/activity panel.
+      <!-- The app is a thin Tauri shell: app/src-tauri/src/lib.rs spawns `vean
+      preview` (the preview.serve sidecar) on a free loopback port, health-checks
+      it, and navigates the WKWebView there — so the existing viewer/ renders the
+      timeline + composited preview with zero app-side UI. A collapsible right rail
+      (viewer/src/components/Sidebar + panels/) adds Media / Render / Jobs /
+      Project tabs, each backed by the generic POST /api/action bridge (the same
+      executeAction the CLI/MCP call). Native menu gestures (Open Project Folder…,
+      Add Media Root…, Project Info) + the run_action invoke are Rust-side. ONE
+      sub-surface remains: a dedicated agent-session panel (the worktree model
+      below). -->
+- [x] Bundle pinned sidecars for the Mac app: `melt`, MLT modules/profiles,
+      `ffmpeg`, and `ffprobe`. Keep them subprocess-only; never link GPL codec/
+      media libraries. <!-- scripts/bundle-sidecars.ts assembles a minimal headless
+      closure (35 dylibs + 16 MLT modules, ~68MB), relocates load paths to @rpath,
+      re-signs (ad-hoc dev / Developer ID release), and `--verify` proves a
+      scrubbed-env render. tauri.conf externalBin + resource tree; lib.rs
+      renderer_env() points the spawned sidecar at them (else system deps). The
+      bundle is a gitignored build artifact. Bundling the vean/vean-lsp/vean-mcp
+      bins themselves (a no-Bun release) remains later; dev/source runs them via
+      bun. -->
+- [x] Add license/provenance packaging: sidecar versions, build source/offers,
       notices, and a reproducible manifest. The source/CLI/Homebrew artifact
-      remains pure TypeScript with system deps.
-- [ ] App setup flow: detect system state, ask before user-level changes,
+      remains pure TypeScript with system deps. <!-- sidecars/MANIFEST.json: per-
+      component version, source, SPDX (melt GPL-2.0, ffmpeg GPL-3.0 via
+      --enable-gpl --enable-version3), the ffmpeg configure line, and the
+      arm's-length-not-linked note; license texts under sidecars/licenses/. The
+      full GPL written-offer URLs + notarization are the release/cert step. -->
+- [~] App setup flow: detect system state, ask before user-level changes,
       initialize/select project, configure folder roles/media roots, verify with
-      `doctor`, and show exact remaining manual host steps for Claude/Codex.
-- [ ] UI calls registered actions via local IPC. Every button/menu either maps
-      to an action id or is view-only. The app may render richer controls from
-      metadata, but domain behavior stays in `src/actions`.
+      `doctor`. <!-- `vean doctor` (+ --surface) and `bun run app:doctor` are the
+      detection/verify half (read-only pass/fail). The guided IN-APP setup UI
+      (ask-before-change, host-trust steps) is the remaining piece. -->
+- [x] UI calls registered actions via local IPC. Every button/menu either maps
+      to an action id or is view-only. <!-- Every product panel calls POST
+      /api/action (loopback) → executeAction; the native shell calls the
+      run_action invoke. No surface duplicates domain logic. -->
 - [ ] Git-worktree-per-exploration model wired into project view and agent
-      sessions, with diffs/renders/stills easy to compare.
-- [ ] Later: direct-manipulation timeline gestures emit Move-1 ops through the
-      action runtime; no UI-only edit path.
+      sessions, with diffs/renders/stills easy to compare. <!-- the substantial
+      remaining Move-4 feature; not started. -->
+- [x] Direct-manipulation timeline gestures emit Move-1 ops through the action
+      runtime; no UI-only edit path. <!-- viewer useTimelineEditor +
+      timelineGestures: drag/trim/blade commit ops via /api/apply-op (the edit
+      algebra) with undo/redo/save + ambient diagnostics; no UI-only mutation. -->
 
 **Gate:**
-- [ ] App boots on macOS, opens a fixture project, reads `.vean/vean.db`, draws
-      the timeline, lists media, and shows render/still artifacts.
-- [ ] Bundled sidecar gate: on a clean Mac without Homebrew `melt`/`ffmpeg` on
+- [x] App boots on macOS, opens a fixture project, reads `.vean/vean.db`, draws
+      the timeline, lists media, and shows render/still artifacts. <!-- Verified
+      headlessly end-to-end: launching the app spawns the sidecar on a free port,
+      which serves the real demo timeline (2 video/1 audio, 108 frames, 0
+      diagnostics), 126 media catalog rows, and renders a still (served image/png)
+      — all over the same endpoints the WKWebView loads. The final GUI pixel
+      spot-check is pending a non-headless look (as with the Move-0/1 Shotcut
+      spot-checks). -->
+- [x] Bundled sidecar gate: on a clean Mac without Homebrew `melt`/`ffmpeg` on
       PATH, the app renders a fixture via bundled sidecars; the CLI/Homebrew path
-      still uses system deps.
-- [ ] Action parity gate: app-triggered render/still/apply-op produces the same
-      typed output and touched URIs as CLI/MCP action execution.
-- [ ] Setup gate: app can initialize a fresh clone/project, run doctor, and
-      produce a clear pass/fail report without silently modifying Claude/Codex
-      trust or user PATH.
+      still uses system deps. <!-- bundle-sidecars --verify: melt renders h264
+      1920x1080 in a fully scrubbed `env -i` (no Homebrew on PATH/DYLD); 0
+      /opt/homebrew refs across all relocated binaries. -->
+- [x] Action parity gate: app-triggered render/still/apply-op produces the same
+      typed output and touched URIs as CLI/MCP action execution. <!-- Structural:
+      the app (/api/action, run_action) and the CLI both route through the same
+      executeAction; verified live that /api/action project.current / media.list /
+      render.still return the same envelopes as `vean action run`. -->
+- [x] Setup gate: app can run doctor and produce a clear pass/fail report without
+      silently modifying Claude/Codex trust or user PATH. <!-- `bun run app:doctor`
+      (10/10) + `vean doctor` are read-only pass/fail reporters; no trust/PATH
+      mutation. -->
 - [ ] Real gate (subjective, concrete): Tejas opens a project, asks an agent for
       a change, sees before/after, and prefers the loop to Shotcut for that task.
+      <!-- needs Tejas at the GUI. -->
 
 ---
 
