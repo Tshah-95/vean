@@ -1,4 +1,6 @@
-// Header: the timeline name/route, an fps badge, and a diagnostics count.
+// Header: a project picker, the timeline name/route, an fps badge, and a
+// diagnostics count.
+import type { ProjectEntry } from "../api";
 import type { Fps } from "../types";
 
 export interface HeaderProps {
@@ -8,6 +10,10 @@ export interface HeaderProps {
   width: number;
   height: number;
   diagnostics?: { errors: number; warnings: number } | null;
+  /** Known projects for the switcher (from ~/.vean/projects.json). */
+  projects?: ProjectEntry[];
+  /** Absolute path of the currently-loaded timeline (to mark the active project). */
+  currentResolvedPath?: string;
 }
 
 function fpsLabel(fps: Fps): string {
@@ -16,7 +22,18 @@ function fpsLabel(fps: Fps): string {
   return Number.isInteger(ratio) ? String(ratio) : ratio.toFixed(2);
 }
 
-export function Header({ title, route, fps, width, height, diagnostics }: HeaderProps) {
+export function Header({
+  title,
+  route,
+  fps,
+  width,
+  height,
+  diagnostics,
+  projects = [],
+  currentResolvedPath,
+}: HeaderProps) {
+  const switchable = projects.filter((p) => p.timelinePath);
+  const active = switchable.find((p) => p.timelinePath === currentResolvedPath);
   return (
     <div
       style={{
@@ -29,7 +46,36 @@ export function Header({ title, route, fps, width, height, diagnostics }: Header
       }}
     >
       <div style={{ fontWeight: 700, fontSize: 14, color: "#e6e8ee" }}>vean preview</div>
-      <div style={{ fontSize: 13, color: "#9aa0ae" }}>{title}</div>
+      {switchable.length > 1 ? (
+        <select
+          value={active?.timelinePath ?? ""}
+          onChange={(e) => {
+            const next = e.target.value;
+            if (next) window.location.href = `?route=${encodeURIComponent(next)}`;
+          }}
+          aria-label="Project"
+          title="Switch project"
+          style={{
+            fontSize: 13,
+            color: "#e6e8ee",
+            background: "#161922",
+            border: "1px solid #2a2e3a",
+            borderRadius: 6,
+            padding: "3px 8px",
+            cursor: "pointer",
+            maxWidth: 220,
+          }}
+        >
+          {!active && <option value="">{title}</option>}
+          {switchable.map((p) => (
+            <option key={p.id} value={p.timelinePath ?? ""}>
+              {p.title}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <div style={{ fontSize: 13, color: "#9aa0ae" }}>{title}</div>
+      )}
       <div style={{ fontSize: 12, color: "#6b7280", fontFamily: "ui-monospace, monospace" }}>{route}</div>
       <div style={{ flex: 1 }} />
       <Badge label={`${width}×${height}`} />

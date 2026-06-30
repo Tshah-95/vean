@@ -16,6 +16,14 @@ export default defineConfig({
       // Reuse the producer's compositions from the sibling workspace by source.
       "@remotion-comp": resolve(__dirname, "..", "remotion", "src", "compositions"),
     },
+    // The aliased composition lives under the sibling `remotion/` workspace, whose
+    // bare `import "remotion"` (and React) would otherwise resolve to THAT
+    // workspace's own node_modules — a SECOND copy of remotion/react distinct from
+    // the one `@remotion/player` uses here. Two remotion instances ⇒ the Player's
+    // frame context and the composition's `useCurrentFrame`/`spring` read DIFFERENT
+    // contexts, so the hooks throw and the Player paints its default ⚠️ fallback.
+    // Force a single copy of each so the overlay actually renders.
+    dedupe: ["remotion", "@remotion/player", "react", "react-dom"],
   },
   server: {
     host: "127.0.0.1",

@@ -1,12 +1,30 @@
 // A single placed item on a track row: a clip, a blank gap, or a dissolve marker,
 // drawn at frame-accurate x = start * pxPerFrame, width = length * pxPerFrame.
-import type { PlacedItem } from "../types";
+//
+// Clips are now INTERACTIVE: a pointerdown selects + begins a contextual gesture
+// (the strip infers the tool from where you grab). A selected clip shows a border
+// highlight, edge brackets (the trim grab targets), an optional diagnostic badge,
+// and an optional live readout (the slip in/out, DaVinci-style). Blanks + dissolves
+// stay inert (no selection, no gesture).
+import type { Diagnostic, PlacedItem } from "../types";
 import { isGraphicClip } from "../types";
 
 export interface ClipBlockProps {
   placed: PlacedItem;
   pxPerFrame: number;
   kind: "video" | "audio";
+  /** Is this the selected clip? (draws the highlight + edge brackets). */
+  selected?: boolean;
+  /** Diagnostics anchored to this clip (drives a warning/error badge). */
+  diagnostics?: Diagnostic[];
+  /** A transient readout to show centred over the clip (e.g. slip in/out). */
+  readout?: string | null;
+  /** True while this clip is being dragged (dims it as a "ghost" at the origin). */
+  dragging?: boolean;
+  /** Pointerdown on the clip body — begins a contextual gesture (clips only). */
+  onPointerDown?: (e: React.PointerEvent) => void;
+  /** The hover cursor (the lane sets it per zone via pointer-move; default grab). */
+  cursor?: string;
 }
 
 function basename(resource: string): string {
@@ -15,7 +33,17 @@ function basename(resource: string): string {
   return last.length > 28 ? `${last.slice(0, 25)}…` : last;
 }
 
-export function ClipBlock({ placed, pxPerFrame, kind }: ClipBlockProps) {
+export function ClipBlock({
+  placed,
+  pxPerFrame,
+  kind,
+  selected = false,
+  diagnostics,
+  readout = null,
+  dragging = false,
+  onPointerDown,
+  cursor = "grab",
+}: ClipBlockProps) {
   const { item, start, length } = placed;
   const left = start * pxPerFrame;
   const width = Math.max(2, length * pxPerFrame);
@@ -32,6 +60,7 @@ export function ClipBlock({ placed, pxPerFrame, kind }: ClipBlockProps) {
           // Gaps read as empty space (a faint hatch).
           background:
             "repeating-linear-gradient(45deg, transparent, transparent 5px, #14171f 5px, #14171f 6px)",
+          pointerEvents: "none",
         }}
         title={`blank · ${length}f`}
       />
@@ -49,6 +78,7 @@ export function ClipBlock({ placed, pxPerFrame, kind }: ClipBlockProps) {
           bottom: 0,
           background: "linear-gradient(90deg, #2a2e3a, #c7ae7a55, #2a2e3a)",
           borderRadius: 3,
+          pointerEvents: "none",
         }}
         title={`dissolve · ${length}f`}
       />
@@ -62,10 +92,18 @@ export function ClipBlock({ placed, pxPerFrame, kind }: ClipBlockProps) {
     : kind === "audio"
       ? "linear-gradient(180deg, #1f3a34, #173029)"
       : "linear-gradient(180deg, #233042, #1a2533)";
-  const border = graphic ? "#7a6bd0" : kind === "audio" ? "#2f6b5c" : "#345070";
+  const baseBorder = graphic ? "#7a6bd0" : kind === "audio" ? "#2f6b5c" : "#345070";
+  const border = selected ? "#c7ae7a" : baseBorder;
+
+  const errs = diagnostics?.filter((d) => d.severity === "error") ?? [];
+  const warns = diagnostics?.filter((d) => d.severity === "warning") ?? [];
+  const badge = errs.length > 0 ? "error" : warns.length > 0 ? "warn" : null;
+  const badgeTitle = [...errs, ...warns].map((d) => `${d.code}: ${d.message}`).join("\n");
 
   return (
     <div
+      data-clip-id={item.id}
+      onPointerDown={onPointerDown}
       style={{
         position: "absolute",
         left,
@@ -74,19 +112,115 @@ export function ClipBlock({ placed, pxPerFrame, kind }: ClipBlockProps) {
         bottom: 2,
         background: bg,
         border: `1px solid ${border}`,
+        boxShadow: selected ? "0 0 0 1px #c7ae7a, 0 0 8px rgba(199,174,122,0.35)" : "none",
         borderRadius: 4,
-        overflow: "hidden",
+        overflow: "visible",
         display: "flex",
         alignItems: "center",
         paddingLeft: 6,
         fontSize: 11,
         color: "#cfd3dc",
         whiteSpace: "nowrap",
+        opacity: dragging ? 0.4 : 1,
+        zIndex: selected ? 3 : 1,
+        cursor,
+        touchAction: "none",
       }}
       title={`${item.label ?? basename(item.resource)} · ${length}f · src[${item.in}-${item.out}]`}
     >
-      {graphic ? <span style={{ marginRight: 4 }}>◆</span> : null}
-      {item.label ? item.label.split(":")[0] : basename(item.resource)}
+      <span
+        style={{
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          // leave room for the edge brackets so the label never sits under them
+          marginLeft: selected ? 4 : 0,
+          marginRight: 6,
+        }}
+      >
+        {graphic ? <span style={{ marginRight: 4 }}>◆</span> : null}
+        {item.label ? item.label.split(":")[0] : basename(item.resource)}
+      </span>
+
+      {/* Edge brackets — the explicit TRIM grab targets on the selected clip. */}
+      {selected ? (
+        <>
+          <EdgeBracket side="left" />
+          <EdgeBracket side="right" />
+        </>
+      ) : null}
+
+      {/* Diagnostic badge (ambient; never blocks). */}
+      {badge ? (
+        <div
+          title={badgeTitle}
+          style={{
+            position: "absolute",
+            top: -7,
+            right: -6,
+            width: 15,
+            height: 15,
+            borderRadius: "50%",
+            background: badge === "error" ? "#e2574c" : "#e2c275",
+            color: "#1a1206",
+            fontSize: 10,
+            fontWeight: 700,
+            lineHeight: "15px",
+            textAlign: "center",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.5)",
+            zIndex: 6,
+            pointerEvents: "none",
+          }}
+        >
+          !
+        </div>
+      ) : null}
+
+      {/* Transient readout (slip in/out, etc.) centred over the clip. */}
+      {readout ? (
+        <div
+          style={{
+            position: "absolute",
+            top: -20,
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "#0b0c0f",
+            border: "1px solid #c7ae7a",
+            color: "#e6d6b0",
+            fontFamily: "ui-monospace, monospace",
+            fontSize: 10,
+            padding: "2px 6px",
+            borderRadius: 4,
+            whiteSpace: "nowrap",
+            zIndex: 7,
+            pointerEvents: "none",
+          }}
+        >
+          {readout}
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+/** A thin resize bracket flush to one edge of the selected clip — the visible
+ *  affordance that the edge is a trim grab target (cursor handled by the lane). */
+function EdgeBracket({ side }: { side: "left" | "right" }) {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 0,
+        bottom: 0,
+        [side]: 0,
+        width: 5,
+        background: "#c7ae7a",
+        opacity: 0.85,
+        borderTopLeftRadius: side === "left" ? 3 : 0,
+        borderBottomLeftRadius: side === "left" ? 3 : 0,
+        borderTopRightRadius: side === "right" ? 3 : 0,
+        borderBottomRightRadius: side === "right" ? 3 : 0,
+        pointerEvents: "none",
+      }}
+    />
   );
 }

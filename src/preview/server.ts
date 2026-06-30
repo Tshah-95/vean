@@ -15,17 +15,36 @@
 //   POST /api/proxy-render {route,scale?} → { ok, proxyUrl, fps, totalFrames, width, height, cached }
 //   GET  /api/proxy/:key.mp4              → streams the cached proxy (Range-capable)
 //   GET  /api/overlay/:key.mov            → streams a Remotion overlay clip (Range-capable)
-import { existsSync, readFileSync, statSync } from "node:fs";
+//
+// WRITE-BACK (the edit loop; in-memory, no disk write until /api/save):
+//   POST /api/apply-op {route,op,args}    → applies the op to the route's working IR
+//                                           { ok, ir, consequences, diagnostics, health,
+//                                             canUndo, canRedo, dirty } | { ok:false, … }
+//   POST /api/undo {route}                → pops + applies the top inverse (same shape)
+//   POST /api/redo {route}                → re-applies the top undone op (same shape)
+//   POST /api/save {route}                → serializes the working IR to the .mlt
+//                                           { ok, path } | { ok:false, … }
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 import { collectDiagnostics, summarize } from "../diagnostics";
 import { VERSION } from "../index";
 import { fromMlt } from "../ir/parse";
-import { resolveProject } from "../project/context";
+import type { OpInvocation } from "../ops";
+import { listKnownProjects, resolveProject } from "../project/context";
 import type { ResolvedProject } from "../project/context";
 import { remotionCacheDir } from "../state/remotionCache";
 import { resolveTimelineTarget } from "../state/timeline";
 import { listTimelines } from "../state/timeline";
 import { buildFootageProxy, proxyCacheDir, totalFrames } from "./proxy";
+import {
+  SessionStore,
+  applyOp,
+  markSaved,
+  redoSession,
+  serializeSession,
+  undoSession,
+} from "./session";
+import type { TimelineSession } from "./session";
 
 export type PreviewServerOptions = {
   repo: string;
@@ -144,6 +163,34 @@ function readTimeline(
   return { resolvedPath: resolved.resolvedPath, timeline: fromMlt(xml) };
 }
 
+/** Resolve a route to its live in-memory `TimelineSession`, lazy-loading + parsing
+ *  the `.mlt` from disk on first touch. The session is keyed by the RESOLVED path
+ *  inside the store, so two aliases for the same file share one working copy +
+ *  history. Returns a typed error Response on an unresolvable route or a read/parse
+ *  failure (so a malformed document is a 500, not a throw). */
+function getSession(
+  store: SessionStore,
+  repo: string,
+  route: string | undefined,
+): { session: TimelineSession } | { error: Response } {
+  const project = projectFor(repo);
+  const resolved = resolveTimelineTarget(repo, project, route);
+  if ("ok" in resolved) {
+    return { error: jsonResponse(resolved, 404) };
+  }
+  try {
+    const session = store.get(resolved.resolvedPath, (uri) => readFileSync(uri, "utf8"));
+    return { session };
+  } catch (error) {
+    return {
+      error: jsonResponse(
+        { ok: false, kind: "parse", detail: String((error as Error)?.message ?? error) },
+        500,
+      ),
+    };
+  }
+}
+
 /** Build the request handler. Split out (and exported) so a test can drive it
  *  directly without binding a port, and so `Bun.serve` just wraps it. */
 export function createPreviewHandler(
@@ -153,6 +200,9 @@ export function createPreviewHandler(
   const veanRoot = opts.veanRoot ?? veanRepoRoot();
   const distDir = join(veanRoot, "viewer", "dist");
   const defaultRoute = opts.timeline;
+  // One working-copy store per server instance: holds each route's in-memory IR +
+  // undo/redo history across requests for the lifetime of this preview process.
+  const sessions = new SessionStore();
 
   return async function handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
@@ -171,6 +221,27 @@ export function createPreviewHandler(
     if (path === "/api/timelines") {
       const project = projectFor(repo);
       return jsonResponse({ ok: true, timelines: listTimelines(repo, project) });
+    }
+
+    // Cross-project picker: the known projects (from ~/.vean/projects.json) with
+    // each one's resolved timeline:main path, so the viewer can switch projects.
+    // Any project's timeline serves by absolute path regardless of which project
+    // this server was launched for (resolveTimelineTarget accepts absolute .mlt).
+    if (path === "/api/projects") {
+      const projects = listKnownProjects().map((p) => {
+        let timelinePath: string | null = null;
+        try {
+          const proj = resolveProject({ project: p.rootPath, cwd: p.rootPath, env: process.env });
+          if (proj) {
+            const resolved = resolveTimelineTarget(p.rootPath, proj, undefined);
+            if (!("ok" in resolved)) timelinePath = resolved.resolvedPath;
+          }
+        } catch {
+          /* a project without a usable timeline:main is listed but not switchable */
+        }
+        return { id: p.id, title: p.title ?? p.rootPath, rootPath: p.rootPath, timelinePath };
+      });
+      return jsonResponse({ ok: true, projects });
     }
 
     if (path === "/api/timeline") {
@@ -195,6 +266,82 @@ export function createPreviewHandler(
       if ("error" in read) return read.error;
       const diagnostics = collectDiagnostics(read.timeline);
       return jsonResponse({ ok: true, health: summarize(diagnostics), diagnostics });
+    }
+
+    // ── Write-back / undo / redo / save (in-memory working copy) ────────────
+    // These mutate the route's in-memory IR ONLY; nothing reaches disk until an
+    // explicit POST /api/save. Every mutation routes through the shared-core
+    // session helpers (which call the edit algebra + diagnostics engine).
+    if (path === "/api/apply-op" && req.method === "POST") {
+      let body: { route?: string; op?: string; args?: unknown } = {};
+      try {
+        body = (await req.json()) as typeof body;
+      } catch {
+        return jsonResponse({ ok: false, kind: "invalid-args", detail: "body must be JSON" }, 400);
+      }
+      if (typeof body.op !== "string" || body.op.length === 0) {
+        return jsonResponse({ ok: false, kind: "invalid-args", detail: "op is required" }, 400);
+      }
+      // The args schema is per-op and validated inside `apply`; pass them through.
+      const invocation: OpInvocation = { op: body.op, args: body.args ?? {} };
+      const route = body.route ?? defaultRoute ?? undefined;
+      const got = getSession(sessions, repo, route);
+      if ("error" in got) return got.error;
+      const outcome = applyOp(got.session, invocation);
+      return jsonResponse(outcome, outcome.ok ? 200 : 422);
+    }
+
+    if (path === "/api/undo" && req.method === "POST") {
+      let body: { route?: string } = {};
+      try {
+        body = (await req.json()) as typeof body;
+      } catch {
+        // empty body is fine — fall back to the default route
+      }
+      const route = body.route ?? defaultRoute ?? undefined;
+      const got = getSession(sessions, repo, route);
+      if ("error" in got) return got.error;
+      const outcome = undoSession(got.session);
+      return jsonResponse(outcome, outcome.ok ? 200 : 422);
+    }
+
+    if (path === "/api/redo" && req.method === "POST") {
+      let body: { route?: string } = {};
+      try {
+        body = (await req.json()) as typeof body;
+      } catch {
+        // empty body is fine — fall back to the default route
+      }
+      const route = body.route ?? defaultRoute ?? undefined;
+      const got = getSession(sessions, repo, route);
+      if ("error" in got) return got.error;
+      const outcome = redoSession(got.session);
+      return jsonResponse(outcome, outcome.ok ? 200 : 422);
+    }
+
+    if (path === "/api/save" && req.method === "POST") {
+      let body: { route?: string } = {};
+      try {
+        body = (await req.json()) as typeof body;
+      } catch {
+        // empty body is fine — fall back to the default route
+      }
+      const route = body.route ?? defaultRoute ?? undefined;
+      const got = getSession(sessions, repo, route);
+      if ("error" in got) return got.error;
+      const { session } = got;
+      try {
+        // Deterministic serialize (toMlt) → byte-identical golden output. The
+        // session is the single I/O point; write the serialized bytes here.
+        writeFileSync(session.uri, serializeSession(session), "utf8");
+        markSaved(session);
+        return jsonResponse({ ok: true, path: session.uri });
+      } catch (error) {
+        return jsonResponse(
+          { ok: false, kind: "write", detail: String((error as Error)?.message ?? error) },
+          500,
+        );
+      }
     }
 
     if (path === "/api/proxy-render" && req.method === "POST") {

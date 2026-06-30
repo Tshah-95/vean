@@ -1,7 +1,14 @@
 // Typed fetch wrappers for the preview server's read + proxy endpoints. The
 // server is bound to 127.0.0.1 and serves this very app, so all requests are
 // same-origin (relative URLs).
-import type { ApiError, ProxyResponse, TimelineResponse } from "./types";
+import type {
+  ApiError,
+  OpInvocation,
+  ProxyResponse,
+  SaveResult,
+  SessionEditResult,
+  TimelineResponse,
+} from "./types";
 
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(path);
@@ -26,6 +33,17 @@ export async function fetchTimelines(): Promise<{ ok: true; timelines: Array<{ p
   return getJson("/api/timelines");
 }
 
+export interface ProjectEntry {
+  id: string;
+  title: string;
+  rootPath: string;
+  timelinePath: string | null;
+}
+
+export async function fetchProjects(): Promise<{ ok: true; projects: ProjectEntry[] }> {
+  return getJson("/api/projects");
+}
+
 export async function fetchDiagnostics(
   route?: string,
 ): Promise<{ ok: true; health: { errors: number; warnings: number } | Record<string, number>; diagnostics: unknown[] }> {
@@ -45,4 +63,41 @@ export async function renderProxy(route?: string, scale?: number, force?: boolea
     throw new Error(`${err.kind ?? res.status}: ${err.detail ?? res.statusText}`);
   }
   return body as ProxyResponse;
+}
+
+// ─── Edit loop (in-memory working copy on the server; disk untouched until save) ──
+
+async function postJson<T>(path: string, payload: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = (await res.json()) as T | ApiError;
+  if (!res.ok || (body as ApiError).ok === false) {
+    const err = body as ApiError;
+    throw new Error(`${err.kind ?? res.status}: ${err.detail ?? res.statusText}`);
+  }
+  return body as T;
+}
+
+/** Apply one edit-algebra op to the route's working IR. Returns the new IR +
+ *  consequences + the full ambient diagnostic set. */
+export async function applyOp(invocation: OpInvocation, route?: string): Promise<SessionEditResult> {
+  return postJson<SessionEditResult>("/api/apply-op", { route, ...invocation });
+}
+
+/** Pop + apply the top inverse on the working IR. */
+export async function undoEdit(route?: string): Promise<SessionEditResult> {
+  return postJson<SessionEditResult>("/api/undo", { route });
+}
+
+/** Re-apply the top undone op on the working IR. */
+export async function redoEdit(route?: string): Promise<SessionEditResult> {
+  return postJson<SessionEditResult>("/api/redo", { route });
+}
+
+/** Serialize the working IR back to the .mlt on disk. */
+export async function saveTimeline(route?: string): Promise<SaveResult> {
+  return postJson<SaveResult>("/api/save", { route });
 }

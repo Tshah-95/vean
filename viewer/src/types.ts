@@ -88,6 +88,81 @@ export interface ApiError {
   detail: string;
 }
 
+// ─── Edit-loop wire types (mirror src/preview/session.ts + src/diagnostics) ───
+// The viewer is the local-app GUI consumer of the ambient diagnostic set: each
+// apply/undo/redo returns the new IR, the structured consequences, and the FULL
+// current diagnostic set (LSP-style). These mirror the server's SessionEditResult.
+
+export type Severity = "error" | "warning" | "info" | "hint";
+
+export interface DiagnosticLocation {
+  clip?: string;
+  track?: string;
+  transition?: number;
+  filter?: number;
+  range?: { from: number; to: number };
+}
+
+export interface Diagnostic {
+  code: string;
+  severity: Severity;
+  source: string;
+  message: string;
+  location: DiagnosticLocation;
+  fix?: string;
+  data?: Record<string, number | string | boolean>;
+}
+
+export interface DiagnosticHealth {
+  errors: number;
+  warnings: number;
+  info?: number;
+  hint?: number;
+  clean?: boolean;
+}
+
+/** The structured "what changed" report from the edit algebra (subset used here). */
+export interface RippleEffect {
+  track: string;
+  shift: number;
+  from: number;
+}
+export interface Consequences {
+  durationDelta: number;
+  ripple: RippleEffect[];
+  warnings: Array<{ code: string; detail: string }>;
+  // The remaining fields (clipsMoved, clipsTrimmed, …) are present on the wire
+  // but the viewer re-renders straight from `ir`, so they are not typed here.
+  [key: string]: unknown;
+}
+
+/** A successful /api/apply-op | /api/undo | /api/redo response. */
+export interface SessionEditResult {
+  ok: true;
+  ir: Timeline;
+  consequences: Consequences;
+  diagnostics: Diagnostic[];
+  health: DiagnosticHealth;
+  canUndo: boolean;
+  canRedo: boolean;
+  dirty: boolean;
+}
+
+/** A successful /api/save response. */
+export interface SaveResult {
+  ok: true;
+  path: string;
+}
+
+/** One op invocation the viewer sends to /api/apply-op. */
+export interface OpInvocation {
+  op: string;
+  args: Record<string, unknown>;
+}
+
+/** A track address as the edit algebra accepts it (by stable id). */
+export type TrackAddr = { trackId: string } | { kind: "video" | "audio"; index: number };
+
 /** The number of timeline frames a placed item occupies. */
 export function itemPlaytime(item: Item): number {
   if (item.kind === "clip") return item.out - item.in + 1;
