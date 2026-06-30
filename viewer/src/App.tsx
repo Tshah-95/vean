@@ -168,7 +168,7 @@ function Viewer({ route }: { route: string | undefined }) {
         />
         <EditorSurface data={data} route={route} />
       </div>
-      <Sidebar />
+      <Sidebar route={route} />
     </div>
   );
 }

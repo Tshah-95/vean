@@ -107,6 +107,21 @@ export async function saveTimeline(route?: string): Promise<SaveResult> {
 // through one endpoint rather than a bespoke fetch per feature. The server runs
 // the SAME `executeAction` the CLI/MCP/Tauri use; this just returns its `output`.
 
+/** Render one exact frame of the route's timeline to a PNG (via render.still) and
+ *  return a server URL for it. */
+export async function renderStill(
+  frame: number,
+  route?: string,
+): Promise<{ ok: true; stillUrl: string; frame: number }> {
+  return postJson("/api/still", { route, frame });
+}
+
+/** Render the route's whole timeline to an MP4 (via render.video) and return a
+ *  server URL for it. */
+export async function renderVideo(route?: string): Promise<{ ok: true; videoUrl: string }> {
+  return postJson("/api/render", { route });
+}
+
 /** Run any registered vean action through the local action bridge. Returns the
  *  action's typed `output`; throws on a non-ok envelope (validation/policy/exec). */
 export async function runAction<T = unknown>(

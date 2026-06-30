@@ -6,17 +6,19 @@ import { useState } from "react";
 import { JobsPanel } from "./panels/JobsPanel";
 import { MediaPanel } from "./panels/MediaPanel";
 import { ProjectPanel } from "./panels/ProjectPanel";
+import { RenderPanel } from "./panels/RenderPanel";
 import { C } from "./panels/ui";
 
-type Tab = "media" | "jobs" | "project";
+type Tab = "media" | "render" | "jobs" | "project";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "media", label: "Media" },
+  { id: "render", label: "Render" },
   { id: "jobs", label: "Jobs" },
   { id: "project", label: "Project" },
 ];
 
-export function Sidebar({ project }: { project?: string }) {
+export function Sidebar({ project, route }: { project?: string; route?: string }) {
   const [tab, setTab] = useState<Tab>("media");
   const [open, setOpen] = useState(true);
 
@@ -85,6 +87,7 @@ export function Sidebar({ project }: { project?: string }) {
       </div>
       <div style={{ flex: 1, minHeight: 0 }}>
         {tab === "media" && <MediaPanel project={project} />}
+        {tab === "render" && <RenderPanel route={route} />}
         {tab === "jobs" && <JobsPanel project={project} />}
         {tab === "project" && <ProjectPanel project={project} />}
       </div>

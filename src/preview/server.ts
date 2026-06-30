@@ -16,6 +16,9 @@
 //                                            IPC (ActionEnvelope) — every product
 //                                            panel is action-backed, no per-feature endpoint
 //   POST /api/proxy-render {route,scale?} → { ok, proxyUrl, fps, totalFrames, width, height, cached }
+//   POST /api/still {route?,frame}        → renders one frame (render.still) → { ok, stillUrl }
+//   POST /api/render {route?}             → renders the full video (render.video) → { ok, videoUrl }
+//   GET  /api/render-out/:name            → streams a rendered still/video (Range-capable)
 //   GET  /api/proxy/:key.mp4              → streams the cached proxy (Range-capable)
 //   GET  /api/overlay/:key.mov            → streams a Remotion overlay clip (Range-capable)
 //
@@ -27,7 +30,7 @@
 //   POST /api/redo {route}                → re-applies the top undone op (same shape)
 //   POST /api/save {route}                → serializes the working IR to the .mlt
 //                                           { ok, path } | { ok:false, … }
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 import { createActionContext, executeAction } from "../actions";
 import { collectDiagnostics, summarize } from "../diagnostics";
@@ -433,6 +436,96 @@ export function createPreviewHandler(
     if (path.startsWith("/api/proxy/")) {
       const name = decodeURIComponent(path.slice("/api/proxy/".length));
       const dir = proxyCacheDir(repo);
+      return serveFile(join(dir, name), dir, req);
+    }
+
+    // ── Render artifacts (still / full video) ───────────────────────────────
+    // Both route through the SAME `render.still` / `render.video` actions the CLI
+    // uses; the server only picks a cache path, ensures it exists, and serves the
+    // produced file (mirroring /api/proxy-render). The artifact lands under the
+    // gitignored .vean/cache/render so it never pollutes the project tree.
+    if (path === "/api/still" && req.method === "POST") {
+      let body: { route?: string; frame?: number } = {};
+      try {
+        body = (await req.json()) as typeof body;
+      } catch {
+        // empty body is fine — defaults
+      }
+      const route = body.route ?? defaultRoute ?? undefined;
+      const frame = Number.isInteger(body.frame) ? (body.frame as number) : 0;
+      const read = readTimeline(repo, route);
+      if ("error" in read) return read.error;
+      const dir = join(repo, ".vean", "cache", "render");
+      mkdirSync(dir, { recursive: true });
+      const name = `still-${frame}.png`;
+      const ctx = createActionContext({
+        cwd: repo,
+        surface: "tauri",
+        project: repo,
+        env: process.env,
+      });
+      const envelope = await executeAction(
+        "render.still",
+        { uri: read.resolvedPath, frame, out: join(dir, name) },
+        ctx,
+      );
+      const result = (envelope.ok ? envelope.output : envelope) as {
+        ok?: boolean;
+        detail?: string;
+      };
+      if (!envelope.ok || result?.ok === false) {
+        return jsonResponse(
+          { ok: false, kind: "still", detail: result?.detail ?? "render failed" },
+          500,
+        );
+      }
+      return jsonResponse({ ok: true, stillUrl: `/api/render-out/${name}`, frame });
+    }
+
+    if (path === "/api/render" && req.method === "POST") {
+      let body: { route?: string } = {};
+      try {
+        body = (await req.json()) as typeof body;
+      } catch {
+        // empty body is fine — defaults
+      }
+      const route = body.route ?? defaultRoute ?? undefined;
+      const read = readTimeline(repo, route);
+      if ("error" in read) return read.error;
+      const dir = join(repo, ".vean", "cache", "render");
+      mkdirSync(dir, { recursive: true });
+      const name = "render.mp4";
+      const ctx = createActionContext({
+        cwd: repo,
+        surface: "tauri",
+        project: repo,
+        env: process.env,
+      });
+      const envelope = await executeAction(
+        "render.video",
+        { uri: read.resolvedPath, out: join(dir, name) },
+        ctx,
+      );
+      const result = (envelope.ok ? envelope.output : envelope) as {
+        ok?: boolean;
+        detail?: string;
+      };
+      if (!envelope.ok || result?.ok === false) {
+        return jsonResponse(
+          { ok: false, kind: "render", detail: result?.detail ?? "render failed" },
+          500,
+        );
+      }
+      return jsonResponse({
+        ok: true,
+        videoUrl: `/api/render-out/${name}`,
+        route: route ?? "timeline:main",
+      });
+    }
+
+    if (path.startsWith("/api/render-out/")) {
+      const name = decodeURIComponent(path.slice("/api/render-out/".length));
+      const dir = join(repo, ".vean", "cache", "render");
       return serveFile(join(dir, name), dir, req);
     }
 
