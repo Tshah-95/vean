@@ -1,13 +1,18 @@
 // The timeline strip — drawn purely from the parsed IR. Video tracks (top→bottom)
 // then audio tracks, an adaptive time ruler, and a draggable playhead. Click/drag
-// in the lane area seeks the master clock (scrub). Both preview layers follow.
+// in the lane area seeks the master clock (scrub).
 //
-// ZOOM MODEL (fixed-width, not stretch-wide): at "Fit" (1×) the WHOLE timeline
-// fills the actual pane width — no giant horizontal scroll for a short clip.
-// Zooming in (2×…8×) magnifies: each second gets wider, fewer seconds are visible
-// at once, and the lane scrolls to pan. The ruler picks a "nice" seconds-per-tick
-// so labels never crowd — so the *scale* changes, the container width doesn't.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+// ZOOM MODEL (Premiere-style):
+//   • "Fit" (the default) sizes the whole timeline to the actual pane width — no
+//     horizontal scroll in the base case.
+//   • Zoom IN magnifies (each frame gets wider) for granular edits/inspection; the
+//     lane scrolls and zoom keeps the playhead centred.
+//   • Zoom OUT shrinks below fit (clips compress, empty space to the right) for an
+//     overview.
+//   • The ruler picks a "nice" interval and label format (frames → seconds →
+//     minutes) from the current scale, so the LABELS change with zoom.
+//   • +/− buttons, a Fit button, and keyboard =/−/\ (Premiere's zoom-to-fit).
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useClockInstance } from "../ClockProvider";
 import type { Timeline } from "../types";
 import { Playhead } from "./Playhead";
@@ -16,35 +21,50 @@ import { TrackRow } from "./TrackRow";
 const GUTTER = 56;
 const ROW_HEIGHT = 34;
 const RULER_HEIGHT = 22;
-const MIN_TICK_PX = 56; // ruler ticks stay at least this far apart
-
-// Normalized zoom ladder. Index 0 = "Fit" (whole timeline across the pane);
-// higher indices magnify by a clean factor. No sub-1 values (Fit already shows
-// everything), so the direction is unambiguous: + elongates, − returns to Fit.
-const ZOOM_STEPS = [1, 2, 3, 4, 6, 8] as const;
-// "Nice" tick intervals in seconds; the ruler snaps to the first that fits.
-const NICE_SECONDS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600] as const;
+const MIN_TICK_PX = 64; // ruler ticks stay at least this far apart
+const MAX_PX_PER_FRAME = 60; // zoom-in ceiling (frame-level granularity)
+const MIN_ZOOM = 0.25; // zoom-out floor (quarter of fit)
+const STEP = 1.6; // per-click zoom factor
 
 export interface TimelineStripProps {
   timeline: Timeline;
   totalFrames: number;
 }
 
-function tickLabel(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  const m = Math.floor(seconds / 60);
-  const r = seconds % 60;
-  return r === 0 ? `${m}m` : `${m}:${String(r).padStart(2, "0")}`;
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+/** Adaptive ruler interval (in frames) + a label formatter, chosen so ticks are
+ *  ≥ MIN_TICK_PX apart. Sub-second intervals read as `s:ff` (seconds:frames),
+ *  whole seconds as `Ns`, and ≥1min as `m:ss`. */
+function rulerScale(pxPerFrame: number, fpsWhole: number) {
+  const subSecond = [1, 2, 5, 10, 15];
+  const secondBased = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600].map((s) => s * fpsWhole);
+  const candidates = [...new Set([...subSecond, ...secondBased])].sort((a, b) => a - b);
+  const framesPerTick =
+    candidates.find((f) => f * pxPerFrame >= MIN_TICK_PX) ?? candidates[candidates.length - 1] ?? 1;
+  const label = (frame: number): string => {
+    const totalSec = Math.floor(frame / fpsWhole);
+    if (framesPerTick < fpsWhole) {
+      const ff = frame % fpsWhole;
+      return `${totalSec}:${String(ff).padStart(2, "0")}`;
+    }
+    if (framesPerTick < 60 * fpsWhole) return `${totalSec}s`;
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return `${m}:${String(s).padStart(2, "0")}`;
+  };
+  return { framesPerTick, label };
 }
 
 export function TimelineStrip({ timeline, totalFrames }: TimelineStripProps) {
   const clock = useClockInstance();
   const laneRef = useRef<HTMLDivElement>(null);
-  const [zoomIdx, setZoomIdx] = useState(0);
+  const [zoom, setZoom] = useState(1); // 1 = Fit; <1 zoomed out; >1 zoomed in
   const [paneWidth, setPaneWidth] = useState(900);
   const scrubbing = useRef(false);
+  const prevZoom = useRef(1);
 
-  // Measure the real pane width so "Fit" actually fits — and stays fit on resize.
+  // Measure the real pane width so "Fit" actually fits — and re-measure on resize.
   useEffect(() => {
     const el = laneRef.current;
     if (!el) return;
@@ -55,16 +75,48 @@ export function TimelineStrip({ timeline, totalFrames }: TimelineStripProps) {
     return () => ro.disconnect();
   }, []);
 
-  const zoom = ZOOM_STEPS[zoomIdx] ?? 1;
   const fps = timeline.profile.fps;
   const fpsWhole = Math.max(1, Math.round(fps[0] / fps[1]));
 
-  // Fit-to-pane base: the lane content area (pane minus the label gutter) holds
-  // the whole timeline at 1×; zoom magnifies from there.
   const contentWidth = Math.max(120, paneWidth - GUTTER);
-  const basePxPerFrame = contentWidth / Math.max(1, totalFrames);
-  const pxPerFrame = basePxPerFrame * zoom;
+  const fitPxPerFrame = contentWidth / Math.max(1, totalFrames);
+  const maxZoom = Math.max(4, MAX_PX_PER_FRAME / fitPxPerFrame);
+  const pxPerFrame = fitPxPerFrame * zoom;
   const laneWidth = GUTTER + totalFrames * pxPerFrame;
+
+  const zoomIn = useCallback(() => setZoom((z) => clamp(z * STEP, MIN_ZOOM, maxZoom)), [maxZoom]);
+  const zoomOut = useCallback(() => setZoom((z) => clamp(z / STEP, MIN_ZOOM, maxZoom)), [maxZoom]);
+  const zoomFit = useCallback(() => setZoom(1), []);
+  const atFit = Math.abs(zoom - 1) < 0.01;
+
+  // Keyboard: = zoom in, - zoom out, \ zoom-to-fit (Premiere). Ignore while typing.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement) return;
+      if (e.key === "=" || e.key === "+") {
+        e.preventDefault();
+        zoomIn();
+      } else if (e.key === "-" || e.key === "_") {
+        e.preventDefault();
+        zoomOut();
+      } else if (e.key === "\\") {
+        e.preventDefault();
+        zoomFit();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [zoomIn, zoomOut, zoomFit]);
+
+  // Keep the playhead centred when zoom changes (Premiere zooms around the head).
+  useLayoutEffect(() => {
+    const el = laneRef.current;
+    if (!el || prevZoom.current === zoom) return;
+    const frame = clock.getSnapshot().currentFrame;
+    const x = GUTTER + frame * pxPerFrame;
+    el.scrollLeft = Math.max(0, x - el.clientWidth / 2);
+    prevZoom.current = zoom;
+  }, [zoom, pxPerFrame, clock]);
 
   const frameFromEvent = useCallback(
     (clientX: number): number => {
@@ -99,18 +151,15 @@ export function TimelineStrip({ timeline, totalFrames }: TimelineStripProps) {
     scrubbing.current = false;
   }, []);
 
-  // Adaptive ruler: pick the first "nice" seconds-per-tick that keeps labels
-  // ≥ MIN_TICK_PX apart, so the scale (not the width) responds to zoom.
-  const pxPerSecond = pxPerFrame * fpsWhole;
-  const secPerTick = NICE_SECONDS.find((s) => s * pxPerSecond >= MIN_TICK_PX) ?? 600;
+  const { framesPerTick, label } = useMemo(
+    () => rulerScale(pxPerFrame, fpsWhole),
+    [pxPerFrame, fpsWhole],
+  );
   const ticks = useMemo(() => {
-    const out: Array<{ frame: number; label: string }> = [];
-    const framesPerTick = secPerTick * fpsWhole;
-    for (let f = 0; f <= totalFrames; f += framesPerTick) {
-      out.push({ frame: f, label: tickLabel(Math.round(f / fpsWhole)) });
-    }
+    const out: Array<{ frame: number; text: string }> = [];
+    for (let f = 0; f <= totalFrames; f += framesPerTick) out.push({ frame: f, text: label(f) });
     return out;
-  }, [totalFrames, fpsWhole, secPerTick]);
+  }, [totalFrames, framesPerTick, label]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", background: "#0a0b0f" }}>
@@ -118,7 +167,7 @@ export function TimelineStrip({ timeline, totalFrames }: TimelineStripProps) {
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 8,
+          gap: 6,
           padding: "6px 12px",
           fontSize: 11,
           color: "#6b7280",
@@ -127,25 +176,19 @@ export function TimelineStrip({ timeline, totalFrames }: TimelineStripProps) {
       >
         <span>timeline</span>
         <div style={{ flex: 1 }} />
-        <button
-          type="button"
-          onClick={() => setZoomIdx((i) => Math.max(0, i - 1))}
-          disabled={zoomIdx === 0}
-          style={{ ...zoomBtn, opacity: zoomIdx === 0 ? 0.4 : 1 }}
-          aria-label="Zoom out"
-        >
+        <button type="button" onClick={zoomOut} disabled={zoom <= MIN_ZOOM + 1e-6} style={zoomBtn} aria-label="Zoom out" title="Zoom out ( − )">
           −
         </button>
-        <span style={{ fontFamily: "ui-monospace, monospace", minWidth: 40, textAlign: "center" }}>
-          {zoomIdx === 0 ? "Fit" : `${zoom}×`}
-        </span>
         <button
           type="button"
-          onClick={() => setZoomIdx((i) => Math.min(ZOOM_STEPS.length - 1, i + 1))}
-          disabled={zoomIdx === ZOOM_STEPS.length - 1}
-          style={{ ...zoomBtn, opacity: zoomIdx === ZOOM_STEPS.length - 1 ? 0.4 : 1 }}
-          aria-label="Zoom in"
+          onClick={zoomFit}
+          style={{ ...zoomBtn, width: "auto", padding: "0 8px", color: atFit ? "#c7ae7a" : "#9aa0ae" }}
+          aria-label="Zoom to fit"
+          title="Zoom to fit ( \\ )"
         >
+          Fit
+        </button>
+        <button type="button" onClick={zoomIn} disabled={zoom >= maxZoom - 1e-6} style={zoomBtn} aria-label="Zoom in" title="Zoom in ( = )">
           +
         </button>
       </div>
@@ -176,9 +219,10 @@ export function TimelineStrip({ timeline, totalFrames }: TimelineStripProps) {
                     fontSize: 10,
                     color: "#4b5563",
                     fontFamily: "ui-monospace, monospace",
+                    whiteSpace: "nowrap",
                   }}
                 >
-                  {t.label}
+                  {t.text}
                 </div>
               ))}
             </div>
@@ -200,8 +244,8 @@ export function TimelineStrip({ timeline, totalFrames }: TimelineStripProps) {
 }
 
 const zoomBtn: React.CSSProperties = {
-  width: 22,
   height: 20,
+  minWidth: 22,
   borderRadius: 4,
   border: "1px solid #2a2e3a",
   background: "#161922",
