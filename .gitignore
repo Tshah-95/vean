@@ -8,6 +8,9 @@ out/
 .vean/
 target/
 app/src-tauri/gen/
+# bundled GPL/LGPL melt/ffmpeg sidecars — a build artifact of scripts/bundle-sidecars.ts,
+# assembled into the signed .app only; never commit (47MB binaries, Hard boundary #2).
+app/src-tauri/sidecars/
 remotion/out/
 viewer/dist/
 
