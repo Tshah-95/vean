@@ -249,6 +249,23 @@ const descriptors: BaseDescriptor[] = [
       args: { count: 1 },
     },
   ),
+  op(
+    "removeWords",
+    "Remove Words",
+    "trim",
+    "Cut word-level frame ranges from a track by stable word id (no index shift).",
+    ["cut-words", "remove-dead-air", "transcript-cut"],
+    {
+      inverse: "_restoreWords",
+      prompt: "cut these filler words out of the interview",
+      args: {
+        track: { kind: "video", index: 0 },
+        targets: [{ wordIds: ["w-12", "w-13"], startFrame: 120, endFrame: 149 }],
+      },
+      description:
+        "Use this to delete spoken words/ranges resolved from a transcript. Targets are STABLE word-id-resolved frame ranges (resolve them with the transcript↔timeline map), cut right-to-left so positions never shift mid-edit — unlike an index-addressed word cut.",
+    },
+  ),
 ];
 
 function op(
