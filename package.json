@@ -49,6 +49,8 @@
     "verify:corpus": "bun scripts/verify-corpus.ts",
     "verify:graphic": "bun scripts/verify-graphic-composite.ts",
     "verify:proxy": "bun scripts/verify-proxy.ts",
+    "demo:build": "bun corpus/demo/build-demo.ts",
+    "verify:move5": "bun scripts/verify-move5.ts",
     "lsp": "bun src/bridge/lsp/server.ts",
     "mcp": "bun src/bridge/mcp/server.ts",
     "move2:e2e": "bun scripts/move2-e2e.ts",
