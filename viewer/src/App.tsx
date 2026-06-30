@@ -36,6 +36,8 @@ function Viewer({ route }: { route: string | undefined }) {
   const [proxyUrl, setProxyUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [diag, setDiag] = useState<{ errors: number; warnings: number } | null>(null);
+  const [volume, setVolume] = useState(1);
+  const [muted, setMuted] = useState(false);
 
   // Load the timeline IR + configure the clock.
   useEffect(() => {
@@ -126,9 +128,16 @@ function Viewer({ route }: { route: string | undefined }) {
         fps={data.fps}
         proxyUrl={proxyUrl}
         overlayDuration={overlay.duration}
+        volume={volume}
+        muted={muted}
         {...(overlay.props ? { overlayProps: overlay.props } : {})}
       />
-      <Transport />
+      <Transport
+        volume={volume}
+        muted={muted}
+        onVolumeChange={setVolume}
+        onMutedChange={setMuted}
+      />
       <TimelineStrip timeline={data.timeline} totalFrames={data.totalFrames} />
     </div>
   );

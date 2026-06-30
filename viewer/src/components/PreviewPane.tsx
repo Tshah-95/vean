@@ -10,7 +10,7 @@
 //   • During play(), we call video.play() once; during pause() video.pause(). If
 //     the element drifts > 2 frames from the master we correct it.
 import { useEffect, useRef } from "react";
-import { useClock } from "../ClockProvider";
+import { useClock, useClockInstance } from "../ClockProvider";
 import type { Fps } from "../types";
 import { OverlayPlayer } from "./OverlayPlayer";
 
@@ -25,11 +25,61 @@ export interface PreviewPaneProps {
   overlayDuration: number;
   /** Props for the overlay composition. */
   overlayProps?: Record<string, unknown>;
+  /** Playback volume 0–1 (applied to the footage-proxy <video>, the audio source). */
+  volume: number;
+  /** Mute the footage-proxy audio. */
+  muted: boolean;
 }
 
-export function PreviewPane({ width, height, fps, proxyUrl, overlayDuration, overlayProps }: PreviewPaneProps) {
+export function PreviewPane({
+  width,
+  height,
+  fps,
+  proxyUrl,
+  overlayDuration,
+  overlayProps,
+  volume,
+  muted,
+}: PreviewPaneProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const clock = useClock();
+  const clockInstance = useClockInstance();
+
+  // Apply volume/mute to the footage <video> (the only audio source — MLT mixes
+  // audio into the proxy; Remotion overlays are silent).
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.volume = Math.min(1, Math.max(0, volume));
+    video.muted = muted;
+  }, [volume, muted, proxyUrl]);
+
+  // Audio-unlock: browsers gate play() on an UNMUTED element to a user gesture,
+  // and our clock-driven play() runs from an effect (detached from the click),
+  // so the first play silently rejects → motion but no sound. Grant playback on
+  // the first real interaction, then reconcile to the clock's play state.
+  useEffect(() => {
+    let unlocked = false;
+    const unlock = () => {
+      const video = videoRef.current;
+      if (!video || unlocked) return;
+      unlocked = true;
+      video
+        .play()
+        .then(() => {
+          if (!clockInstance.getSnapshot().playing) video.pause();
+        })
+        .catch(() => {
+          unlocked = false; // let a later gesture retry
+        });
+    };
+    window.addEventListener("pointerdown", unlock);
+    window.addEventListener("keydown", unlock);
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, [clockInstance, proxyUrl]);
 
   const secondsForFrame = (frame: number) => (frame * fps[1]) / fps[0];
   const frameSeconds = fps[1] / fps[0];

@@ -16,7 +16,16 @@ export function timecode(frame: number, fps: Fps): string {
   return `${pad(hh)}:${pad(mm)}:${pad(ss)}:${pad(ff)}`;
 }
 
-export function Transport() {
+export interface TransportProps {
+  /** Playback volume 0–1. */
+  volume: number;
+  /** Whether audio is muted. */
+  muted: boolean;
+  onVolumeChange: (v: number) => void;
+  onMutedChange: (m: boolean) => void;
+}
+
+export function Transport({ volume, muted, onVolumeChange, onMutedChange }: TransportProps) {
   const clock = useClock();
   const instance = useClockInstance();
   const lastFrame = Math.max(0, clock.totalFrames - 1);
@@ -84,6 +93,40 @@ export function Transport() {
       >
         f{clock.currentFrame} / {lastFrame}
       </div>
+
+      <button
+        type="button"
+        onClick={() => onMutedChange(!muted)}
+        aria-label={muted ? "Unmute" : "Mute"}
+        title={muted ? "Unmute" : "Mute"}
+        style={{
+          width: 34,
+          height: 30,
+          borderRadius: 6,
+          border: "1px solid #2a2e3a",
+          background: "#161922",
+          color: muted ? "#6b7280" : "#e6e8ee",
+          cursor: "pointer",
+          fontSize: 14,
+        }}
+      >
+        {muted || volume === 0 ? "🔇" : "🔊"}
+      </button>
+      <input
+        type="range"
+        min={0}
+        max={1}
+        step={0.01}
+        value={muted ? 0 : volume}
+        onChange={(e) => {
+          const v = Number(e.target.value);
+          onVolumeChange(v);
+          if (v > 0 && muted) onMutedChange(false);
+        }}
+        aria-label="Volume"
+        title="Volume"
+        style={{ width: 88, accentColor: "#c7ae7a", cursor: "pointer" }}
+      />
     </div>
   );
 }
