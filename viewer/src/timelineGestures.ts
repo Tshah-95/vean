@@ -143,17 +143,22 @@ export function buildInvocation(
   g: Gesture,
   dxFrames: number,
   rippleAllTracks: boolean,
+  /** The track the clip should land on (move only). Defaults to the source track;
+   *  a different id (same kind — the strip clamps that) is a CROSS-TRACK move. */
+  toTrackId: string = g.trackId,
 ): OpInvocation | null {
   const trackAddr: TrackAddr = { trackId: g.trackId };
   switch (g.tool) {
     case "move": {
       const toPosition = Math.max(0, g.placed.start + dxFrames);
-      if (toPosition === g.placed.start) return null;
+      // A no-op only when NEITHER position NOR track changed (a same-position
+      // cross-track drop is a real move — don't discard it).
+      if (toPosition === g.placed.start && toTrackId === g.trackId) return null;
       return {
         op: "move",
         args: {
           uuid: g.uuid,
-          toTrack: trackAddr,
+          toTrack: { trackId: toTrackId },
           toPosition,
           // A body move uses lift+overwrite by default; Alt makes it ripple.
           ripple: rippleAllTracks,

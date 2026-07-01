@@ -76,6 +76,10 @@ interface DragState {
   snappedTo: number | null;
   /** Whether the gesture ripples (Alt at start, for move/trim). */
   ripple: boolean;
+  /** The track the clip will land on (move only) — updated from the pointer's Y as
+   *  it crosses lanes. Defaults to the source track; a different (same-kind) id is a
+   *  cross-track move. */
+  toTrackId: string;
 }
 
 export function TimelineStrip({ editor }: TimelineStripProps) {
@@ -267,6 +271,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         dxFrames: 0,
         snappedTo: null,
         ripple: gesture.ripple,
+        toTrackId: track.id,
       });
     },
     [editor],
@@ -274,12 +279,34 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
 
   const onLanePointerMove = useCallback(
     (e: React.PointerEvent) => {
+      // Capture coords before the functional update (the synthetic event outlives it
+      // in React 19, but reading them up front is cleaner + lets us resolve the lane).
+      const clientX = e.clientX;
+      const clientY = e.clientY;
+      // Which track lane is the pointer over? The rows follow the ruler, ROW_HEIGHT
+      // each, video tracks then audio. Used ONLY by a MOVE to pick the target track.
+      const laneEl = laneRef.current;
+      const orderedTracks: Track[] = [...timeline.tracks.video, ...timeline.tracks.audio];
+      let pointerTrack: Track | null = null;
+      if (laneEl) {
+        const rect = laneEl.getBoundingClientRect();
+        const rowIndex = Math.floor((clientY - rect.top - RULER_HEIGHT) / ROW_HEIGHT);
+        pointerTrack = orderedTracks[clamp(rowIndex, 0, orderedTracks.length - 1)] ?? null;
+      }
       setDrag((d) => {
         if (!d) return d;
-        const rawFrames = Math.round((e.clientX - d.startClientX) / pxPerFrame);
+        const rawFrames = Math.round((clientX - d.startClientX) / pxPerFrame);
         const g = d.gesture;
         let dxFrames = rawFrames;
         let snappedTo: number | null = null;
+        // Cross-track: a MOVE lands on the lane under the pointer, but never crosses
+        // KIND (video↔audio — the op rejects it). If the pointer is over a
+        // different-kind lane, keep the last valid (same-kind) target.
+        let toTrackId = d.toTrackId;
+        if (g.tool === "move" && pointerTrack) {
+          const srcKind = orderedTracks.find((t) => t.id === g.trackId)?.kind;
+          if (pointerTrack.kind === srcKind) toTrackId = pointerTrack.id;
+        }
         // Snap the moved EDGE(S) to nearby candidates, unless snapping is off or this
         // is a slip (no edge to snap). A MOVE considers BOTH of its edges (start AND
         // end) and locks to whichever is closest to a candidate — so a clip aligns on
@@ -311,16 +338,16 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         if (g.tool === "move" || g.tool === "slide") {
           dxFrames = Math.max(dxFrames, -g.placed.start);
         }
-        return { ...d, dxFrames, snappedTo };
+        return { ...d, dxFrames, snappedTo, toTrackId };
       });
     },
-    [pxPerFrame, snapCandidates, snapEnabled],
+    [pxPerFrame, snapCandidates, snapEnabled, timeline],
   );
 
   const onLanePointerUp = useCallback(() => {
     setDrag((d) => {
       if (!d) return null;
-      const inv = buildInvocation(d.gesture, d.dxFrames, d.ripple);
+      const inv = buildInvocation(d.gesture, d.dxFrames, d.ripple, d.toTrackId);
       if (inv) void editor.commit(inv);
       return null;
     });
@@ -640,10 +667,10 @@ function TrackLane({
           const uuid = isClip ? (p.item as { id: string }).id : null;
           const selected = uuid != null && uuid === selectedId;
           const beingDragged = drag != null && uuid === drag.gesture.uuid;
-          // A MOVE renders the dragged clip as a translucent SHELL at the target
-          // (the origin stays visible as a faint outline via MoveOverlay); other
-          // tools preview in place.
-          const isMoveGhost = beingDragged && drag?.gesture.tool === "move";
+          // A MOVE leaves the clip DIMMED at its origin while a translucent ghost
+          // (MoveOverlay, on the TARGET lane) shows where it will land — so a
+          // cross-track drop reads correctly. Other tools preview in place.
+          const isMoveSource = beingDragged && drag?.gesture.tool === "move";
           const diags = uuid ? diagnosticsByClip.get(uuid) : undefined;
           const readout = beingDragged && drag ? gestureReadout(drag, p) : null;
           // Same-track flush neighbours decide whether an edge hover reads as a
@@ -661,8 +688,7 @@ function TrackLane({
               selected={selected}
               diagnostics={diags}
               readout={readout}
-              dragging={false}
-              ghost={isMoveGhost}
+              dragging={isMoveSource}
               cursor={isClip ? "grab" : "default"}
               {...(isClip
                 ? {
@@ -694,75 +720,102 @@ function TrackLane({
             />
           );
         })}
-        {/* MOVE overlay on the track that owns the dragged clip: a faint outline of
-            where it WAS, plus a red wash over any content the drop will OVERWRITE. */}
-        {drag && drag.gesture.trackId === track.id && drag.gesture.tool === "move" ? (
-          <MoveOverlay drag={drag} placed={placed} pxPerFrame={pxPerFrame} />
+        {/* MOVE overlay: drawn on the SOURCE lane (a dashed origin outline) and on
+            the TARGET lane (the translucent ghost shell + a red wash over content the
+            drop will OVERWRITE). Same lane when it's a same-track move. */}
+        {drag &&
+        drag.gesture.tool === "move" &&
+        (drag.gesture.trackId === track.id || drag.toTrackId === track.id) ? (
+          <MoveOverlay track={track} drag={drag} placed={placed} pxPerFrame={pxPerFrame} />
         ) : null}
       </div>
     </div>
   );
 }
 
-/** The live MOVE affordance drawn on the source track: a dashed outline at the
- *  clip's ORIGIN (so you see where it came from) and a red overwrite-wash over every
- *  clip the shell's target span covers (the destructive drop, previewed before you
- *  let go — non-ripple move now stamps over content). Uses the RAW (un-previewed)
- *  placements for collision math. Purely visual; pointer-transparent. */
+/** The live MOVE affordance, drawn PER LANE for the track it's rendered in:
+ *   • on the SOURCE lane — a dashed outline at the clip's ORIGIN (where it leaves);
+ *   • on the TARGET lane — the translucent ghost SHELL at the drop position (a real
+ *     `ClipBlock ghost`, so it carries the label + readout) PLUS a red wash over every
+ *     clip the shell will OVERWRITE (the destructive drop, previewed before release —
+ *     non-ripple move stamps over content). The two coincide on a same-track move.
+ *  `placed` is this lane's RAW (un-previewed) items — so collision math on the target
+ *  lane is against that lane's real content. Purely visual; pointer-transparent. */
 function MoveOverlay({
+  track,
   drag,
   placed,
   pxPerFrame,
 }: {
+  track: Track;
   drag: DragState;
   placed: PlacedItem[];
   pxPerFrame: number;
 }) {
   const g = drag.gesture;
+  const isSource = g.trackId === track.id;
+  const isTarget = drag.toTrackId === track.id;
   const target = Math.max(0, g.placed.start + drag.dxFrames);
   const len = g.placed.length;
+
   const collisions: Array<{ start: number; width: number }> = [];
-  for (const p of placed) {
-    if (p.item.kind !== "clip") continue;
-    if ((p.item as { id: string }).id === g.uuid) continue;
-    const iStart = Math.max(target, p.start);
-    const iEnd = Math.min(target + len, p.start + p.length);
-    if (iEnd > iStart) collisions.push({ start: iStart, width: iEnd - iStart });
+  if (isTarget) {
+    for (const p of placed) {
+      if (p.item.kind !== "clip") continue;
+      if ((p.item as { id: string }).id === g.uuid) continue; // its own origin isn't overwritten
+      const iStart = Math.max(target, p.start);
+      const iEnd = Math.min(target + len, p.start + p.length);
+      if (iEnd > iStart) collisions.push({ start: iStart, width: iEnd - iStart });
+    }
   }
+
   return (
     <>
-      <div
-        style={{
-          position: "absolute",
-          left: g.placed.start * pxPerFrame,
-          width: g.placed.length * pxPerFrame,
-          top: 2,
-          bottom: 2,
-          border: "1px dashed #4a5265",
-          borderRadius: 4,
-          background: "rgba(0,0,0,0.22)",
-          pointerEvents: "none",
-          zIndex: 0,
-        }}
-      />
-      {collisions.map((c) => (
+      {isSource ? (
         <div
-          key={`ov-${c.start}`}
-          title="this content will be overwritten"
           style={{
             position: "absolute",
-            left: c.start * pxPerFrame,
-            width: c.width * pxPerFrame,
+            left: g.placed.start * pxPerFrame,
+            width: g.placed.length * pxPerFrame,
             top: 2,
             bottom: 2,
-            background: "rgba(226,87,76,0.28)",
-            border: "1px solid rgba(226,87,76,0.7)",
+            border: "1px dashed #4a5265",
             borderRadius: 4,
+            background: "rgba(0,0,0,0.22)",
             pointerEvents: "none",
-            zIndex: 4,
+            zIndex: 0,
           }}
         />
-      ))}
+      ) : null}
+      {isTarget ? (
+        <>
+          {collisions.map((c) => (
+            <div
+              key={`ov-${c.start}`}
+              title="this content will be overwritten"
+              style={{
+                position: "absolute",
+                left: c.start * pxPerFrame,
+                width: c.width * pxPerFrame,
+                top: 2,
+                bottom: 2,
+                background: "rgba(226,87,76,0.28)",
+                border: "1px solid rgba(226,87,76,0.7)",
+                borderRadius: 4,
+                pointerEvents: "none",
+                zIndex: 4,
+              }}
+            />
+          ))}
+          <ClipBlock
+            placed={{ item: g.placed.item, start: target, length: len }}
+            pxPerFrame={pxPerFrame}
+            kind={track.kind}
+            ghost
+            readout={`→ ${target}f${isSource ? "" : ` · ${track.name ?? track.id}`}`}
+          />
+        </>
+      ) : null}
     </>
   );
 }
@@ -817,6 +870,10 @@ function applyPreview(placed: PlacedItem[], drag: DragState | null): PreviewedIt
     if (id !== g.uuid) return p;
     switch (g.tool) {
       case "move":
+        // A MOVE does NOT rubber-band the clip in place — it stays dimmed at its
+        // ORIGIN while a translucent ghost (MoveOverlay, on the TARGET lane) shows
+        // where it will land. This is what makes a cross-track drop previewable.
+        return { ...p, base: p };
       case "slide":
         return { ...p, base: p, start: Math.max(0, p.start + dxFrames) };
       case "trimIn": {
@@ -874,8 +931,10 @@ function gestureReadout(drag: DragState, previewed: PlacedItem): string | null {
     case "roll":
       return `roll ${dxFrames > 0 ? "+" : ""}${dxFrames}f`;
     case "move":
+      // A move's readout rides the ghost shell (MoveOverlay), not the dimmed origin.
+      return null;
     case "slide":
-      return `${g.tool} → ${previewed.start}f`;
+      return `slide → ${previewed.start}f`;
     default:
       return null;
   }
