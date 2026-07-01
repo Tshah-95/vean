@@ -10,9 +10,14 @@
 // clip or deselects. The playhead is solid through the ruler and dashed/dimmed over
 // the rows (a position indicator there, not a click target).
 //
-// ZOOM MODEL (Premiere-style): "Fit" sizes the whole timeline to the pane; zoom in
-// magnifies; zoom out shrinks below fit. The ruler picks a "nice" interval + label
-// format from the scale. +/− buttons, a Fit button, and =/−/\ keys.
+// ZOOM MODEL (fixed time→pixel scale, like every pro NLE): the scale is an ABSOLUTE
+// pixels-per-frame the USER owns, NOT a fraction of content. It is frozen against
+// edits — adding/trimming/deleting a clip changes the scroll extent, never the
+// scale, so a given frame always sits at the same pixel and nothing "bounces". Only
+// explicit zoom (+/−/=/−) or "Fit" (\) changes it; "Fit" is a one-shot command that
+// solves scale = paneWidth/totalFrames ONCE, not a live binding. We fit on load and
+// on document change, then leave it alone. The ruler picks a "nice" interval + label
+// format from the current scale.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useClockInstance } from "../ClockProvider";
 import {
@@ -34,8 +39,11 @@ const ROW_HEIGHT = 34;
 const RULER_HEIGHT = 36; // taller: reads as a dedicated control strip (the scrub zone)
 const MIN_TICK_PX = 64; // ruler ticks stay at least this far apart
 const MAX_PX_PER_FRAME = 60; // zoom-in ceiling (frame-level granularity)
-const MIN_ZOOM = 0.25; // zoom-out floor (quarter of fit)
+const MIN_PX_PER_FRAME = 0.02; // zoom-out floor (absolute; ~0.6px/sec at 30fps)
 const STEP = 1.6; // per-click zoom factor
+// Trailing open time past the last clip: a bit of empty workspace to scroll into and
+// drop onto, so trimming the tail never collapses the world to hug content.
+const TRAIL_SLACK_PX = 320;
 
 export interface TimelineStripProps {
   editor: TimelineEditor;
@@ -86,16 +94,20 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
   const { timeline, totalFrames, selectedId, diagnosticsByClip } = editor;
   const clock = useClockInstance();
   const laneRef = useRef<HTMLDivElement>(null);
-  const [zoom, setZoom] = useState(1); // 1 = Fit; <1 zoomed out; >1 zoomed in
+  // The ABSOLUTE scale in pixels-per-frame. `null` means "not yet fitted" (on mount
+  // or after a document change) — the fit effect below sets it once. After that it is
+  // the frozen coordinate space; edits never touch it.
+  const [pxpf, setPxpf] = useState<number | null>(null);
   const [paneWidth, setPaneWidth] = useState(900);
   const scrubbing = useRef(false);
-  const prevZoom = useRef(1);
+  const prevPxPerFrame = useRef<number | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   // Snapping toggle (magnet). On by default; turn OFF for free-frame positioning —
   // the fix for "it snaps to random points / won't stop where I want".
   const [snapEnabled, setSnapEnabled] = useState(true);
 
-  useEffect(() => {
+  // Measure before paint so the initial fit uses the real pane width (no scale flash).
+  useLayoutEffect(() => {
     const el = laneRef.current;
     if (!el) return;
     const measure = () => setPaneWidth(el.clientWidth);
@@ -109,15 +121,38 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
   const fpsWhole = Math.max(1, Math.round(fps[0] / fps[1]));
 
   const contentWidth = Math.max(120, paneWidth - GUTTER);
-  const fitPxPerFrame = contentWidth / Math.max(1, totalFrames);
-  const maxZoom = Math.max(4, MAX_PX_PER_FRAME / fitPxPerFrame);
-  const pxPerFrame = fitPxPerFrame * zoom;
-  const laneWidth = GUTTER + totalFrames * pxPerFrame;
+  // The scale that would fit all content in the pane. Cap the TOP so a 3-frame
+  // timeline doesn't fit at an absurd 300px/frame; leave the BOTTOM uncapped so an
+  // hours-long timeline can still fit. This feeds "Fit" and the initial fit only —
+  // it is NOT the live scale.
+  const fitPxPerFrame = Math.min(MAX_PX_PER_FRAME, contentWidth / Math.max(1, totalFrames));
+  // Zoom-out floor: never above the fit scale, so "Fit" is always reachable.
+  const minScale = Math.min(MIN_PX_PER_FRAME, fitPxPerFrame);
+  // The live, frozen scale. Falls back to fit only for the pre-fit render(s).
+  const pxPerFrame = pxpf ?? fitPxPerFrame;
+  const laneWidth = GUTTER + totalFrames * pxPerFrame + TRAIL_SLACK_PX;
 
-  const zoomIn = useCallback(() => setZoom((z) => clamp(z * STEP, MIN_ZOOM, maxZoom)), [maxZoom]);
-  const zoomOut = useCallback(() => setZoom((z) => clamp(z / STEP, MIN_ZOOM, maxZoom)), [maxZoom]);
-  const zoomFit = useCallback(() => setZoom(1), []);
-  const atFit = Math.abs(zoom - 1) < 0.01;
+  const zoomIn = useCallback(
+    () => setPxpf((p) => clamp((p ?? fitPxPerFrame) * STEP, minScale, MAX_PX_PER_FRAME)),
+    [fitPxPerFrame, minScale],
+  );
+  const zoomOut = useCallback(
+    () => setPxpf((p) => clamp((p ?? fitPxPerFrame) / STEP, minScale, MAX_PX_PER_FRAME)),
+    [fitPxPerFrame, minScale],
+  );
+  const zoomFit = useCallback(() => setPxpf(fitPxPerFrame), [fitPxPerFrame]);
+  const atFit = Math.abs(pxPerFrame - fitPxPerFrame) <= fitPxPerFrame * 0.01;
+
+  // Fit the scale to the pane on first load, and re-fit when a different document
+  // loads (route change). Between those, the scale is frozen — this is what stops the
+  // timeline rescaling ("bouncing") on every edit.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-fit only on document identity.
+  useEffect(() => {
+    setPxpf(null);
+  }, [editor.route]);
+  useEffect(() => {
+    if (pxpf === null && paneWidth > 0) setPxpf(clamp(fitPxPerFrame, minScale, MAX_PX_PER_FRAME));
+  }, [pxpf, paneWidth, fitPxPerFrame, minScale]);
 
   // Keyboard: = zoom in, - zoom out, \ zoom-to-fit (Premiere). Ignore while typing.
   useEffect(() => {
@@ -138,15 +173,22 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [zoomIn, zoomOut, zoomFit]);
 
-  // Keep the playhead centred when zoom changes.
+  // Anchor zoom to the playhead: when the scale changes (only on explicit zoom/Fit,
+  // never on edits), keep the playhead centred so it doesn't fly to an edge. The
+  // first fit seeds the ref without scrolling.
   useLayoutEffect(() => {
     const el = laneRef.current;
-    if (!el || prevZoom.current === zoom) return;
+    if (!el) return;
+    if (prevPxPerFrame.current === null) {
+      prevPxPerFrame.current = pxPerFrame;
+      return;
+    }
+    if (prevPxPerFrame.current === pxPerFrame) return;
     const frame = clock.getSnapshot().currentFrame;
     const x = GUTTER + frame * pxPerFrame;
     el.scrollLeft = Math.max(0, x - el.clientWidth / 2);
-    prevZoom.current = zoom;
-  }, [zoom, pxPerFrame, clock]);
+    prevPxPerFrame.current = pxPerFrame;
+  }, [pxPerFrame, clock]);
 
   // ── Scrub (RULER ONLY) ──────────────────────────────────────────────────
   const frameFromClientX = useCallback(
@@ -462,7 +504,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
           {snapEnabled ? "🧲 Snap" : "Snap off"}
         </button>
         <div style={{ width: 8 }} />
-        <button type="button" onClick={zoomOut} disabled={zoom <= MIN_ZOOM + 1e-6} style={zoomBtn} aria-label="Zoom out" title="Zoom out ( − )">
+        <button type="button" onClick={zoomOut} disabled={pxPerFrame <= minScale + 1e-9} style={zoomBtn} aria-label="Zoom out" title="Zoom out ( − )">
           −
         </button>
         <button
@@ -474,7 +516,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         >
           Fit
         </button>
-        <button type="button" onClick={zoomIn} disabled={zoom >= maxZoom - 1e-6} style={zoomBtn} aria-label="Zoom in" title="Zoom in ( = )">
+        <button type="button" onClick={zoomIn} disabled={pxPerFrame >= MAX_PX_PER_FRAME - 1e-6} style={zoomBtn} aria-label="Zoom in" title="Zoom in ( = )">
           +
         </button>
       </div>

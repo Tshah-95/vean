@@ -24,6 +24,9 @@ export interface TimelineEditor {
   revision: number;
   /** Total timeline frames for the working IR (max across all tracks). */
   totalFrames: number;
+  /** The document identity (route/alias). Stable across edits; changes only when a
+   *  different timeline is loaded — the signal to re-fit the view scale. */
+  route: string | undefined;
   /** The selected clip's uuid, or null. */
   selectedId: string | null;
   select: (uuid: string | null) => void;
@@ -185,6 +188,7 @@ export function useTimelineEditor(
     timeline,
     revision,
     totalFrames,
+    route,
     selectedId,
     select: setSelectedId,
     diagnosticsByClip,
