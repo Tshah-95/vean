@@ -898,7 +898,7 @@ const actions = [
     id: "render.video",
     title: "Render Video",
     description: "Render a .mlt document to a video artifact via melt.",
-    input: z.object({ uri: z.string(), out: z.string() }),
+    input: z.object({ uri: z.string(), out: z.string(), repo: z.string().optional() }),
     output: z.unknown(),
     scopes: ["timeline:read", "render:execute", "process:execute", "fs:read", "fs:write"],
     effect: {
@@ -914,9 +914,18 @@ const actions = [
       job: { mode: "inline", cancellable: true, retrySafe: false },
     },
     surfaces: { cli: { command: "render video" }, mcp: { name: "render" } },
-    async execute(_ctx, input) {
+    async execute(ctx, input) {
+      const path = uriToPath(input.uri);
+      // Bake is EXPORT-ONLY: comps are live entities in the viewer, but melt can't
+      // render React — so materialize every comp overlay's alpha .mov from its
+      // composition id right before melt. Never bake to iterate (see the editing
+      // skill / DESIGN-LIVE-COMP-PREVIEW.md).
+      const { bakeOverlaysForExport } = await import("./overlayBake");
+      const repo = repoFor(ctx, input.repo);
+      const bake = await bakeOverlaysForExport(path, repo);
+      if (!bake.ok) return bake;
       const { renderTool } = await import("../bridge/tools/read");
-      return await renderTool(uriToPath(input.uri), input.out);
+      return await renderTool(path, input.out);
     },
   }),
   action({
@@ -953,7 +962,7 @@ const actions = [
     title: "Serve Preview",
     description:
       "Start a local 127.0.0.1 web viewer: a frame-accurate timeline strip and a footage-proxy + Remotion-overlay composited preview slaved to one master clock. Stays in the foreground until interrupted.",
-    relatedDiscovery: ["timeline.current", "remotion.render", "timeline.addGraphic"],
+    relatedDiscovery: ["timeline.current", "timeline.addComposition", "timeline.addGraphic"],
     input: z.object({
       repo: z.string().optional(),
       timeline: z.string().optional(),
@@ -1066,154 +1075,11 @@ const actions = [
     },
   }),
   action({
-    id: "remotion.render",
-    title: "Render Remotion Composition",
-    description:
-      "Render a Remotion composition to an alpha ProRes 4444 clip for compositing onto an upper MLT track. Drives the remotion CLI as a subprocess; caches on (composition, props, range, profile).",
-    relatedDiscovery: ["timeline.addGraphic"],
-    input: z.object({
-      composition: z.string().min(1),
-      props: z.record(z.string(), z.unknown()).default({}),
-      frameRange: z.tuple([frame, frame]).optional(),
-      out: z.string().optional(),
-      profile: z
-        .enum(["vertical", "square", "landscape", "landscape-2997", "landscape-23976"])
-        .default("vertical"),
-      repo: z.string().optional(),
-      force: z.boolean().default(false),
-    }),
-    output: z.unknown(),
-    scopes: [
-      "render:execute",
-      "process:execute",
-      "fs:read",
-      "fs:write",
-      "state:read",
-      "state:write",
-    ],
-    effect: {
-      kind: "render",
-      mutates: ["filesystem", "process"],
-      openWorld: false,
-      destructive: false,
-      idempotency: "idempotent",
-      reversibility: "manual",
-      dryRun: "none",
-      approval: "ask",
-      audit: "metadata",
-      job: { mode: "inline", cancellable: true, retrySafe: true },
-    },
-    surfaces: { cli: { command: "remotion render" }, mcp: { name: "remotion-render" } },
-    async execute(ctx, input) {
-      const { PROFILES } = await import("../ir/profile");
-      const profileName = input.profile ?? "vertical";
-      const props = input.props ?? {};
-      const profile = PROFILES[profileName];
-      // Move 5 is restricted to integer-fps profiles — Remotion takes an integer
-      // fps. Reject a non-integer-fps target with a typed error (the fps-mismatch
-      // diagnostic + non-integer support is deferred to a later Move).
-      if (profile.fps[1] !== 1) {
-        return {
-          ok: false,
-          kind: "unsupported-fps",
-          detail: `remotion.render is restricted to integer-fps profiles; "${profileName}" is ${profile.fps[0]}/${profile.fps[1]}`,
-        };
-      }
-      const { remotionWorkspaceForRepo, renderComposition, RemotionError } = await import(
-        "../driver/remotion"
-      );
-      const cacheMod = await import("../state/remotionCache");
-      const repo = repoFor(ctx, input.repo);
-      // Per-project workspace: a project's own remotion/ (its compositions + brand
-      // tokens) wins; falls back to vean's bundled workspace.
-      const { entry, bin } = remotionWorkspaceForRepo(repo);
-      const profileFingerprint = `${profile.width}x${profile.height}@${profile.fps[0]}/${profile.fps[1]}`;
-      const entryFingerprint = cacheMod.entryFingerprint(entry);
-      const frameRange = input.frameRange ?? null;
-      const key = cacheMod.cacheKey({
-        compositionId: input.composition,
-        props,
-        frameRange,
-        profileFingerprint,
-        entryFingerprint,
-      });
-
-      if (!input.force) {
-        const hit = cacheMod.lookup(repo, key);
-        if (hit) {
-          return {
-            ok: true,
-            composition: input.composition,
-            outPath: hit.outPath,
-            cached: true,
-            pixFmt: hit.pixFmt,
-            hasAlpha: hit.hasAlpha,
-            frameRange: hit.frameRange,
-            cacheKey: key,
-            touchedUris: [hit.outPath],
-          };
-        }
-      }
-
-      const outPath = input.out ?? cacheMod.pathFor(repo, key);
-      const { mkdirSync } = await import("node:fs");
-      const { dirname } = await import("node:path");
-      mkdirSync(dirname(outPath), { recursive: true });
-
-      try {
-        const result = await renderComposition(input.composition, outPath, {
-          entry,
-          ...(bin ? { bin } : {}),
-          props,
-          ...(input.frameRange ? { frameRange: input.frameRange } : {}),
-        });
-        if (!result.hasAlpha) {
-          // A yuv422p… pix_fmt means the alpha plane was lost — the overlay would
-          // not composite. Hard failure, returned (not thrown) for a uniform envelope.
-          return {
-            ok: false,
-            kind: "no-alpha",
-            detail: `rendered clip has no alpha plane (pix_fmt=${result.pixFmt}); expected a yuva format`,
-            pixFmt: result.pixFmt,
-            outPath: result.outPath,
-          };
-        }
-        cacheMod.record(repo, {
-          key,
-          compositionId: input.composition,
-          props,
-          frameRange,
-          outPath: result.outPath,
-          pixFmt: result.pixFmt,
-          hasAlpha: result.hasAlpha,
-          createdAt: ctx.clock.nowIso(),
-        });
-        return {
-          ok: true,
-          composition: input.composition,
-          outPath: result.outPath,
-          cached: false,
-          pixFmt: result.pixFmt,
-          hasAlpha: result.hasAlpha,
-          frameRange,
-          cacheKey: key,
-          touchedUris: [result.outPath],
-        };
-      } catch (error) {
-        const detail =
-          error instanceof RemotionError
-            ? error.message
-            : String((error as Error)?.message ?? error);
-        return { ok: false, kind: "render", detail };
-      }
-    },
-  }),
-  action({
     id: "timeline.addGraphic",
     title: "Add Graphic Overlay",
     description:
       "Composite a pre-rendered alpha graphic clip over the footage: ensures an upper video track, overwrites the clip at a position, and adds a qtblend field transition so it composites over the footage track.",
-    relatedDiscovery: ["remotion.render", "timeline.ops.describe"],
+    relatedDiscovery: ["timeline.addComposition", "timeline.ops.describe"],
     input: z.object({
       uri: z.string().optional(),
       timeline: z.string().optional(),
@@ -1288,128 +1154,94 @@ const actions = [
     },
   }),
   action({
-    id: "graphic.rebake",
-    title: "Re-bake Remotion Overlay",
+    id: "timeline.addComposition",
+    title: "Add Live Composition Overlay",
     description:
-      "Re-render a Remotion overlay's alpha .mov from its composition + props, refreshing the render cache. Identify the overlay either directly by composition id (+ props) or by an in-timeline clip uuid whose vean:composition metadata is read back. Drives the remotion CLI as a subprocess; always re-renders (force) and re-records the cache entry.",
-    relatedDiscovery: ["remotion.render", "timeline.addGraphic"],
-    input: z
-      .object({
-        // Direct identity: name the composition and the props it was baked with.
-        composition: z.string().min(1).optional(),
-        props: z.record(z.string(), z.unknown()).default({}),
-        // In-timeline identity: resolve the overlay clip by uuid on a timeline and
-        // read its `vean:composition` metadata as the bake inputs.
-        uri: z.string().optional(),
-        timeline: z.string().optional(),
-        clipUuid: z.string().min(1).optional(),
-        frameRange: z.tuple([frame, frame]).optional(),
-        out: z.string().optional(),
-        profile: z
-          .enum(["vertical", "square", "landscape", "landscape-2997", "landscape-23976"])
-          .default("vertical"),
-        repo: z.string().optional(),
-      })
-      // Exactly one identification mode: a composition id OR a clip uuid.
-      .refine((v) => Boolean(v.composition) !== Boolean(v.clipUuid), {
-        message: "provide exactly one of `composition` or `clipUuid`",
+      "Place a Remotion composition on the timeline as a LIVE first-class overlay — NO bake. The clip carries composition:{id,props} and a .vean/cache/remotion/<id>.mov resource path, so the viewer renders the comp natively (dynamic @project-comp glob + HMR) and melt bakes it only at EXPORT (render.video). This is THE way to add a comp; baking never happens here.",
+    relatedDiscovery: ["timeline.current", "timeline.addGraphic"],
+    input: z.object({
+      uri: z.string().optional(),
+      timeline: z.string().optional(),
+      composition: z.object({
+        id: z.string().min(1),
+        props: z.record(z.string(), z.unknown()).optional(),
       }),
+      position: frame,
+      durationFrames: z.number().int().positive(),
+      newTrack: z.boolean().default(false),
+      blendService: z.string().default("qtblend"),
+      label: z.string().optional(),
+    }),
     output: z.unknown(),
-    scopes: [
-      "timeline:read",
-      "render:execute",
-      "process:execute",
-      "fs:read",
-      "fs:write",
-      "state:read",
-      "state:write",
-    ],
+    scopes: ["timeline:write", "fs:read", "fs:write"],
     effect: {
-      kind: "render",
-      mutates: ["filesystem", "process"],
+      kind: "update",
+      mutates: ["timeline", "filesystem"],
       openWorld: false,
       destructive: false,
-      // A re-bake re-runs the same deterministic render and overwrites the same
-      // cache entry → idempotent (the prior bake of identical inputs is replaced
-      // by a byte-equivalent one). It always shells out (force), so retry-safe.
-      idempotency: "idempotent",
-      reversibility: "manual",
-      dryRun: "none",
+      idempotency: "non-idempotent",
+      reversibility: "inverse-op",
+      dryRun: "supported",
       approval: "ask",
-      audit: "metadata",
-      job: { mode: "inline", cancellable: true, retrySafe: true },
+      audit: "full-input",
     },
-    surfaces: { cli: { command: "remotion rebake" }, mcp: { name: "rebake-graphic" } },
+    surfaces: { cli: { command: "timeline add-composition" }, mcp: { name: "add-composition" } },
     async execute(ctx, input) {
-      // Resolve the bake identity. Direct mode uses the input composition + props.
-      // Clip mode reads the overlay clip's `vean:composition` metadata off the
-      // timeline (the same shape `timeline.addGraphic` stamps + the parser reads
-      // back), so editing the timeline clip and re-baking stay in lockstep.
-      let composition = input.composition;
-      let props = input.props ?? {};
-      if (input.clipUuid) {
-        const { parseDoc } = await import("../bridge/tools/core");
-        const { resolveTimelineTarget } = await import("../state/timeline");
-        const project = projectFor(ctx, input.repo);
-        const timeline = resolveTimelineTarget(
-          project.rootPath,
-          project,
-          input.timeline ?? input.uri,
-        );
-        if ("ok" in timeline) return timeline;
-        const state = parseDoc(await readDoc(timeline.uri));
-        const clip = [...state.tracks.video, ...state.tracks.audio]
-          .flatMap((track) => track.items)
-          .find((item) => item.kind === "clip" && item.id === input.clipUuid);
-        if (!clip || clip.kind !== "clip") {
-          return {
-            ok: false,
-            kind: "clip-not-found",
-            detail: `no clip ${input.clipUuid} on ${timeline.uri}`,
-            uri: timeline.uri,
-          };
-        }
-        if (!clip.composition) {
-          return {
-            ok: false,
-            kind: "not-a-remotion-overlay",
-            detail: `clip ${input.clipUuid} has no vean:composition metadata; it is not a Remotion overlay`,
-            uri: timeline.uri,
-          };
-        }
-        composition = clip.composition.id;
-        // The clip's baked props are the bake inputs; a non-empty `props` input
-        // still overrides them when the caller re-bakes with edited inputs.
-        props = Object.keys(props).length > 0 ? props : (clip.composition.props ?? {});
-      }
-      if (!composition) {
-        return {
-          ok: false,
-          kind: "invalid-args",
-          detail: "graphic.rebake could not resolve a composition id",
-        };
-      }
-      // Delegate the actual render + cache refresh to remotion.render with
-      // force:true — identical render flags, alpha check, and cache record, so a
-      // re-bake is exactly a forced bake of the resolved identity (DRY, not a
-      // second copy of the render block).
-      const envelope = await executeAction(
-        "remotion.render",
-        {
-          composition,
-          props,
-          ...(input.frameRange ? { frameRange: input.frameRange } : {}),
-          ...(input.out ? { out: input.out } : {}),
-          profile: input.profile ?? "vertical",
-          ...(input.repo ? { repo: input.repo } : {}),
-          force: true,
-        },
-        ctx,
+      const { parseDoc, serializeDoc } = await import("../bridge/tools/core");
+      const { resolveTimelineTarget } = await import("../state/timeline");
+      const { addGraphic } = await import("./graphic");
+      const { join } = await import("node:path");
+      const project = projectFor(ctx);
+      const timeline = resolveTimelineTarget(
+        project.rootPath,
+        project,
+        input.timeline ?? input.uri,
       );
-      if (!envelope.ok) {
-        return { ok: false, kind: envelope.kind, detail: envelope.detail };
+      if ("ok" in timeline) return timeline;
+      // The overlay's resource is a STABLE per-id path under the render cache; it
+      // need not exist — the viewer renders the comp live from composition.id, and
+      // render.video bakes it there at export.
+      const clipPath = join(
+        project.rootPath,
+        ".vean",
+        "cache",
+        "remotion",
+        `${input.composition.id}.mov`,
+      );
+      const props =
+        input.composition.props && Object.keys(input.composition.props).length > 0
+          ? input.composition.props
+          : undefined;
+      const state = parseDoc(await ctx.documents.read(timeline.uri));
+      const result = addGraphic(state, {
+        clipPath,
+        position: input.position,
+        durationFrames: input.durationFrames,
+        newTrack: input.newTrack ?? false,
+        blendService: input.blendService ?? "qtblend",
+        ...(input.label ? { label: input.label } : {}),
+        composition: { id: input.composition.id, ...(props ? { props } : {}) },
+      });
+      if (!("state" in result)) {
+        return { ok: false, kind: result.kind, detail: editErrorMsg(result), uri: timeline.uri };
       }
-      return { ...(envelope.output as Record<string, unknown>), rebaked: true, composition, props };
+      await ctx.documents.write(timeline.uri, serializeDoc(result.state));
+      return {
+        ok: true,
+        live: true,
+        composition: input.composition.id,
+        resource: clipPath,
+        consequences: result.consequences,
+        inverse: result.inverse,
+        aTrack: result.aTrack,
+        bTrack: result.bTrack,
+        gfxTrackId: result.gfxTrackId,
+        createdTrack: result.createdTrack,
+        uri: timeline.uri,
+        resolvedPath: timeline.resolvedPath,
+        touchedUris: [timeline.uri],
+        project: timeline.project,
+      };
     },
   }),
   action({

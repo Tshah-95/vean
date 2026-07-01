@@ -136,21 +136,25 @@ baking it to a `.mov` to preview is the anti-pattern the composition work exists
 to kill. (This bit hard on 2026-07-01 — a whole bake→melt-still rebuild loop;
 `DESIGN-LIVE-COMP-PREVIEW.md` is the contract.)
 
-- A comp overlay clip carries `composition:{id,props}` and a `cache/remotion/`
-  resource (or a `graphic:` label) → `isGraphicClip` (`viewer/src/types.ts`) → the
-  viewer renders the comp **live** via `@remotion/player` + the dynamic
-  `@project-comp` glob, with **HMR**. The `.mov` is consumed **only by melt at
-  EXPORT** — the live preview ignores it and reads `composition.id` from the IR.
+- **Add a comp with `vean timeline add-composition --composition <id>`** (action
+  `timeline.addComposition`) — a LIVE, no-bake edit. The clip carries
+  `composition:{id,props}` and a `.vean/cache/remotion/<id>.mov` resource path →
+  `isGraphicClip` (`viewer/src/types.ts`) → the viewer renders the comp **live**
+  via `@remotion/player` + the dynamic `@project-comp` glob, with **HMR**. The
+  `.mov` need not exist yet: it is consumed **only by melt at EXPORT** — the live
+  preview ignores it and reads `composition.id` from the IR. (`timeline.addGraphic`
+  remains for plain pre-rendered alpha `.mov` overlays.)
 - **To iterate a comp: edit its `.tsx` and preview in the running viewer** via the
   `drive` skill (`.agents/skills/drive/SKILL.md`) — headless: `bun run drive up
   --project <project>` → `agent-browser … open $URL` → seek the scrubber (the
   `slider` ref; `key End` jumps to the last frame) → `screenshot`. The edit
-  hot-reloads live; the playhead is preserved. **Do NOT `vean remotion render` /
-  bake or `render + still` to SEE a comp change** — that's the slow, stale-artifact
-  loop (a full ProRes bake per edit).
-- **Bake only for export:** `vean remotion render <id> --out
-  <project>/.vean/cache/remotion/<id>.mov --force` per comp, then `vean render
-  video` — done ONCE for a final deliverable, never during authoring.
+  hot-reloads live; the playhead is preserved. **Do NOT bake or `render + still` to
+  SEE a comp change** — that's the slow, stale-artifact loop (a full ProRes bake
+  per edit). There is no standalone bake verb by design.
+- **Bake is internal to export:** `vean render video <timeline> --out <deliverable>`
+  self-bakes every comp overlay's alpha `.mov` from its `composition.id` right
+  before melt (via `bakeOverlaysForExport`). Run it ONCE for a final deliverable,
+  never during authoring — you never invoke a bake by hand.
 
 ## How code actions fit (auto-fixing a diagnostic)
 

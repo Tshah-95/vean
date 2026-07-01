@@ -1,8 +1,10 @@
-// Stable JSON tests for the Move-5 actions: remotion.render, timeline.addGraphic,
-// timeline.new, timeline.addAudio. These assert the registry shape — effect
-// metadata, scopes, CLI/MCP projection, and presence in the discovery manifest —
-// WITHOUT touching the real Remotion/melt subprocesses (frame rendering is
-// verified only by the real gate, never in vitest, per AGENTS.md).
+// Stable JSON tests for the Move-5 actions: timeline.addComposition,
+// timeline.addGraphic, timeline.new, timeline.addAudio. These assert the registry
+// shape — effect metadata, scopes, CLI/MCP projection, and presence in the
+// discovery manifest — WITHOUT touching the real Remotion/melt subprocesses
+// (frame rendering is verified only by the real gate, never in vitest, per
+// AGENTS.md). Baking a comp is EXPORT-ONLY (internal to render.video); adding a
+// comp to the timeline is a live, no-bake edit (timeline.addComposition).
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,30 +18,19 @@ import {
 } from "../src/actions";
 
 describe("Move-5 actions registry", () => {
-  it("registers remotion.render with render-effect metadata + CLI/MCP projection", () => {
-    const action = getAction("remotion.render");
-    if (!action) throw new Error("remotion.render action missing");
+  it("registers timeline.addComposition as a live, no-bake timeline update", () => {
+    const action = getAction("timeline.addComposition");
+    if (!action) throw new Error("timeline.addComposition action missing");
     const d = describeAction(action);
-    expect(d.effect.kind).toBe("render");
-    expect(d.effect.mutates).toEqual(expect.arrayContaining(["filesystem", "process"]));
-    expect(d.effect.idempotency).toBe("idempotent");
-    expect(d.effect.openWorld).toBe(false);
-    expect(d.effect.job).toMatchObject({ mode: "inline", cancellable: true, retrySafe: true });
-    expect(d.surfaces.cli).toEqual({ command: "remotion render" });
-    expect(d.surfaces.mcp).toEqual({ name: "remotion-render" });
-    expect(action.scopes).toEqual(
-      expect.arrayContaining([
-        "render:execute",
-        "process:execute",
-        "fs:read",
-        "fs:write",
-        "state:read",
-        "state:write",
-      ]),
-    );
-    // Read-only hint must be false (it mutates), destructive false.
-    expect(d.mcpAnnotations.readOnlyHint).toBe(false);
-    expect(d.mcpAnnotations.destructiveHint).toBe(false);
+    expect(d.effect.kind).toBe("update");
+    expect(d.effect.mutates).toEqual(expect.arrayContaining(["timeline", "filesystem"]));
+    expect(d.effect.reversibility).toBe("inverse-op");
+    // The whole point: adding a comp does NOT bake — no render/process scope.
+    expect(action.scopes).toEqual(expect.arrayContaining(["timeline:write"]));
+    expect(action.scopes).not.toContain("render:execute");
+    expect(action.scopes).not.toContain("process:execute");
+    expect(d.surfaces.cli).toEqual({ command: "timeline add-composition" });
+    expect(d.surfaces.mcp).toEqual({ name: "add-composition" });
   });
 
   it("registers timeline.addGraphic as a reversible timeline update", () => {
@@ -51,7 +42,7 @@ describe("Move-5 actions registry", () => {
     expect(d.effect.reversibility).toBe("inverse-op");
     expect(d.surfaces.cli).toEqual({ command: "timeline add-graphic" });
     expect(d.surfaces.mcp).toEqual({ name: "add-graphic" });
-    expect(d.relatedDiscovery).toEqual(["remotion.render", "timeline.ops.describe"]);
+    expect(d.relatedDiscovery).toEqual(["timeline.addComposition", "timeline.ops.describe"]);
   });
 
   it("registers timeline.new as a create that writes a file + project state", () => {
@@ -90,7 +81,7 @@ describe("Move-5 actions registry", () => {
       (manifest.output as { commands: Array<{ command: string }> }).commands.map((c) => c.command),
     );
     for (const cmd of [
-      "remotion render",
+      "timeline add-composition",
       "timeline add-graphic",
       "timeline new",
       "timeline add-audio",
@@ -117,23 +108,5 @@ describe("Move-5 actions registry", () => {
       if (!cli || "hidden" in cli) continue;
       expect(commands).toContain(cli.command ?? action.id);
     }
-  });
-
-  it("rejects a non-integer-fps profile with a typed unsupported-fps failure", async () => {
-    const projectRoot = mkdtempSync(join(tmpdir(), "vean-move5-fps-"));
-    const configHome = mkdtempSync(join(tmpdir(), "vean-move5-fps-config-"));
-    const ctx = createActionContext({
-      cwd: projectRoot,
-      env: { ...process.env, VEAN_CONFIG_HOME: configHome },
-      surface: "test",
-    });
-    const envelope = await executeAction(
-      "remotion.render",
-      { composition: "LowerThird", profile: "landscape-2997" },
-      ctx,
-    );
-    expect(envelope.ok).toBe(true);
-    if (!envelope.ok) return;
-    expect(envelope.output).toMatchObject({ ok: false, kind: "unsupported-fps" });
   });
 });

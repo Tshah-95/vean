@@ -178,8 +178,9 @@ export async function probePixFmt(path: string): Promise<string> {
 
 /** Render a Remotion composition to an alpha ProRes 4444 clip, then ffprobe its
  *  pixel format and report whether the alpha plane survived. The caller (the
- *  `remotion.render` action) decides whether `hasAlpha === false` is a hard
- *  failure — the driver always returns the probed truth, never hides it.
+ *  export-only `bakeOverlaysForExport`, invoked by the `render.video` action)
+ *  decides whether `hasAlpha === false` is a hard failure — the driver always
+ *  returns the probed truth, never hides it.
  *
  *  A missing Remotion binary or a nonzero render exit throws `RemotionError`. */
 export async function renderComposition(

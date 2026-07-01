@@ -36,11 +36,15 @@ transition. The alpha plane is load-bearing:
 
 ## Driven by vean
 
-You normally never run `remotion render` by hand — `vean remotion render
-<composition>` (the `remotion.render` action) computes the cache key, runs the
-exact command with all the alpha flags, ffprobes the result, and returns the
-clip path. The defaults in `remotion.config.ts` keep a hand-run render
-alpha-correct too.
+You never run `remotion render` by hand, and there is no standalone vean bake verb
+by design. A comp is a **live** timeline entity: add it with `vean timeline
+add-composition --composition <id>` (the `timeline.addComposition` action) and the
+viewer renders it natively (dynamic `@project-comp` glob + HMR). Baking to this
+alpha `.mov` happens **only at export** — `vean render video <timeline>` self-bakes
+every comp overlay from its `composition.id` (via `bakeOverlaysForExport`, driving
+`src/driver/remotion.ts`) right before melt, running the exact command with all the
+alpha flags and ffprobing the result. The defaults in `remotion.config.ts` keep a
+hand-run render alpha-correct too.
 
 ## Compositions
 

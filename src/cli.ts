@@ -422,6 +422,53 @@ timeline
   );
 
 timeline
+  .command("add-composition")
+  .alias("add-comp")
+  .description(
+    "Place a Remotion composition as a LIVE overlay (no bake) — the viewer renders it natively; melt bakes it only at export",
+  )
+  .requiredOption(
+    "--composition <id>",
+    "composition id (matches remotion/src/compositions/<id>.tsx)",
+  )
+  .requiredOption("--position <frame>", "timeline frame the overlay starts at", parseInteger)
+  .requiredOption("--duration <frames>", "overlay duration in frames", parseInteger)
+  .option("--props-json <json>", "composition props JSON", assertJson, "{}")
+  .option("--new-track", "force a fresh top GFX video track")
+  .option("--blend-service <service>", "cross-track blend service", "qtblend")
+  .option("--label <label>", "clip label")
+  .option("--timeline <uri-or-route>", "timeline path, file:// URI, or route alias")
+  .option("--json", "emit JSON")
+  .action(
+    async (opts: {
+      composition: string;
+      position: number;
+      duration: number;
+      propsJson: string;
+      newTrack?: boolean;
+      blendService: string;
+      label?: string;
+      timeline?: string;
+      json?: boolean;
+    }) => {
+      const output = await printActionOutput(
+        "timeline.addComposition",
+        {
+          composition: { id: opts.composition, props: parseJson(opts.propsJson) },
+          position: opts.position,
+          durationFrames: opts.duration,
+          newTrack: opts.newTrack ?? false,
+          blendService: opts.blendService,
+          label: opts.label,
+          timeline: opts.timeline,
+        },
+        opts.json,
+      );
+      if (!opts.json) printJson(output);
+    },
+  );
+
+timeline
   .command("add-audio")
   .description(
     "Append an audio clip (music/voiceover) to an audio track, with optional gain and fades",
@@ -641,9 +688,14 @@ renderCommand
   .command("video <uri>")
   .description("Render a .mlt document to a video file")
   .requiredOption("--out <path>", "output video path")
+  .option("--repo <path>", "project repo path")
   .option("--json", "emit JSON")
-  .action(async (uri: string, opts: { out: string; json?: boolean }) => {
-    const output = await printActionOutput("render.video", { uri, out: opts.out }, opts.json);
+  .action(async (uri: string, opts: { out: string; repo?: string; json?: boolean }) => {
+    const output = await printActionOutput(
+      "render.video",
+      { uri, out: opts.out, repo: opts.repo },
+      opts.json,
+    );
     if (!opts.json) printJson(output);
   });
 
@@ -838,106 +890,6 @@ program
         );
         launchDev();
       }
-    },
-  );
-
-const remotionCommand = program
-  .command("remotion")
-  .description("Drive the Remotion producer (arm's-length subprocess)");
-
-remotionCommand
-  .command("render <composition>")
-  .description("Render a Remotion composition to an alpha ProRes 4444 clip (cached)")
-  .option("--props-json <json>", "composition props JSON", assertJson, "{}")
-  .option("--frames <start-end>", "inclusive frame range, e.g. 0-89")
-  .option("--out <path>", "output .mov path (default: cache path)")
-  .option("--profile <name>", "target profile for the cache fingerprint", "vertical")
-  .option("--repo <path>", "project repo path")
-  .option("--force", "bypass the render cache")
-  .option("--json", "emit JSON")
-  .action(
-    async (
-      composition: string,
-      opts: {
-        propsJson: string;
-        frames?: string;
-        out?: string;
-        profile: string;
-        repo?: string;
-        force?: boolean;
-        json?: boolean;
-      },
-    ) => {
-      let frameRange: [number, number] | undefined;
-      if (opts.frames) {
-        const m = /^(\d+)-(\d+)$/.exec(opts.frames.trim());
-        if (!m) throw new InvalidArgumentError("expected a frame range like 0-89");
-        frameRange = [Number.parseInt(m[1] as string, 10), Number.parseInt(m[2] as string, 10)];
-      }
-      const output = await printActionOutput(
-        "remotion.render",
-        {
-          composition,
-          props: parseJson(opts.propsJson),
-          frameRange,
-          out: opts.out,
-          profile: opts.profile,
-          repo: opts.repo,
-          force: opts.force ?? false,
-        },
-        opts.json,
-      );
-      if (!opts.json) printJson(output);
-    },
-  );
-
-remotionCommand
-  .command("rebake")
-  .description(
-    "Re-bake a Remotion overlay's alpha .mov from its composition, refreshing the render cache",
-  )
-  .option("--composition <id>", "composition id to re-bake (direct identity)")
-  .option("--clip-uuid <uuid>", "re-bake the in-timeline overlay clip with this uuid")
-  .option("--props-json <json>", "composition props JSON (overrides the clip's baked props)")
-  .option("--frames <start-end>", "inclusive frame range, e.g. 0-89")
-  .option("--out <path>", "output .mov path (default: cache path)")
-  .option("--profile <name>", "target profile for the cache fingerprint", "vertical")
-  .option("--timeline <uri-or-route>", "timeline path, file:// URI, or route alias (clip mode)")
-  .option("--repo <path>", "project repo path")
-  .option("--json", "emit JSON")
-  .action(
-    async (opts: {
-      composition?: string;
-      clipUuid?: string;
-      propsJson?: string;
-      frames?: string;
-      out?: string;
-      profile: string;
-      timeline?: string;
-      repo?: string;
-      json?: boolean;
-    }) => {
-      let frameRange: [number, number] | undefined;
-      if (opts.frames) {
-        const m = /^(\d+)-(\d+)$/.exec(opts.frames.trim());
-        if (!m) throw new InvalidArgumentError("expected a frame range like 0-89");
-        frameRange = [Number.parseInt(m[1] as string, 10), Number.parseInt(m[2] as string, 10)];
-      }
-      const output = await printActionOutput(
-        "graphic.rebake",
-        {
-          composition: opts.composition,
-          clipUuid: opts.clipUuid,
-          ...(opts.propsJson ? { props: parseJson(opts.propsJson) } : {}),
-          frameRange,
-          out: opts.out,
-          profile: opts.profile,
-          timeline: opts.timeline,
-          repo: opts.repo,
-        },
-        opts.json,
-      );
-      if (!opts.json) printJson(output);
     },
   );
 
