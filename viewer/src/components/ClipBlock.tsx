@@ -144,7 +144,7 @@ export function ClipBlock({
         cursor,
         touchAction: "none",
       }}
-      title={`${item.label ?? basename(item.resource)} · ${length}f · src[${item.in}-${item.out}]`}
+      title={`${item.composition ? `${item.composition.id} · comp` : (item.label ?? basename(item.resource))} · ${length}f · src[${item.in}-${item.out}]`}
     >
       <span
         style={{
@@ -156,7 +156,14 @@ export function ClipBlock({
         }}
       >
         {graphic ? <span style={{ marginRight: 4 }}>◆</span> : null}
-        {item.label ? item.label.split(":")[0] : basename(item.resource)}
+        {/* A live Remotion comp is a first-class entity — show its COMPOSITION id
+            (e.g. "EnterJourney"), not the cache `.mov` its resource points at (that
+            path is just the live-detection key + the export bake target). */}
+        {item.composition
+          ? item.composition.id
+          : item.label
+            ? item.label.split(":")[0]
+            : basename(item.resource)}
       </span>
 
       {/* Edge brackets — the explicit TRIM grab targets on the selected clip. */}
