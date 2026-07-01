@@ -10,8 +10,14 @@
 // Endpoints (all 127.0.0.1; JSON except the streamed media):
 //   GET  /api/health                      → { ok, version, repo, timeline? }
 //   GET  /api/timelines                   → { timelines: [...] }
-//   GET  /api/timeline?route=timeline:main→ parsed IR + { resolvedPath, fps, totalFrames }
+//   GET  /api/timeline?route=timeline:main→ parsed IR + { resolvedPath, fps, totalFrames };
+//                                            each footage clip is enriched with
+//                                            audioStreams/hasAudio from the ffprobe probe
 //   GET  /api/diagnostics?route=…         → { health, diagnostics }
+//   GET  /api/peaks?path=&route=&bins=    → { sampleRate, binFrames, bins, peaks:[min,max…] }
+//                                            downsampled audio waveform (ffmpeg, cached)
+//   GET  /api/transcript?route=&clipId=   → { words:[…], transcript } for the clip's source,
+//     (or &path=)                           or { words:[], transcript:null } when none exists
 //   POST /api/action {id,input?,project?}  → the whole action registry over local
 //                                            IPC (ActionEnvelope) — every product
 //                                            panel is action-backed, no per-feature endpoint
@@ -34,15 +40,20 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { dirname, extname, join, resolve } from "node:path";
 import { createActionContext, executeAction } from "../actions";
 import { collectDiagnostics, summarize } from "../diagnostics";
+import { probeSource } from "../driver/probe";
 import { collectProbeDiagnostics } from "../driver/probeDiagnostics";
 import { VERSION } from "../index";
 import { fromMlt } from "../ir/parse";
 import type { OpInvocation } from "../ops";
 import { listKnownProjects, resolveProject } from "../project/context";
 import type { ResolvedProject } from "../project/context";
+import { transcriptFromJobs } from "../query/transcript-read";
+import { TRANSCRIBE_JOB_KIND } from "../state/job-types";
+import { listJobsByKind } from "../state/jobs";
 import { findByOutPath, remotionCacheDir } from "../state/remotionCache";
 import { resolveTimelineTarget } from "../state/timeline";
 import { listTimelines } from "../state/timeline";
+import { extractPeaks } from "./peaks";
 import { buildFootageProxy, proxyCacheDir, totalFrames } from "./proxy";
 import {
   SessionStore,
@@ -257,6 +268,104 @@ function enrichWithComposition(
   }
 }
 
+/** True iff a clip `resource` is a real media FILE (not a `color`/synthetic
+ *  producer, whose resource is a hex/named color). Peaks/transcript/audioStreams
+ *  are file facts, so color producers are skipped (they have no source on disk). */
+function isFileResource(item: { kind: string; resource?: string; service?: string }): boolean {
+  if (item.kind !== "clip" || !item.resource) return false;
+  if (item.service === "color") return false;
+  // A color spec is a hex (#RRGGBB / #AARRGGBB) or a bare color word/number — never
+  // a path. Anything with a path separator or a media extension is a file.
+  if (/^#[0-9a-fA-F]+$/.test(item.resource)) return false;
+  return true;
+}
+
+/** Find a clip by stable id across all tracks and return it plus its absolute
+ *  resource path (resolved relative to the .mlt's own directory, mirroring
+ *  `enrichWithComposition`). Returns null when the id is unknown or the clip is a
+ *  synthetic (non-file) producer. Shared by /api/peaks and /api/transcript so both
+ *  address a clip by id the same way. */
+function findClipSource(
+  resolvedPath: string,
+  timeline: ReturnType<typeof fromMlt>,
+  clipId: string,
+): { absResource: string } | null {
+  const baseDir = dirname(resolvedPath);
+  for (const track of [...timeline.tracks.video, ...timeline.tracks.audio]) {
+    for (const item of track.items) {
+      if (item.kind !== "clip" || item.id !== clipId) continue;
+      if (!isFileResource(item)) return null;
+      return { absResource: resolve(baseDir, item.resource) };
+    }
+  }
+  return null;
+}
+
+/** The set of absolute source paths a document references, resolved against the
+ *  .mlt's OWN directory (the correct base for a root-relative clip resource — the
+ *  same base `enrichWithComposition`/`findClipSource` use). This is the allowlist
+ *  the peaks/transcript endpoints validate a `path=` request against; unlike the
+ *  cwd-relative `referencedResources`, it authorizes a relative resource by its
+ *  true on-disk path, not `<cwd>/<resource>`. An absolute resource resolves to
+ *  itself under either base, so this is a strict superset that never authorizes
+ *  anything the timeline doesn't point at. */
+function referencedResourcesForDoc(
+  resolvedPath: string,
+  timeline: ReturnType<typeof fromMlt>,
+): Set<string> {
+  const baseDir = dirname(resolvedPath);
+  const out = new Set<string>();
+  for (const track of [...timeline.tracks.video, ...timeline.tracks.audio]) {
+    for (const item of track.items) {
+      if (item.kind === "clip") out.add(resolve(baseDir, item.resource));
+    }
+  }
+  return out;
+}
+
+/** The wire-only audio facts we surface per clip on `/api/timeline`: the source's
+ *  audio-stream count and a derived `hasAudio` boolean. Sourced from the ffprobe
+ *  probe (`src/driver/probe.ts`), the SAME fact the media catalog persists. Absent
+ *  probe (missing file / ffprobe / no streams) ⇒ the fields are OMITTED — never
+ *  guessed. This mutates only the parsed wire IR the endpoint returns; it never
+ *  touches the canonical .mlt or the IR schema (determinism is unaffected — the
+ *  serializer never sees these fields). */
+async function enrichWithAudioStreams(
+  resolvedPath: string,
+  timeline: ReturnType<typeof fromMlt>,
+): Promise<void> {
+  const baseDir = dirname(resolvedPath);
+  // Probe each DISTINCT source once (probeSource is in-process cached, but dedupe
+  // the await fan-out too so a timeline reusing one source doesn't spawn N probes).
+  const byPath = new Map<string, Promise<number | null>>();
+  const probeAudio = (abs: string): Promise<number | null> => {
+    let p = byPath.get(abs);
+    if (!p) {
+      p = probeSource(abs).then((probe) => probe?.audioStreams ?? null);
+      byPath.set(abs, p);
+    }
+    return p;
+  };
+  const pending: Promise<void>[] = [];
+  for (const track of [...timeline.tracks.video, ...timeline.tracks.audio]) {
+    for (const item of track.items) {
+      if (item.kind !== "clip" || !isFileResource(item)) continue;
+      const clip = item as typeof item & { audioStreams?: number; hasAudio?: boolean };
+      const abs = resolve(baseDir, clip.resource);
+      pending.push(
+        probeAudio(abs).then((count) => {
+          // Absent probe (null) ⇒ omit both fields; present ⇒ surface the count +
+          // the derived boolean (≥1 stream = carries audio).
+          if (count == null) return;
+          clip.audioStreams = count;
+          clip.hasAudio = count > 0;
+        }),
+      );
+    }
+  }
+  await Promise.all(pending);
+}
+
 /** Read a timeline route to its parsed IR + frame/fps metadata, or a typed error
  *  response. Shared by /api/timeline and /api/proxy-render. */
 function readTimeline(
@@ -373,6 +482,16 @@ export function createPreviewHandler(
       // Read-adapter enrichment: recover Remotion-overlay identity for baked
       // overlays placed without `vean:composition` metadata, in the wire IR only.
       enrichWithComposition(repo, resolvedPath, timeline);
+      // Surface each footage clip's source audio-stream count + a derived hasAudio
+      // (from the ffprobe probe) on the wire IR — the timeline's linked-audio lane
+      // needs to know which clips carry embedded audio. Wire-only; the .mlt and the
+      // IR schema are untouched. A probe failure degrades to omitting the fields (a
+      // clip without a probe simply carries no audioStreams), never blocking the read.
+      try {
+        await enrichWithAudioStreams(resolvedPath, timeline);
+      } catch {
+        // ffprobe unavailable / unreadable source → no audio facts, still serve.
+      }
       return jsonResponse({
         ok: true,
         resolvedPath,
@@ -636,6 +755,138 @@ export function createPreviewHandler(
       } catch (error) {
         return jsonResponse(
           { ok: false, kind: "source-proxy", detail: String((error as Error)?.message ?? error) },
+          500,
+        );
+      }
+    }
+
+    // ── Audio peaks (the waveform lane; DESIGN-UI Phase 3b) ─────────────────
+    // GET /api/peaks?clipId=<id>&route=<r>&bins=<n>   (or &path=<abs>)  → downsampled
+    // [min,max] peaks for a SOURCE clip's audio, extracted once (cached under
+    // .vean/cache/peaks) with ffmpeg. This is what the timeline's waveform lane
+    // draws. `bins` is the target bucket count (size it to the on-screen clip width).
+    //
+    // A `clipId` resolves the source through the live IR (the robust address — it
+    // handles a root-relative resource correctly, resolving against the .mlt dir). A
+    // raw `path` is validated against the route's referenced-resource allowlist
+    // (same guard as /api/media, resolved against the .mlt dir): a request may only
+    // extract peaks for a file the LIVE timeline references — never an arbitrary
+    // disk path. A source with no audio stream yields `{ bins:0, peaks:[] }`, never
+    // a faked waveform.
+    if (path === "/api/peaks") {
+      const route = url.searchParams.get("route") ?? defaultRoute ?? undefined;
+      const got = getSession(sessions, repo, route);
+      if ("error" in got) return got.error;
+      const clipId = url.searchParams.get("clipId");
+      const requested = url.searchParams.get("path");
+      if (!clipId && !requested) {
+        return jsonResponse(
+          { ok: false, kind: "invalid-args", detail: "clipId or path is required" },
+          400,
+        );
+      }
+      let sourcePath: string;
+      if (clipId) {
+        const src = findClipSource(got.session.uri, got.session.ir, clipId);
+        if (!src) {
+          // Unknown clip / synthetic (non-file) producer → no audio waveform.
+          return jsonResponse({
+            ok: true,
+            clipId,
+            sampleRate: 0,
+            binFrames: 0,
+            bins: 0,
+            peaks: [],
+          });
+        }
+        sourcePath = src.absResource;
+      } else {
+        const allow = referencedResourcesForDoc(got.session.uri, got.session.ir);
+        const resolvedReq = resolve(requested as string);
+        if (!allow.has(resolvedReq)) {
+          return jsonResponse(
+            { ok: false, kind: "forbidden", detail: "path is not referenced by this timeline" },
+            403,
+          );
+        }
+        sourcePath = resolvedReq;
+      }
+      const binsRaw = url.searchParams.get("bins");
+      const bins = binsRaw != null && Number.isFinite(Number(binsRaw)) ? Number(binsRaw) : 1000;
+      try {
+        const peaks = await extractPeaks(repo, sourcePath, { bins });
+        return jsonResponse({ ok: true, ...(clipId ? { clipId } : {}), ...peaks });
+      } catch (error) {
+        return jsonResponse(
+          { ok: false, kind: "peaks", detail: String((error as Error)?.message ?? error) },
+          500,
+        );
+      }
+    }
+
+    // ── Transcript read (the transcript peek; DESIGN-UI Phase 3b) ────────────
+    // GET /api/transcript?route=<r>&clipId=<id>   (or &path=<abs>)  → the frame-
+    // exact server-side Transcript (words + timings) for that clip's SOURCE, or
+    // `{ words: [] }` when none exists. Transcripts live as completed `transcribe`
+    // job rows keyed by source path; absent (never transcribed) ⇒ empty — NEVER
+    // fabricated. Same route-scoped allowlist as /api/media.
+    if (path === "/api/transcript") {
+      const route = url.searchParams.get("route") ?? defaultRoute ?? undefined;
+      const got = getSession(sessions, repo, route);
+      if ("error" in got) return got.error;
+      const clipId = url.searchParams.get("clipId");
+      const requested = url.searchParams.get("path");
+      if (!clipId && !requested) {
+        return jsonResponse(
+          { ok: false, kind: "invalid-args", detail: "clipId or path is required" },
+          400,
+        );
+      }
+      // Resolve the source path: a clipId is looked up in the live IR (and returns
+      // the clip's absolute resource); a raw path is validated against the allowlist.
+      let sourcePath: string;
+      if (clipId) {
+        const src = findClipSource(got.session.uri, got.session.ir, clipId);
+        if (!src) {
+          // Unknown clip / synthetic (non-file) producer → no transcript possible.
+          return jsonResponse({ ok: true, clipId, words: [], transcript: null });
+        }
+        sourcePath = src.absResource;
+      } else {
+        const allow = referencedResourcesForDoc(got.session.uri, got.session.ir);
+        const resolvedReq = resolve(requested as string);
+        if (!allow.has(resolvedReq)) {
+          return jsonResponse(
+            { ok: false, kind: "forbidden", detail: "path is not referenced by this timeline" },
+            403,
+          );
+        }
+        sourcePath = resolvedReq;
+      }
+      try {
+        const fps = got.session.ir.profile.fps;
+        const jobs = listJobsByKind(repo, TRANSCRIBE_JOB_KIND).map((j) => ({
+          kind: j.kind,
+          status: j.status,
+          payloadJson: j.payloadJson,
+          resultJson: j.resultJson,
+          finishedAt: j.finishedAt,
+          createdAt: j.createdAt,
+        }));
+        const transcript = transcriptFromJobs(jobs, sourcePath, fps);
+        // `words` is the flat word stream (the peek's minimal consumable); the full
+        // `transcript` (segments + stable ids) is included for a richer read. Absent
+        // ⇒ `{ words: [], transcript: null }` — the never-faked empty case.
+        const words = transcript ? transcript.segments.flatMap((s) => s.words) : [];
+        return jsonResponse({
+          ok: true,
+          ...(clipId ? { clipId } : { path: sourcePath }),
+          words,
+          transcript,
+        });
+      } catch (error) {
+        return jsonResponse(
+          { ok: false, kind: "transcript", detail: String((error as Error)?.message ?? error) },
           500,
         );
       }

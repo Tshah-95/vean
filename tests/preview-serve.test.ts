@@ -91,6 +91,32 @@ describe("preview server read endpoints (via bun probe)", () => {
     expect(out.diagnostics.status).toBe(200);
     expect(out.diagnostics.ok).toBe(true);
 
+    // ── Phase-3b: audioStreams on the timeline, /api/peaks, /api/transcript ──
+    // The tone.wav audio clip carries the probed audio-stream count + hasAudio;
+    // a color (synthetic, non-file) clip carries neither field (never guessed).
+    expect(out.timeline.audioClipHasAudio).toBe(true);
+    expect(out.timeline.audioClipStreams).toBeGreaterThanOrEqual(1);
+    expect(out.timeline.colorClipHasAudioKey).toBe(false);
+
+    // Peaks: a real 4s WAV → a non-empty [min,max] waveform of the requested bins.
+    expect(out.peaks.status).toBe(200);
+    expect(out.peaks.ok).toBe(true);
+    expect(out.peaks.bins).toBe(64);
+    expect(out.peaks.pairCount).toBe(128); // 2 floats (min,max) per bin
+    expect(out.peaks.sampleRate).toBeGreaterThan(0);
+    // The route-scoped allowlist rejects an arbitrary disk path (mirrors /api/media).
+    expect(out.peaks.forbiddenStatus).toBe(403);
+
+    // Transcript: the seeded DONE transcribe job for tone.wav → real words + stable
+    // ids; a color clip (non-file) → the never-faked empty case.
+    expect(out.transcript.status).toBe(200);
+    expect(out.transcript.ok).toBe(true);
+    expect(out.transcript.wordCount).toBe(2);
+    expect(out.transcript.firstWord).toBe("tone");
+    expect(out.transcript.hasStableIds).toBe(true);
+    expect(out.transcript.emptyWordCount).toBe(0);
+    expect(out.transcript.emptyTranscriptNull).toBe(true);
+
     expect(out.badEndpointStatus).toBe(404);
 
     // Cross-origin isolation (DESIGN-LIVE-PREVIEW §8.5): the HTML document must
