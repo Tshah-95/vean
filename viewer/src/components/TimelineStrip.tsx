@@ -661,6 +661,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
               drag={drag}
               onClipPointerDown={onClipPointerDown}
               onBackgroundPointerDown={onLaneBackgroundPointerDown}
+              route={editor.route}
             />
           ))}
           {timeline.tracks.audio.map((track) => (
@@ -673,6 +674,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
               drag={drag}
               onClipPointerDown={onClipPointerDown}
               onBackgroundPointerDown={onLaneBackgroundPointerDown}
+              route={editor.route}
             />
           ))}
 
@@ -736,6 +738,8 @@ interface TrackLaneProps {
   drag: DragState | null;
   onClipPointerDown: (e: React.PointerEvent, placed: PlacedItem, track: Track) => void;
   onBackgroundPointerDown: () => void;
+  /** Active route — passed to ClipBlock so audio clips can fetch their waveform. */
+  route?: string;
 }
 
 function TrackLane({
@@ -746,6 +750,7 @@ function TrackLane({
   drag,
   onClipPointerDown,
   onBackgroundPointerDown,
+  route,
 }: TrackLaneProps) {
   const placed = placeItems(track);
   const label = track.name ?? track.id;
@@ -810,6 +815,7 @@ function TrackLane({
               readout={readout}
               dragging={isMoveSource}
               cursor={isClip ? "grab" : "default"}
+              route={route}
               {...(isClip
                 ? {
                     onPointerDown: (e: React.PointerEvent) => {

@@ -8,6 +8,7 @@
 // stay inert (no selection, no gesture).
 import type { Diagnostic, PlacedItem } from "../types";
 import { isGraphicClip, isRemotionOverlay } from "../types";
+import { Waveform } from "./Waveform";
 
 export interface ClipBlockProps {
   placed: PlacedItem;
@@ -28,6 +29,8 @@ export interface ClipBlockProps {
   onPointerDown?: (e: React.PointerEvent) => void;
   /** The hover cursor (the lane sets it per zone via pointer-move; default grab). */
   cursor?: string;
+  /** Active timeline route — scopes the /api/peaks fetch for the audio waveform. */
+  route?: string;
 }
 
 function basename(resource: string): string {
@@ -47,6 +50,7 @@ export function ClipBlock({
   ghost = false,
   onPointerDown,
   cursor = "grab",
+  route,
 }: ClipBlockProps) {
   const { item, start, length } = placed;
   const left = start * pxPerFrame;
@@ -146,8 +150,10 @@ export function ClipBlock({
       }}
       title={`${item.label ?? basename(item.resource)} · ${length}f · src[${item.in}-${item.out}]`}
     >
+      {kind === "audio" && !ghost ? <Waveform clipId={item.id} route={route} /> : null}
       <span
         style={{
+          position: "relative",
           overflow: "hidden",
           textOverflow: "ellipsis",
           // leave room for the edge brackets so the label never sits under them
