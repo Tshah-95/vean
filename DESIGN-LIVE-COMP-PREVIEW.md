@@ -197,12 +197,18 @@ matching the repo's verification philosophy.
   (= 60 − 45); DOM text switches accordingly. Regressions green: verify:live-comp / -overlay / -hmr all
   still pass through the refactored per-frame path. 1367 unit tests, viewer typecheck + build clean.
 
-### P1b — Fault isolation + async / per-project comp roots (from the P0+P2 review)  ·  medium  ·  NEXT
-- **Eager glob → total blast radius** (review finding #1): one syntax-error comp blanks the WHOLE viewer
-  (build fails / Vite error overlay), not just that comp. For an agent-native editor where agents author
-  comps, isolate the fault — move to `import.meta.glob(..., { eager: false })` + `lazyComponent` /
-  Suspense + a per-comp **error boundary** so a broken comp degrades to a typed error overlay, not a
-  crash (the design's original "async load lifecycle" + the P1 gate's second half).
+### P1b — Fault isolation (from the P0+P2 review)  ·  🟡 PARTIAL (runtime boundary shipped)
+- **Runtime errors — ✅ SHIPPED.** A comp that throws DURING RENDER (a bad hook, an undefined access — a
+  plausible agent mistake) no longer white-screens the editor: `viewer/src/components/
+  OverlayErrorBoundary.tsx` wraps the live Player, catches the throw, hides the overlay (the footage keeps
+  rendering underneath), logs it, and exposes it on `window.__veanOverlayError` (comp id + message).
+  Switching to a different comp clears the error (recovers the layer).
+- **Import errors — REMAINING (lazy glob).** A BUILD/syntax error in a comp still fails the WHOLE eager
+  glob (Vite dev error overlay / a hard build fail), not just that comp — because `eager: true` imports
+  every comp at module load. Per-comp IMPORT isolation needs `import.meta.glob(..., { eager: false })` +
+  `lazyComponent`/Suspense (the design's original "async load lifecycle"). Deferred with intent: the dev
+  error overlay is loud + fixable, and the async refactor carries real regression risk to the freshly-gated
+  sync path — worth doing when comp count / untrusted authorship grows.
 - **Per-project comp roots** (§2.3): the dev viewer's `@remotion-comp` alias resolves the *current*
   repo's comp dir (works today for a vean-repo project — the dogfood; needed when previewing an external
   project). Deferred, documented.
