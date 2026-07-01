@@ -8,12 +8,14 @@
 // bottom (setup, not the everyday flow).
 import { LayoutGrid, List } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { fetchTimeline, mediaUrl, runAction } from "../../api";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { cn } from "@/lib/utils";
+import { fetchTimeline, mediaUrl, runAction } from "../../api";
 import { MEDIA_DRAG_MIME, type MediaDragPayload, type SourceMedia, useSource } from "../../SourceProvider";
 import type { Fps } from "../../types";
-import { C, Note, fieldStyle, mono, rowStyle } from "./ui";
+import { Note, rowClass, SectionEyebrow } from "./ui";
 
 interface MediaAsset {
   id: string;
@@ -54,12 +56,13 @@ function sourceKind(kind: string): SourceMedia["kind"] {
   return kind === "audio" ? "audio" : "video";
 }
 
-const kindColor: Record<string, string> = {
-  video: "#6f86a8",
-  audio: "#57b98a",
-  graphic: "#a98fd6",
-  image: "#e0b15e",
-  unknown: "#6b7280",
+/** Kind dot — the track-hue family, from the token layer. */
+const kindDotClass: Record<string, string> = {
+  video: "bg-track-video",
+  audio: "bg-track-audio",
+  graphic: "bg-track-graphic",
+  image: "bg-amber",
+  unknown: "bg-fg-3",
 };
 
 /** A hover-to-play bin tile. Click → source monitor; drag → timeline. */
@@ -101,18 +104,9 @@ function BinTile({
         e.dataTransfer.setData(MEDIA_DRAG_MIME, JSON.stringify(payload));
         e.dataTransfer.effectAllowed = "copy";
       }}
-      style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0, cursor: "pointer" }}
+      className="flex min-w-0 cursor-pointer flex-col gap-1"
     >
-      <div
-        style={{
-          position: "relative",
-          aspectRatio: "16/9",
-          borderRadius: 5,
-          overflow: "hidden",
-          background: "#0a0c0e",
-          border: `1px solid ${C.border}`,
-        }}
-      >
+      <div className="relative aspect-video overflow-hidden rounded-md border border-border bg-inset">
         {/* biome-ignore lint/a11y/useMediaCaption: silent hover preview */}
         <video
           src={mediaUrl(asset.path, route)}
@@ -126,39 +120,18 @@ function BinTile({
             e.currentTarget.pause();
             e.currentTarget.currentTime = 0;
           }}
-          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+          className="block h-full w-full object-cover"
         />
         {placed ? (
           <span
             title="placed on the timeline"
-            style={{
-              position: "absolute",
-              right: 4,
-              top: 4,
-              width: 6,
-              height: 6,
-              borderRadius: "50%",
-              background: "#c7ae7a",
-            }}
+            className="absolute right-1 top-1 size-1.5 rounded-full bg-primary"
           />
         ) : null}
       </div>
-      <div style={{ display: "flex", gap: 6, alignItems: "baseline", minWidth: 0 }}>
-        <span
-          style={{
-            flex: 1,
-            fontSize: 11,
-            color: C.text,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {name}
-        </span>
-        <span style={{ fontSize: 10, color: C.dim, fontFamily: mono, flexShrink: 0 }}>
-          {fmtBytes(asset.sizeBytes)}
-        </span>
+      <div className="flex min-w-0 items-baseline gap-1.5">
+        <span className="flex-1 truncate text-[11px] text-foreground">{name}</span>
+        <span className="shrink-0 font-mono text-[10px] text-fg-3">{fmtBytes(asset.sizeBytes)}</span>
       </div>
     </div>
   );
@@ -284,57 +257,30 @@ export function MediaPanel({ project, route }: { project?: string; route?: strin
     // biome-ignore lint/a11y/useKeyWithClickEvents: pointer affordance
     <div
       key={a.id}
-      style={{ ...rowStyle(i), cursor: "pointer" }}
+      className={cn(rowClass(i), "cursor-pointer")}
       title={`${a.path}\nclick → source monitor`}
       onClick={() => selectAsset(a)}
     >
-      <span
-        style={{
-          width: 8,
-          height: 8,
-          borderRadius: 2,
-          background: kindColor[a.kind] ?? kindColor.unknown,
-          flexShrink: 0,
-        }}
-      />
-      <span
-        style={{
-          flex: 1,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {basename(a.relativePath || a.path)}
-      </span>
+      <span className={cn("size-2 shrink-0 rounded-sm", kindDotClass[a.kind] ?? kindDotClass.unknown)} />
+      <span className="flex-1 truncate">{basename(a.relativePath || a.path)}</span>
       {placedPaths.has(a.path) ? (
-        <span
-          title="placed on the timeline"
-          style={{ width: 6, height: 6, borderRadius: "50%", background: "#c7ae7a", flexShrink: 0 }}
-        />
+        <span title="placed on the timeline" className="size-1.5 shrink-0 rounded-full bg-primary" />
       ) : null}
-      <span style={{ color: C.dim, flexShrink: 0, fontFamily: mono, fontSize: 10 }}>
-        {fmtBytes(a.sizeBytes)}
-      </span>
+      <span className="shrink-0 font-mono text-[10px] text-fg-3">{fmtBytes(a.sizeBytes)}</span>
     </div>
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+    <div className="flex h-full flex-col">
       {/* Search + view toggle. */}
       <form
         onSubmit={(e) => {
           e.preventDefault();
           void find();
         }}
-        style={{ padding: "8px 10px", display: "flex", gap: 6, alignItems: "center", borderBottom: `1px solid ${C.border}` }}
+        className="flex items-center gap-1.5 border-b border-border px-2.5 py-2"
       >
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Find media…"
-          style={fieldStyle}
-        />
+        <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find media…" />
         <ToggleGroup type="single" value={view} onValueChange={(v) => v && setViewPersist(v as ViewMode)}>
           <ToggleGroupItem value="tiles" aria-label="Tile view" title="Tile view">
             <LayoutGrid size={13} strokeWidth={1.75} />
@@ -346,15 +292,20 @@ export function MediaPanel({ project, route }: { project?: string; route?: strin
       </form>
       {err && <Note kind="error">{err}</Note>}
 
-      <div style={{ flex: 1, overflow: "auto" }}>
+      <div className="flex-1 overflow-auto">
         {results ? (
           <>
-            <div style={sectionEyebrow}>
+            <SectionEyebrow>
               RESULTS · {results.length}
-              <button type="button" onClick={() => setResults(null)} style={clearBtn} title="Back to the bin">
+              <button
+                type="button"
+                onClick={() => setResults(null)}
+                className="ml-auto cursor-pointer text-[10px] text-fg-3 hover:text-foreground"
+                title="Back to the bin"
+              >
                 ✕
               </button>
-            </div>
+            </SectionEyebrow>
             {results.length === 0 && !busy ? <Note kind="dim">No matches.</Note> : null}
             {results.map(Row)}
           </>
@@ -363,12 +314,12 @@ export function MediaPanel({ project, route }: { project?: string; route?: strin
         ) : (
           groups.map(([group, arr]) => (
             <div key={group}>
-              <div style={sectionEyebrow}>
+              <SectionEyebrow>
                 {group.toUpperCase()} · {arr.length}
-              </div>
+              </SectionEyebrow>
               {view === "tiles" ? (
                 <>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, padding: "6px 10px 8px" }}>
+                  <div className="grid grid-cols-2 gap-2 px-2.5 pb-2 pt-1.5">
                     {arr
                       .filter((a) => a.kind !== "audio")
                       .map((a) => (
@@ -393,13 +344,8 @@ export function MediaPanel({ project, route }: { project?: string; route?: strin
       </div>
 
       {/* Catalog setup — tucked away. */}
-      <div style={{ padding: "8px 10px", display: "flex", gap: 6, borderTop: `1px solid ${C.border}` }}>
-        <input
-          value={newRoot}
-          onChange={(e) => setNewRoot(e.target.value)}
-          placeholder="/path/to/media"
-          style={fieldStyle}
-        />
+      <div className="flex gap-1.5 border-t border-border px-2.5 py-2">
+        <Input value={newRoot} onChange={(e) => setNewRoot(e.target.value)} placeholder="/path/to/media" />
         <Button size="sm" variant="outline" onClick={addRoot} disabled={busy || !newRoot.trim()}>
           Add root
         </Button>
@@ -410,24 +356,3 @@ export function MediaPanel({ project, route }: { project?: string; route?: strin
     </div>
   );
 }
-
-const sectionEyebrow: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 6,
-  padding: "8px 10px 2px",
-  fontSize: 10,
-  letterSpacing: "0.14em",
-  color: C.dim,
-  fontFamily: mono,
-};
-
-const clearBtn: React.CSSProperties = {
-  marginLeft: "auto",
-  border: "none",
-  background: "transparent",
-  color: C.dim,
-  cursor: "pointer",
-  fontSize: 10,
-  padding: 0,
-};

@@ -3,9 +3,10 @@
 // inline. Both are produced by melt; the server caches them under .vean/cache/render
 // and streams them back Range-capably so <img>/<video> just work.
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
 import { renderStill, renderVideo } from "../../api";
 import { useClockInstance } from "../../ClockProvider";
-import { Btn, C, Note, PanelHead } from "./ui";
+import { Note, PanelHead } from "./ui";
 
 export function RenderPanel({ route }: { route?: string }) {
   const clock = useClockInstance();
@@ -42,20 +43,18 @@ export function RenderPanel({ route }: { route?: string }) {
     }
   };
 
-  const artStyle = { width: "100%", borderRadius: 6, border: `1px solid ${C.border}`, display: "block" } as const;
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+    <div className="flex h-full flex-col">
       <PanelHead title="Render">
-        <Btn onClick={doStill} disabled={busy !== null}>
+        <Button size="sm" variant="outline" onClick={doStill} disabled={busy !== null}>
           {busy === "still" ? "Rendering…" : "Still @ playhead"}
-        </Btn>
-        <Btn onClick={doVideo} disabled={busy !== null}>
+        </Button>
+        <Button size="sm" variant="outline" onClick={doVideo} disabled={busy !== null}>
           {busy === "video" ? "Rendering…" : "Export MP4"}
-        </Btn>
+        </Button>
       </PanelHead>
       {err && <Note kind="error">{err}</Note>}
-      <div style={{ flex: 1, overflow: "auto", padding: 10, display: "flex", flexDirection: "column", gap: 14 }}>
+      <div className="flex flex-1 flex-col gap-3.5 overflow-auto p-2.5">
         {!stillUrl && !videoUrl && !err && (
           <Note kind="dim">
             Render a still at the playhead, or export the full MP4. Artifacts are produced by melt
@@ -64,15 +63,15 @@ export function RenderPanel({ route }: { route?: string }) {
         )}
         {stillUrl && (
           <div>
-            <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>Still</div>
-            <img src={stillUrl} alt="rendered still" style={artStyle} />
+            <div className="mb-1.5 text-[11px] text-muted-foreground">Still</div>
+            <img src={stillUrl} alt="rendered still" className="block w-full rounded-md border border-border" />
           </div>
         )}
         {videoUrl && (
           <div>
-            <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>MP4 export</div>
+            <div className="mb-1.5 text-[11px] text-muted-foreground">MP4 export</div>
             {/* biome-ignore lint/a11y/useMediaCaption: local render preview, no caption track */}
-            <video src={videoUrl} controls style={artStyle} />
+            <video src={videoUrl} controls className="block w-full rounded-md border border-border" />
           </div>
         )}
       </div>

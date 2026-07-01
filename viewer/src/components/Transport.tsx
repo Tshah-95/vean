@@ -100,17 +100,7 @@ export function Transport({
   const audioOff = muted || volume === 0;
 
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "1fr auto 1fr",
-        alignItems: "center",
-        padding: "6px 14px",
-        borderTop: "1px solid #1b1e26",
-        borderBottom: "1px solid #1b1e26",
-        background: "#0d0f14",
-      }}
-    >
+    <div className="grid grid-cols-[1fr_auto_1fr] items-center border-y border-border-faint bg-header px-3.5 py-1.5">
       {/* left: where we are */}
       <div className="justify-self-start font-mono text-[13px] text-foreground">
         {timecode(clock.currentFrame, clock.fps)}

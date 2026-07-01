@@ -1,11 +1,11 @@
 // Checks panel — the ambient diagnostic set for the active timeline, listed. This
-// is the content-rail fill for the "Checks" destination (vean's "type errors for
-// video" surface). Read-only for now; deterministic fixes / jump-to-clip come with
-// the LSP code-action wiring. Inline-styled to match sibling panels (Phase 4
-// tokenizes them together).
+// is the content fill for the "Checks" drawer tab (vean's "type errors for video"
+// surface). Read-only for now; deterministic fixes / jump-to-clip come with the
+// LSP code-action wiring.
 import { useEffect, useState } from "react";
+import { cn } from "@/lib/utils";
 import { fetchDiagnostics } from "../../api";
-import { C, mono, Note, PanelHead } from "./ui";
+import { Note, PanelHead } from "./ui";
 
 interface Diag {
   code: string;
@@ -15,11 +15,11 @@ interface Diag {
   fix?: string;
 }
 
-const sevColor: Record<string, string> = {
-  error: C.danger,
-  warning: "#e2c275",
-  info: C.muted,
-  hint: C.dim,
+const sevClass: Record<string, string> = {
+  error: "bg-red",
+  warning: "bg-amber",
+  info: "bg-fg-2",
+  hint: "bg-fg-3",
 };
 
 export function ChecksPanel({ route }: { route?: string }) {
@@ -52,28 +52,13 @@ export function ChecksPanel({ route }: { route?: string }) {
         <Note kind="dim">No diagnostics — the timeline is clean.</Note>
       ) : null}
       {items.map((d, i) => (
-        <div
-          key={`${d.code}-${i}`}
-          style={{
-            display: "flex",
-            gap: 8,
-            padding: "7px 10px",
-            borderBottom: `1px solid ${C.border}22`,
-          }}
-        >
+        <div key={`${d.code}-${i}`} className="flex gap-2 border-b border-border-faint px-2.5 py-[7px]">
           <span
-            style={{
-              marginTop: 4,
-              flexShrink: 0,
-              width: 7,
-              height: 7,
-              borderRadius: "50%",
-              background: sevColor[d.severity] ?? C.dim,
-            }}
+            className={cn("mt-1 size-[7px] shrink-0 rounded-full", sevClass[d.severity] ?? "bg-fg-3")}
           />
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 11, color: C.text, lineHeight: 1.45 }}>{d.message}</div>
-            <div style={{ fontSize: 10, color: C.dim, fontFamily: mono, marginTop: 2 }}>{d.code}</div>
+          <div className="min-w-0">
+            <div className="text-[11px] leading-relaxed text-foreground">{d.message}</div>
+            <div className="mt-0.5 font-mono text-[10px] text-fg-3">{d.code}</div>
           </div>
         </div>
       ))}

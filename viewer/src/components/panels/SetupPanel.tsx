@@ -4,8 +4,11 @@
 // route through the same actions the CLI `vean doctor` / `project init` /
 // `media root add` call — no duplicated logic.
 import { useCallback, useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 import { runAction } from "../../api";
-import { Btn, C, Note, PanelHead, fieldStyle, mono } from "./ui";
+import { Note, PanelHead } from "./ui";
 
 interface DoctorCheck {
   name: string;
@@ -17,10 +20,10 @@ interface DoctorReport {
   checks: DoctorCheck[];
 }
 
-const statusColor: Record<string, string> = {
-  pass: "#5ec98a",
-  warn: "#e0b15e",
-  fail: "#e0857f",
+const statusClass: Record<string, string> = {
+  pass: "bg-track-audio",
+  warn: "bg-amber",
+  fail: "bg-red",
 };
 
 export function SetupPanel({ project }: { project?: string }) {
@@ -84,77 +87,41 @@ export function SetupPanel({ project }: { project?: string }) {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+    <div className="flex h-full flex-col">
       <PanelHead title={report ? `Setup · ${report.ok ? "ready" : "needs attention"}` : "Setup"}>
-        <Btn onClick={() => void check()} disabled={busy}>
+        <Button size="sm" variant="outline" onClick={() => void check()} disabled={busy}>
           {busy ? "Checking…" : "Re-check"}
-        </Btn>
+        </Button>
       </PanelHead>
       {err && <Note kind="error">{err}</Note>}
       {msg && <Note kind="dim">{msg}</Note>}
-      <div style={{ flex: 1, overflow: "auto" }}>
+      <div className="flex-1 overflow-auto">
         {!report && !err && <Note kind="dim">Running setup checks…</Note>}
         {report?.checks.map((c) => (
-          <div
-            key={c.name}
-            style={{
-              display: "flex",
-              gap: 8,
-              padding: "5px 10px",
-              fontSize: 11,
-              borderBottom: `1px solid ${C.border}22`,
-            }}
-          >
-            <span
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: 8,
-                background: statusColor[c.status] ?? C.dim,
-                flexShrink: 0,
-                marginTop: 3,
-              }}
-            />
-            <div style={{ minWidth: 0 }}>
-              <div style={{ color: C.text }}>{c.name}</div>
-              <div
-                style={{
-                  color: C.dim,
-                  fontFamily: mono,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-                title={c.detail}
-              >
+          <div key={c.name} className="flex gap-2 border-b border-border-faint px-2.5 py-[5px] text-[11px]">
+            <span className={cn("mt-[3px] size-2 shrink-0 rounded-full", statusClass[c.status] ?? "bg-fg-3")} />
+            <div className="min-w-0">
+              <div className="text-foreground">{c.name}</div>
+              <div className="truncate font-mono text-fg-3" title={c.detail}>
                 {c.detail}
               </div>
             </div>
           </div>
         ))}
       </div>
-      <div
-        style={{
-          borderTop: `1px solid ${C.border}`,
-          padding: "8px 10px",
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
-        }}
-      >
-        <Btn onClick={initProject} disabled={busy}>
+      <div className="flex flex-col gap-2 border-t border-border px-2.5 py-2">
+        <Button size="sm" variant="outline" onClick={initProject} disabled={busy}>
           Initialize project (.vean)
-        </Btn>
-        <div style={{ display: "flex", gap: 6 }}>
-          <input
+        </Button>
+        <div className="flex gap-1.5">
+          <Input
             value={newRoot}
             onChange={(e) => setNewRoot(e.target.value)}
             placeholder="/path/to/media"
-            style={fieldStyle}
           />
-          <Btn onClick={addRoot} disabled={busy || !newRoot.trim()}>
+          <Button size="sm" variant="outline" onClick={addRoot} disabled={busy || !newRoot.trim()}>
             Add root
-          </Btn>
+          </Button>
         </div>
       </div>
     </div>

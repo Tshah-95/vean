@@ -298,6 +298,17 @@ not per surface. *Sources: Shotcut `src/commands/timelinecommands.cpp`,
 
 ## Invariants (don't regress)
 
+- **Component discipline (the shadcn contract).** Every CONTROL — button, input,
+  slider, menu, tabs, badge, toggle — is a shadcn/Radix primitive from
+  `viewer/src/components/ui/`, styled by the token layer. No hand-rolled
+  control, ever. Bespoke SURFACES (the timeline lanes/clips/ruler/playhead, the
+  monitor, the source range bar) are legitimately custom — but they draw every
+  color from `tokens.css` (`var(--vean-…)` / token classes): **zero hex literals
+  outside tokens.css** (`grep -rE '#[0-9a-fA-F]{6}' viewer/src --include='*.tsx'
+  --include='*.ts' | grep -v tokens.css` must return nothing). Translucencies are
+  `color-mix(in srgb, var(--vean-…) N%, transparent)`, not baked rgba of a hex.
+  New primitives are added to `ui/` (Carlo-shaped), never inlined per feature.
+
 - **The timeline gesture algebra and the dual compositor are untouched by the
   reskin** — Phases only re-dress them. A UI change that alters edit behavior is
   out of scope for this doc (that's `DESIGN-MOVE*`/`src/ops`).

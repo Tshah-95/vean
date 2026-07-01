@@ -2,34 +2,14 @@
 // route, the resolution / fps / diagnostics badges, and the Settings + Export
 // actions. Restyled onto tokens.
 import { Settings } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import type { ProjectEntry } from "../../api";
 import type { Fps } from "../../types";
 
 function fpsLabel(fps: Fps): string {
   const ratio = fps[0] / fps[1];
   return Number.isInteger(ratio) ? String(ratio) : ratio.toFixed(2);
-}
-
-function Badge({
-  children,
-  tone = "neutral",
-}: {
-  children: React.ReactNode;
-  tone?: "neutral" | "ok" | "warn" | "error";
-}) {
-  const toneClass =
-    tone === "error"
-      ? "text-red"
-      : tone === "warn"
-        ? "text-amber"
-        : tone === "ok"
-          ? "text-track-audio"
-          : "text-muted-foreground";
-  return (
-    <span className={`rounded-md border border-border px-1.5 py-0.5 font-mono text-[11px] ${toneClass}`}>
-      {children}
-    </span>
-  );
 }
 
 export function TopBar({
@@ -96,22 +76,12 @@ export function TopBar({
         {width}×{height}
       </Badge>
       <Badge>{fpsLabel(fps)} fps</Badge>
-      <button
-        type="button"
-        onClick={onSettings}
-        title="Settings"
-        aria-label="Settings"
-        className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/60"
-      >
+      <Button size="icon" onClick={onSettings} title="Settings" aria-label="Settings">
         <Settings size={16} strokeWidth={1.75} aria-hidden />
-      </button>
-      <button
-        type="button"
-        onClick={onExport}
-        className="rounded-md border border-[#3a3524] px-2.5 py-0.5 text-xs text-primary transition-colors hover:bg-primary/10"
-      >
+      </Button>
+      <Button size="sm" variant="gold" onClick={onExport}>
         Export
-      </button>
+      </Button>
     </header>
   );
 }

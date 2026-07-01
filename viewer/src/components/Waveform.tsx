@@ -11,7 +11,7 @@ const cache = new Map<string, PeaksResponse | null>();
 export function Waveform({
   clipId,
   route,
-  color = "#57b98a",
+  color = "var(--vean-track-audio)",
 }: {
   clipId: string;
   route?: string;
@@ -54,7 +54,7 @@ export function Waveform({
           pointerEvents: "none",
         }}
       >
-        <div style={{ width: "100%", height: 1, background: "rgba(230,227,218,0.12)" }} />
+        <div style={{ width: "100%", height: 1, background: "color-mix(in srgb, var(--vean-fg-1) 12%, transparent)" }} />
       </div>
     );
   }

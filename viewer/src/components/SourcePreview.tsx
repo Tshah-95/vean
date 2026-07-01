@@ -4,6 +4,7 @@
 // Range frames are at the TIMELINE fps (sources are conformed to the project).
 import { GripHorizontal, Pause, Play } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { mediaUrl } from "../api";
 import { useClock } from "../ClockProvider";
 import { MEDIA_DRAG_MIME, type MediaDragPayload, useSource } from "../SourceProvider";
@@ -114,25 +115,17 @@ export function SourcePreview({ route }: { route?: string }) {
             maxWidth: "100%",
             maxHeight: "100%",
             borderRadius: 8,
-            background: "#050607",
-            boxShadow: "0 4px 32px rgba(0,0,0,0.6)",
+            background: "var(--vean-bg-inset)",
+            boxShadow: "0 4px 32px rgba(0, 0, 0, 0.6)",
           }}
         />
       </div>
 
       {/* Source transport: play/pause · in/out range bar · timecode · drag chip. */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          padding: "8px 14px",
-          borderTop: "1px solid #1b1e26",
-          background: "#0d0f14",
-        }}
-      >
-        <button
-          type="button"
+      <div className="flex items-center gap-3 border-t border-border-faint bg-header px-3.5 py-2">
+        <Button
+          size="icon"
+          variant={playing ? "default" : "ghost"}
           onClick={() => {
             const v = videoRef.current;
             if (!v) return;
@@ -140,21 +133,9 @@ export function SourcePreview({ route }: { route?: string }) {
             else v.pause();
           }}
           aria-label={playing ? "Pause source" : "Play source"}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 30,
-            height: 26,
-            borderRadius: 5,
-            border: "none",
-            background: playing ? "#c7ae7a" : "transparent",
-            color: playing ? "#0b0c0f" : "#E6E3DA",
-            cursor: "pointer",
-          }}
         >
           {playing ? <Pause size={15} strokeWidth={1.75} /> : <Play size={15} strokeWidth={1.75} />}
-        </button>
+        </Button>
 
         {/* The two-thumb range: the selected span is gold; thumbs set in/out. */}
         <div
@@ -163,7 +144,17 @@ export function SourcePreview({ route }: { route?: string }) {
           style={{ position: "relative", flex: 1, height: 18, cursor: "ew-resize" }}
           title="Click to seek · drag the handles to set in/out"
         >
-          <div style={{ position: "absolute", left: 0, right: 0, top: 8, height: 3, borderRadius: 2, background: "#23282c" }} />
+          <div
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              top: 8,
+              height: 3,
+              borderRadius: 2,
+              background: "var(--vean-bg-hover)",
+            }}
+          />
           <div
             style={{
               position: "absolute",
@@ -172,7 +163,7 @@ export function SourcePreview({ route }: { route?: string }) {
               top: 8,
               height: 3,
               borderRadius: 2,
-              background: "#c7ae7a",
+              background: "var(--vean-gold)",
             }}
           />
           {/* position hairline */}
@@ -183,7 +174,8 @@ export function SourcePreview({ route }: { route?: string }) {
               top: 4,
               width: 1,
               height: 11,
-              background: "rgba(230,227,218,0.6)",
+              background: "var(--vean-fg-1)",
+              opacity: 0.6,
               pointerEvents: "none",
             }}
           />
@@ -203,7 +195,7 @@ export function SourcePreview({ route }: { route?: string }) {
                 height: 13,
                 transform: "translateX(-50%)",
                 borderRadius: 2,
-                background: "#c7ae7a",
+                background: "var(--vean-gold)",
                 cursor: "ew-resize",
                 touchAction: "none",
               }}
@@ -211,10 +203,7 @@ export function SourcePreview({ route }: { route?: string }) {
           ))}
         </div>
 
-        <span
-          style={{ fontFamily: "ui-monospace, Menlo, monospace", fontSize: 12, color: "#9BA39B" }}
-          title="selected span (in → out)"
-        >
+        <span className="font-mono text-xs text-fg-2" title="selected span (in → out)">
           {timecode(r.in, clock.fps)} → {timecode(r.out, clock.fps)}
         </span>
 
@@ -223,18 +212,7 @@ export function SourcePreview({ route }: { route?: string }) {
           draggable
           onDragStart={onDragStart}
           title="Drag onto a timeline track to place the selected span"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 5,
-            padding: "3px 8px",
-            borderRadius: 5,
-            border: "1px dashed #5a4a1f",
-            color: "#c7ae7a",
-            fontSize: 11,
-            cursor: "grab",
-            userSelect: "none",
-          }}
+          className="flex cursor-grab select-none items-center gap-1 rounded-md border border-dashed border-gold-edge px-2 py-0.5 text-[11px] text-primary"
         >
           <GripHorizontal size={13} strokeWidth={1.75} />
           place {r.out - r.in + 1}f

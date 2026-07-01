@@ -25,7 +25,7 @@ export function Playhead({ pxPerFrame, gutterWidth, rulerHeight }: PlayheadProps
         top: rulerHeight,
         bottom: 0,
         width: 0,
-        borderLeft: "1px solid rgba(226, 87, 76, 0.5)",
+        borderLeft: "1px solid color-mix(in srgb, var(--vean-red) 50%, transparent)",
         pointerEvents: "none",
         zIndex: 5,
       }}

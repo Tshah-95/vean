@@ -12,7 +12,7 @@ const buttonVariants = cva(
         default: "bg-primary text-primary-foreground hover:bg-primary/90",
         outline: "border border-border bg-transparent text-foreground hover:bg-accent/60",
         ghost: "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-        gold: "border border-[#3a3524] text-primary hover:bg-primary/10",
+        gold: "border border-gold-edge text-primary hover:bg-primary/10",
       },
       size: {
         default: "h-7 px-2.5",

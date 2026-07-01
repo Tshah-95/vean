@@ -7,6 +7,7 @@
 // master clock (see ClockProvider + PreviewPane).
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchDiagnostics, fetchProjects, fetchTimeline, type ProjectEntry } from "./api";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ClockProvider, useClockInstance } from "./ClockProvider";
 import { installDecodeBridge } from "./decode/debugBridge";
 import { PreviewPane } from "./components/PreviewPane";
@@ -105,10 +106,10 @@ function Viewer({ route }: { route: string | undefined }) {
 
   if (error) {
     return (
-      <div style={{ padding: 24, color: "#e08585", fontFamily: "ui-monospace, monospace" }}>
-        <div style={{ fontWeight: 700, marginBottom: 8 }}>Failed to load timeline</div>
-        <div style={{ color: "#9aa0ae" }}>{error}</div>
-        <div style={{ color: "#6b7280", marginTop: 12, fontSize: 12 }}>
+      <div className="p-6 font-mono text-red">
+        <div className="mb-2 font-medium">Failed to load timeline</div>
+        <div className="text-muted-foreground">{error}</div>
+        <div className="mt-3 text-xs text-fg-3">
           Set an active timeline with <code>vean timeline use &lt;path.mlt&gt;</code>, then reload.
         </div>
       </div>
@@ -116,7 +117,7 @@ function Viewer({ route }: { route: string | undefined }) {
   }
 
   if (!data) {
-    return <div style={{ padding: 24, color: "#6b7280" }}>Loading timeline…</div>;
+    return <div className="p-6 text-fg-3">Loading timeline…</div>;
   }
 
   return (
@@ -298,27 +299,12 @@ function Stage({
         <>
           {/* Monitor tabs — Program (the timeline) | Source (the selected media). */}
           {source ? (
-            <div style={{ display: "flex", gap: 2, padding: "6px 12px 0", fontSize: 11 }}>
-              {(["program", "source"] as const).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setMonitor(m)}
-                  aria-current={monitor === m ? "true" : undefined}
-                  style={{
-                    border: "none",
-                    background: "transparent",
-                    color: monitor === m ? "#E6E3DA" : "#6B716A",
-                    borderBottom: monitor === m ? "2px solid #c7ae7a" : "2px solid transparent",
-                    padding: "2px 8px 4px",
-                    cursor: "pointer",
-                    fontSize: 11,
-                  }}
-                >
-                  {m === "program" ? "Program" : source.name}
-                </button>
-              ))}
-            </div>
+            <Tabs value={monitor} onValueChange={(v) => setMonitor(v as "program" | "source")}>
+              <TabsList className="px-3 pt-1.5">
+                <TabsTrigger value="program">Program</TabsTrigger>
+                <TabsTrigger value="source">{source.name}</TabsTrigger>
+              </TabsList>
+            </Tabs>
           ) : null}
           {/* The program monitor stays MOUNTED while Source shows (decode caches
               stay warm) — it's just not displayed. */}

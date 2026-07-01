@@ -675,7 +675,7 @@ export function FootageStage({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            color: "#3a4150",
+            color: "var(--vean-fg-3)",
             fontSize: 12,
           }}
         >

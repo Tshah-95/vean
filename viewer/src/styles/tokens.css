@@ -30,6 +30,7 @@
   --vean-fg-3: #6b716a; /* faint */
   --vean-gold: #c7ae7a; /* the one accent (= --carlo-gold) */
   --vean-gold-bright: #d8c290;
+  --vean-gold-edge: #3a3524; /* gold-tinted hairline (Export button, active chips) */
   --vean-border: #262a2e; /* hairline (neutralized) */
   --vean-border-bright: #30353a;
   --vean-amber: #d9a050; /* warnings / soft status */
@@ -40,6 +41,18 @@
   --vean-track-video: #6f86a8;
   --vean-track-audio: #57b98a;
   --vean-track-graphic: #a98fd6;
+
+  /* Timeline surface — the bespoke strip (lanes/clips/ruler/playhead) draws ONLY
+   * from these; no component-local hex. Clip fills stay in the track-hue family. */
+  --vean-border-faint: #1b1f24; /* row/ruler hairlines (dimmer than --vean-border) */
+  --vean-header-bg: #101317; /* frozen track-header / ruler-spacer cells */
+  --vean-clip-video-fill: linear-gradient(180deg, #233042, #1a2533);
+  --vean-clip-video-edge: #345070;
+  --vean-clip-audio-fill: linear-gradient(180deg, #1f3a34, #173029);
+  --vean-clip-audio-edge: #2f6b5c;
+  --vean-clip-graphic-fill: linear-gradient(180deg, #3a2f5e, #2c244a);
+  --vean-clip-graphic-edge: #7a6bd0;
+  --vean-guide: #7fd9c0; /* snap guide */
 
   /* Type */
   --vean-font-sans: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -137,6 +150,9 @@
   --color-track-video: var(--vean-track-video);
   --color-track-audio: var(--vean-track-audio);
   --color-track-graphic: var(--vean-track-graphic);
+  --color-border-faint: var(--vean-border-faint);
+  --color-header: var(--vean-header-bg);
+  --color-gold-edge: var(--vean-gold-edge);
 
   --font-sans: var(--vean-font-sans);
   --font-mono: var(--vean-font-mono);

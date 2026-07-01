@@ -47,7 +47,7 @@ export function TranscriptPeek({ clipId, route }: { clipId: string; route?: stri
         right: 6,
         fontSize: 9,
         lineHeight: 1.25,
-        color: "rgba(230,227,218,0.75)",
+        color: "color-mix(in srgb, var(--vean-fg-1) 75%, transparent)",
         overflow: "hidden",
         textOverflow: "ellipsis",
         whiteSpace: "nowrap",

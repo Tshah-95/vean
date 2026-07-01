@@ -83,7 +83,7 @@ export function PreviewPane({
           maxHeight: "100%",
           maxWidth: "100%",
           height: "100%",
-          background: "#050608",
+          background: "var(--vean-bg-inset)",
           borderRadius: 8,
           overflow: "hidden",
           boxShadow: "0 4px 32px rgba(0,0,0,0.6)",

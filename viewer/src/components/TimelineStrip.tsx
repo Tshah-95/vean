@@ -34,6 +34,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { useClockInstance } from "../ClockProvider";
 import { usePreviewInstance } from "../PreviewProvider";
 import { MEDIA_DRAG_MIME, type MediaDragPayload } from "../SourceProvider";
@@ -659,14 +660,14 @@ export function TimelineStrip({ editor, previewMuted, onTogglePreviewMute }: Tim
   const cursor = drag ? cursorFor(drag.gesture.tool) : "default";
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", background: "#0a0b0f" }}>
+    <div style={{ display: "flex", flexDirection: "column", background: "var(--vean-bg)" }}>
       <div
         style={{
           display: "flex",
           alignItems: "center",
           gap: 4,
           padding: "5px 12px",
-          borderBottom: "1px solid #14171f",
+          borderBottom: "1px solid var(--vean-border-faint)",
         }}
       >
         {/* Edit tools — lucide icons, tooltips carry the words. */}
@@ -685,7 +686,7 @@ export function TimelineStrip({ editor, previewMuted, onTogglePreviewMute }: Tim
         </IconBtn>
         {editor.lastError ? (
           <span
-            style={{ color: "#e08585", fontFamily: "ui-monospace, monospace", fontSize: 10, marginLeft: 6 }}
+            style={{ color: "var(--vean-red)", fontFamily: "ui-monospace, monospace", fontSize: 10, marginLeft: 6 }}
             title={editor.lastError}
           >
             {editor.lastError.length > 36 ? `${editor.lastError.slice(0, 33)}…` : editor.lastError}
@@ -753,8 +754,8 @@ export function TimelineStrip({ editor, previewMuted, onTogglePreviewMute }: Tim
                 position: "sticky",
                 left: 0,
                 zIndex: 7,
-                background: "#0d0f14",
-                borderRight: "1px solid #1b1e26",
+                background: "var(--vean-header-bg)",
+                borderRight: "1px solid var(--vean-border-faint)",
                 cursor: "default",
               }}
             />
@@ -767,11 +768,11 @@ export function TimelineStrip({ editor, previewMuted, onTogglePreviewMute }: Tim
                     left: t.frame * pxPerFrame,
                     top: 0,
                     bottom: 0,
-                    borderLeft: "1px solid #1d2126",
+                    borderLeft: "1px solid var(--vean-border-faint)",
                     paddingLeft: 4,
                     paddingTop: 3,
                     fontSize: 10,
-                    color: "#6B716A",
+                    color: "var(--vean-fg-3)",
                     fontFamily: "ui-monospace, monospace",
                     whiteSpace: "nowrap",
                   }}
@@ -825,7 +826,7 @@ export function TimelineStrip({ editor, previewMuted, onTogglePreviewMute }: Tim
                 top: RULER_HEIGHT,
                 bottom: 0,
                 width: 0,
-                borderLeft: "1px dashed #7fd9c0",
+                borderLeft: "1px dashed var(--vean-guide)",
                 opacity: 0.8,
                 pointerEvents: "none",
                 zIndex: 4,
@@ -855,7 +856,7 @@ function CtiHandle({ pxPerFrame }: { pxPerFrame: number }) {
         transform: "translateX(-50%)",
         width: 9,
         height: 7,
-        background: "rgba(226, 87, 76, 0.65)",
+        background: "color-mix(in srgb, var(--vean-red) 65%, transparent)",
         clipPath: "polygon(0 0, 100% 0, 50% 100%)",
         pointerEvents: "none",
         zIndex: 6,
@@ -895,12 +896,12 @@ function GutterDropZone({
           display: "flex",
           alignItems: "center",
           paddingLeft: 10,
-          background: "#0d0f14",
-          borderRight: "1px solid #1b1e26",
+          background: "var(--vean-header-bg)",
+          borderRight: "1px solid var(--vean-border-faint)",
           fontSize: 9,
           fontFamily: "ui-monospace, monospace",
           letterSpacing: "0.08em",
-          color: lit ? "#c7ae7a" : dragActive ? "#9BA39B" : "#3a3f44",
+          color: lit ? "var(--vean-gold)" : dragActive ? "var(--vean-fg-2)" : "color-mix(in srgb, var(--vean-fg-3) 60%, transparent)",
         }}
       >
         + {side === "top" ? "V" : "A"}
@@ -925,8 +926,8 @@ function GutterDropZone({
         }}
         style={{
           flex: 1,
-          background: lit ? "rgba(199,174,122,0.18)" : "transparent",
-          border: `1px dashed ${lit ? "#c7ae7a" : dragActive ? "rgba(199,174,122,0.35)" : "rgba(230,227,218,0.08)"}`,
+          background: lit ? "color-mix(in srgb, var(--vean-gold) 18%, transparent)" : "transparent",
+          border: `1px dashed ${lit ? "var(--vean-gold)" : dragActive ? "color-mix(in srgb, var(--vean-gold) 35%, transparent)" : "color-mix(in srgb, var(--vean-fg-1) 8%, transparent)"}`,
           borderLeft: "none",
           borderRight: "none",
           transition: "background 120ms, border-color 120ms",
@@ -975,7 +976,7 @@ function TrackLane({
   const MuteIcon = track.kind === "audio" ? (previewMuted ? VolumeX : Volume2) : previewMuted ? EyeOff : Eye;
 
   return (
-    <div style={{ display: "flex", height: trackH(track), borderBottom: "1px solid #14171f" }}>
+    <div style={{ display: "flex", height: trackH(track), borderBottom: "1px solid var(--vean-border-faint)" }}>
       {/* FROZEN header column — sticky against horizontal scroll; the lanes slide
           under it (the Premiere frozen-gutter feel). */}
       <div
@@ -992,9 +993,9 @@ function TrackLane({
           paddingRight: 4,
           fontSize: 11,
           fontFamily: "ui-monospace, monospace",
-          color: track.kind === "audio" ? "#7fd9c0" : "#9ab4d9",
-          background: "#0d0f14",
-          borderRight: "1px solid #1b1e26",
+          color: track.kind === "audio" ? "var(--vean-track-audio)" : "var(--vean-track-video)",
+          background: "var(--vean-header-bg)",
+          borderRight: "1px solid var(--vean-border-faint)",
           overflow: "hidden",
         }}
       >
@@ -1033,7 +1034,7 @@ function TrackLane({
             borderRadius: 4,
             border: "none",
             background: "transparent",
-            color: previewMuted ? "#c7ae7a" : "#6B716A",
+            color: previewMuted ? "var(--vean-gold)" : "var(--vean-fg-3)",
             cursor: "pointer",
             flexShrink: 0,
           }}
@@ -1044,7 +1045,7 @@ function TrackLane({
       {/* Lane background: a pointerdown here (not on a clip) deselects. Also the
           drop target for media drags (Media panel tiles / the source monitor chip). */}
       <div
-        style={{ position: "relative", flex: 1, background: "#0a0b0f", opacity: previewMuted ? 0.45 : 1 }}
+        style={{ position: "relative", flex: 1, background: "var(--vean-bg)", opacity: previewMuted ? 0.45 : 1 }}
         onPointerDown={onBackgroundPointerDown}
         onDragOver={(e) => {
           if (e.dataTransfer.types.includes(MEDIA_DRAG_MIME)) {
@@ -1172,7 +1173,7 @@ function MoveOverlay({
             width: g.placed.length * pxPerFrame,
             top: 2,
             bottom: 2,
-            border: "1px dashed #4a5265",
+            border: "1px dashed var(--vean-border-bright)",
             borderRadius: 4,
             background: "rgba(0,0,0,0.22)",
             pointerEvents: "none",
@@ -1192,8 +1193,8 @@ function MoveOverlay({
                 width: c.width * pxPerFrame,
                 top: 2,
                 bottom: 2,
-                background: "rgba(226,87,76,0.28)",
-                border: "1px solid rgba(226,87,76,0.7)",
+                background: "color-mix(in srgb, var(--vean-red) 28%, transparent)",
+                border: "1px solid color-mix(in srgb, var(--vean-red) 70%, transparent)",
                 borderRadius: 4,
                 pointerEvents: "none",
                 zIndex: 4,
@@ -1333,8 +1334,8 @@ function gestureReadout(drag: DragState, previewed: PlacedItem): string | null {
   }
 }
 
-/** A quiet square icon button for the timeline toolbar: lucide glyph inherits
- *  currentColor; gold when `active`; the words live in the tooltip/aria-label. */
+/** A quiet square icon button for the timeline toolbar — the shadcn Button in its
+ *  iconSm ghost form; gold when `active`. The words live in the tooltip/aria-label. */
 function IconBtn({
   onClick,
   disabled,
@@ -1351,34 +1352,16 @@ function IconBtn({
   children: React.ReactNode;
 }) {
   return (
-    <button
-      type="button"
+    <Button
+      size="iconSm"
       onClick={onClick}
       disabled={disabled}
       aria-label={label}
       aria-pressed={pressed}
       title={label}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: 24,
-        height: 22,
-        borderRadius: 4,
-        border: "none",
-        background: "transparent",
-        color: active ? "#c7ae7a" : "#9BA39B",
-        cursor: disabled ? "default" : "pointer",
-        opacity: disabled ? 0.35 : 1,
-      }}
-      onMouseEnter={(e) => {
-        if (!disabled) (e.currentTarget as HTMLElement).style.background = "#1b1e23";
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLElement).style.background = "transparent";
-      }}
+      className={active ? "text-primary hover:text-primary" : undefined}
     >
       {children}
-    </button>
+    </Button>
   );
 }
