@@ -43,16 +43,24 @@ import { FADE_IN_SERVICE, FADE_OUT_SERVICE } from "./builder";
 import { isAnimated } from "./keyframes";
 import type {
   Clip,
+  ClipLink,
   Filter,
   Item,
   Profile,
   PropertyValue,
   Provenance,
+  StreamSelectors,
   Timeline,
   Track,
   Transition,
 } from "./types";
-import { encodeProvenanceProps, timelineSchema } from "./types";
+import {
+  LINK_PROP,
+  encodeClipLink,
+  encodeProvenanceProps,
+  encodeStreamSelectorProps,
+  timelineSchema,
+} from "./types";
 
 // melt is forgiving about the version string; this matches the local toolchain
 // and the value real Shotcut documents carry.
@@ -144,6 +152,10 @@ type Prod = {
    *  survives export. Modeled structurally (never via extraProps), so it never
    *  double-emits. */
   provenance?: Provenance;
+  /** MLT stream selectors (`audio_index`/`video_index`/`astream`/`vstream`/
+   *  `shotcut:defaultAudioIndex`), emitted as producer properties. Present only on
+   *  the video-only/audio-only halves of an A/V split; absent → zero new bytes. */
+  streams?: StreamSelectors;
   /** Emit the Shotcut identity/audio hints (true for real timeline producers;
    *  false would be a bare melt producer — we always emit a doc, so always true
    *  except the background, which sets its own). */
@@ -347,6 +359,15 @@ function prodXml(p: Prod): string {
       lines.push(`    <property name="${esc(name)}">${esc(value)}</property>`);
     }
   }
+  // MLT stream selectors (audio_index/video_index/astream/vstream +
+  // shotcut:defaultAudioIndex), emitted in the fixed schema order right after
+  // provenance — a deterministic position the parser re-captures structurally.
+  // ONLY the present selectors emit, so an unsplit clip adds zero new bytes.
+  if (p.streams) {
+    for (const [name, value] of encodeStreamSelectorProps(p.streams)) {
+      lines.push(`    <property name="${esc(name)}">${esc(value)}</property>`);
+    }
+  }
   // Non-structural producer metadata (caption, eof, aspect_ratio, proxy hints, …),
   // preserved from parse in document order for a lossless round-trip. Emitted
   // after the structural props + uuid, before the filters — a stable position the
@@ -439,6 +460,22 @@ function fieldTransitionXml(t: Transition, id: string): string {
   return lines.join("\n");
 }
 
+// A playlist ENTRY (cut) — a windowed reference to a producer/wrapper/dissolve
+// tractor. Without a link it stays the byte-stable self-closing form (so an
+// unlinked clip, the vast majority, adds zero new bytes). WITH a link it becomes
+// a container carrying a single `vean:link` JSON `<property>` child — the typed
+// A/V link, emitted on the cut (Shotcut's `shotcut:group` lives here too), which
+// the parser re-captures onto `Clip.link`.
+function entryXml(producerId: string, inn: number, out: number, link?: ClipLink): string {
+  const open = `    <entry producer="${producerId}" in="${inn}" out="${out}"`;
+  if (!link) return `${open}/>`;
+  return [
+    `${open}>`,
+    `      <property name="${LINK_PROP}">${esc(encodeClipLink(link))}</property>`,
+    "    </entry>",
+  ].join("\n");
+}
+
 // ─── Profile ────────────────────────────────────────────────────────────────
 function profileXml(p: Profile): string {
   // frame_rate is the RATIONAL [num,den] — never a float. Square pixels by
@@ -484,6 +521,9 @@ function makeProd(
   // Carry origin metadata onto EVERY producer minted from the clip (solo, dissolve
   // tail/head), so it survives the round-trip regardless of emission window.
   if (c.provenance) prod.provenance = c.provenance;
+  // Carry the stream selectors onto every producer minted from the clip so the
+  // A/V-split selectors (astream=-1 / vstream=-1, …) survive the round-trip.
+  if (c.streams) prod.streams = c.streams;
   return prod;
 }
 
@@ -567,12 +607,12 @@ function walkTrack(
       // emit a fresh 0-based producer (length = len) so any fade keyframe stays
       // anchored to the played segment. Fades + gain ride on the producer.
       emit.producers.push(makeProd(id, it, 0, len - 1, len, [...fades, ...gain, ...rest]));
-      entries.push(`    <entry producer="${id}" in="0" out="${len - 1}"/>`);
+      entries.push(entryXml(id, 0, len - 1, it.link));
     } else if (inn === 0 || fades.length === 0) {
       // A file clip that already plays from source 0, or has no fade to anchor:
       // every filter sits on the producer over its (0-based or windowed) domain.
       emit.producers.push(makeProd(id, it, inn, out, it.length, [...fades, ...gain, ...rest]));
-      entries.push(`    <entry producer="${id}" in="${inn}" out="${out}"/>`);
+      entries.push(entryXml(id, inn, out, it.link));
     } else {
       // A windowed file clip WITH a fade: its window can't reset to 0 (the
       // source frames differ), so the fade keyframes would mis-anchor on the
@@ -582,7 +622,7 @@ function walkTrack(
       emit.producers.push(makeProd(id, it, inn, out, it.length, [...gain, ...rest]));
       const wid = `tractor${emit.ids.tractor++}`;
       emit.wrappers.push({ id: wid, track: { id, in: inn, out }, filters: fades });
-      entries.push(`    <entry producer="${wid}" in="0" out="${len - 1}"/>`);
+      entries.push(entryXml(wid, 0, len - 1, it.link));
     }
     length += len;
   }
