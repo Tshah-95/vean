@@ -198,11 +198,16 @@ matching the repo's verification philosophy.
   still pass through the refactored per-frame path. 1367 unit tests, viewer typecheck + build clean.
 
 ### P1b — Fault isolation (from the P0+P2 review)  ·  🟡 PARTIAL (runtime boundary shipped)
-- **Runtime errors — ✅ SHIPPED.** A comp that throws DURING RENDER (a bad hook, an undefined access — a
-  plausible agent mistake) no longer white-screens the editor: `viewer/src/components/
-  OverlayErrorBoundary.tsx` wraps the live Player, catches the throw, hides the overlay (the footage keeps
-  rendering underneath), logs it, and exposes it on `window.__veanOverlayError` (comp id + message).
-  Switching to a different comp clears the error (recovers the layer).
+- **Runtime errors — ✅ SHIPPED + GATED.** A comp that throws DURING RENDER (a bad hook, an undefined
+  access — a plausible agent mistake) no longer white-screens the editor OR leaves Remotion's ⚠️ glyph
+  over the footage. An adversarial review caught the first attempt (an OUTER React error boundary) being
+  **inert** — `@remotion/player` has its OWN internal boundary that swallows the throw first — so the fix
+  hooks the Player's native `errorFallback` prop → `viewer/src/components/OverlayErrorFallback.tsx` renders
+  NOTHING (overlay hidden, footage keeps showing) and publishes the failure on `window.__veanOverlayError`
+  (which comp, why); a `key={comp id}` on the Player recovers on comp change. **Gated:** `bun run
+  verify:live-error` (fixture `corpus/demo/boom-overlay.mlt` + probe comp `BoomProbe` that throws on
+  `boom:true`) asserts the editor survives, the footage stays alive, the bridge is populated with
+  `BoomProbe`, and no ⚠️ shows.
 - **Import errors — REMAINING (lazy glob).** A BUILD/syntax error in a comp still fails the WHOLE eager
   glob (Vite dev error overlay / a hard build fail), not just that comp — because `eager: true` imports
   every comp at module load. Per-comp IMPORT isolation needs `import.meta.glob(..., { eager: false })` +

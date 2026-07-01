@@ -5,7 +5,7 @@
 // footage <video> beneath it (PreviewPane stacks them in the same box).
 //
 // The composition rendered is the ACTUAL one the graphic clip names — its IR
-// `composition.id`/`composition.props`, surfaced by App `deriveOverlay` — resolved
+// `composition.id`/`composition.props`, surfaced by App `resolveOverlayAt` — resolved
 // to a component via the viewer's composition registry (the same `@remotion-comp`
 // source the producer renders to ProRes). This is the LIVE half of the two
 // compositing paths of ONE composition (live preview ≈ export, the accepted cost).
@@ -14,8 +14,8 @@
 // hardcoded to LowerThird, and the overlay is ALWAYS alpha-composited over the
 // footage below (the transparent background reveals the footage compositor's canvas).
 import { Player, type PlayerRef } from "@remotion/player";
-import { OverlayErrorBoundary } from "./OverlayErrorBoundary";
 import { useEffect, useMemo, useRef } from "react";
+import { OverlayErrorFallback } from "./OverlayErrorFallback";
 import { resolveComposition } from "../remotion/registry";
 import { useClock, useClockInstance } from "../ClockProvider";
 import type { Fps } from "../types";
@@ -59,7 +59,15 @@ export function OverlayPlayer({
   // props), instead of the formerly-hardcoded LowerThird. Memoized on the id so the
   // Player's `component` identity is stable across the frame-driven re-renders (a
   // fresh component reference would remount the Player every frame).
-  const resolved = useMemo(() => resolveComposition(compositionId), [compositionId]);
+  //
+  // Hold the last non-null comp id so a GAP (present=false → compositionId undefined)
+  // doesn't flip `resolved` to the DEFAULT comp and remount the Player mid-timeline —
+  // across a gap the overlay stays the same comp, just hidden; only a real comp CHANGE
+  // remounts it. (Without this, a gap between two `Title` clips would remount twice.)
+  const lastCompId = useRef(compositionId);
+  if (compositionId) lastCompId.current = compositionId;
+  const effectiveCompId = compositionId ?? lastCompId.current;
+  const resolved = useMemo(() => resolveComposition(effectiveCompId), [effectiveCompId]);
   // The props the Player renders with: the clip's props layered OVER the
   // composition's own defaults, so a clip that omits a field still renders.
   const playerProps = useMemo(
@@ -156,23 +164,31 @@ export function OverlayPlayer({
         opacity: present ? 1 : 0,
       }}
     >
-      <OverlayErrorBoundary compositionId={resolved.id}>
-        <Player
-          ref={playerRef}
-          component={resolved.component as never}
-          durationInFrames={Math.max(1, durationInFrames)}
-          fps={compFps}
-          compositionWidth={width}
-          compositionHeight={height}
-          inputProps={playerProps as never}
-          controls={false}
-          loop={false}
-          clickToPlay={false}
-          doubleClickToFullscreen={false}
-          acknowledgeRemotionLicense
-          style={{ width: "100%", height: "100%", background: "transparent" }}
-        />
-      </OverlayErrorBoundary>
+      <Player
+        // Key on the comp id so a comp CHANGE remounts the Player fresh — clearing the
+        // Player's internal error state, so switching AWAY from a broken comp recovers.
+        key={resolved.id}
+        ref={playerRef}
+        component={resolved.component as never}
+        durationInFrames={Math.max(1, durationInFrames)}
+        fps={compFps}
+        compositionWidth={width}
+        compositionHeight={height}
+        inputProps={playerProps as never}
+        controls={false}
+        loop={false}
+        clickToPlay={false}
+        doubleClickToFullscreen={false}
+        acknowledgeRemotionLicense
+        // A comp that throws DURING RENDER is caught by the Player's OWN error boundary;
+        // instead of Remotion's default ⚠️ glyph over the footage, render NOTHING (the
+        // overlay is hidden, footage keeps showing) and publish the failure on
+        // window.__veanOverlayError (which comp, why) for gates/agents.
+        errorFallback={({ error }) => (
+          <OverlayErrorFallback error={error} compositionId={resolved.id} />
+        )}
+        style={{ width: "100%", height: "100%", background: "transparent" }}
+      />
     </div>
   );
 }

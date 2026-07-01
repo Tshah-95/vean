@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { fromMlt } from "../src/ir/parse";
 import { toMlt } from "../src/ir/serialize";
-// The VIEWER's own graphic-clip predicate — the exact function App.deriveOverlay +
+// The VIEWER's own graphic-clip predicate — the exact function App.resolveOverlayAt +
 // resolveLayers route on. Importing it (not a local re-implementation) means this
 // test fails if the viewer's contract drifts from the fixture.
 import { isGraphicClip } from "../viewer/src/types";
