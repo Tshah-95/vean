@@ -4,13 +4,16 @@
  * neutral dark; everything else — gold accent, mono eyebrows, radius, spacing,
  * motion — kept). See DESIGN-UI.md for the decision record.
  *
- * PHASE 1 is additive/non-regressing: we import Tailwind's THEME + UTILITIES
- * layers only, NOT preflight — so no CSS reset touches the existing
- * inline-styled tree, and nothing changes visually until a surface opts in.
- * (Preflight + a base body layer land in Phase 2 with the shell, scoped/fixed.)
+ * PHASE 2 adds preflight (the shadcn base reset) now that the shell is built.
+ * Inline `style={}` on the legacy timeline/compositor tree still wins over
+ * preflight's low-specificity @layer base rules, so the reset only affects
+ * browser-default properties those components don't set — chiefly font, which
+ * is the intended global flip to Hanken. The body flip lives in index.html
+ * (the FOUC-critical style) so it isn't out-raced by layer precedence.
  */
 @layer theme, base, components, utilities;
 @import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/preflight.css" layer(base);
 @import "tailwindcss/utilities.css" layer(utilities);
 @import "tw-animate-css";
 

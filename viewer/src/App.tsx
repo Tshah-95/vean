@@ -9,9 +9,8 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchDiagnostics, fetchProjects, fetchTimeline, type ProjectEntry } from "./api";
 import { ClockProvider, useClockInstance } from "./ClockProvider";
 import { installDecodeBridge } from "./decode/debugBridge";
-import { Header } from "./components/Header";
 import { PreviewPane } from "./components/PreviewPane";
-import { Sidebar } from "./components/Sidebar";
+import { AppShell } from "./components/shell/AppShell";
 import { TimelineStrip } from "./components/TimelineStrip";
 import { Transport } from "./components/Transport";
 import { PreviewProvider } from "./PreviewProvider";
@@ -117,31 +116,29 @@ function Viewer({ route }: { route: string | undefined }) {
   }
 
   return (
-    <div style={{ display: "flex", height: "100%" }}>
-      <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
-        <Header
-          title={data.timeline.title}
-          route={data.route}
-          fps={data.fps}
-          width={data.profile.width}
-          height={data.profile.height}
-          diagnostics={diag}
-          projects={projects}
-          currentResolvedPath={data.resolvedPath}
-        />
-        <Stage
-          data={data}
-          route={route}
-          volume={volume}
-          muted={muted}
-          sinkId={sinkId}
-          onVolumeChange={setVolume}
-          onMutedChange={setMuted}
-          onSinkChange={setSinkId}
-        />
-      </div>
-      <Sidebar route={route} baseTitle={data.timeline.title} />
-    </div>
+    <AppShell
+      title={data.timeline.title}
+      route={route}
+      displayRoute={data.route}
+      baseTitle={data.timeline.title}
+      fps={data.fps}
+      width={data.profile.width}
+      height={data.profile.height}
+      diagnostics={diag}
+      projects={projects}
+      currentResolvedPath={data.resolvedPath}
+    >
+      <Stage
+        data={data}
+        route={route}
+        volume={volume}
+        muted={muted}
+        sinkId={sinkId}
+        onVolumeChange={setVolume}
+        onMutedChange={setMuted}
+        onSinkChange={setSinkId}
+      />
+    </AppShell>
   );
 }
 
