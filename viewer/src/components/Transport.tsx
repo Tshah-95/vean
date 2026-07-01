@@ -1,14 +1,24 @@
-// Transport: play/pause + the timecode readout + one audio control. Every control
-// writes through the master clock (clock.play/pause) — the clock is the only
-// writer of currentFrame; the <video> and <Player> follow.
+// Transport: timecode (left) · skip-back / play / skip-forward (CENTER) · audio
+// menu (right). Every control writes through the master clock — the clock is the
+// only writer of currentFrame; the <video> and <Player> follow.
 //
-// Deliberately MINIMAL: there is no scrub slider here — the TIMELINE is the scrub
-// surface and the source of truth for position (the ruler seeks; this bar plays).
-// No frame counter either; the timecode carries it. Audio is ONE speaker button
-// whose popover holds the vertical volume slider, mute, and the output device —
-// zero standing horizontal footprint.
-import { Pause, Play, Volume2, VolumeX } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+// No scrub slider (the TIMELINE is the seek surface) and no frame counter (the
+// timecode carries it). Skip buttons jump to the previous/next EDIT POINT (clip
+// boundaries), the pro-NLE convention. Audio is ONE speaker button opening the
+// macOS-Sound-menu pattern: a horizontal volume slider row, then the output
+// devices as check-items — built on the shadcn dropdown/slider primitives.
+import { Pause, Play, SkipBack, SkipForward, Volume2, VolumeX } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Slider } from "@/components/ui/slider";
 import { useClock, useClockInstance } from "../ClockProvider";
 import type { Fps } from "../types";
 
@@ -28,6 +38,8 @@ export function timecode(frame: number, fps: Fps): string {
 }
 
 export interface TransportProps {
+  /** Sorted unique clip boundaries (timeline frames) — the skip-button targets. */
+  editPoints: number[];
   /** Playback volume 0–1. */
   volume: number;
   /** Whether audio is muted. */
@@ -40,6 +52,7 @@ export interface TransportProps {
 }
 
 export function Transport({
+  editPoints,
   volume,
   muted,
   onVolumeChange,
@@ -49,10 +62,8 @@ export function Transport({
 }: TransportProps) {
   const clock = useClock();
   const instance = useClockInstance();
-  const [audioOpen, setAudioOpen] = useState(false);
-  const popRef = useRef<HTMLDivElement>(null);
 
-  // Enumerate audio OUTPUT devices for the sink picker (inside the popover).
+  // Enumerate audio OUTPUT devices for the menu.
   const [outputs, setOutputs] = useState<Array<{ id: string; label: string }>>([]);
   useEffect(() => {
     if (!SINK_SUPPORTED || !navigator.mediaDevices?.enumerateDevices) return;
@@ -76,174 +87,111 @@ export function Transport({
     };
   }, []);
 
-  // Dismiss the audio popover on an outside pointerdown.
-  useEffect(() => {
-    if (!audioOpen) return;
-    const onDown = (e: PointerEvent) => {
-      if (popRef.current && !popRef.current.contains(e.target as Node)) setAudioOpen(false);
-    };
-    window.addEventListener("pointerdown", onDown);
-    return () => window.removeEventListener("pointerdown", onDown);
-  }, [audioOpen]);
+  const skip = (dir: -1 | 1) => {
+    const f = clock.currentFrame;
+    const target =
+      dir === 1
+        ? (editPoints.find((p) => p > f) ?? Math.max(0, clock.totalFrames - 1))
+        : ([...editPoints].reverse().find((p) => p < f) ?? 0);
+    instance.pause();
+    instance.seekTo(target);
+  };
 
   const audioOff = muted || volume === 0;
 
   return (
     <div
       style={{
-        display: "flex",
+        display: "grid",
+        gridTemplateColumns: "1fr auto 1fr",
         alignItems: "center",
-        gap: 12,
-        padding: "8px 14px",
+        padding: "6px 14px",
         borderTop: "1px solid #1b1e26",
         borderBottom: "1px solid #1b1e26",
         background: "#0d0f14",
       }}
     >
-      <button
-        type="button"
-        onClick={() => instance.toggle()}
-        aria-label={clock.playing ? "Pause" : "Play"}
-        title={`${clock.playing ? "Pause" : "Play"} ( space )`}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          width: 30,
-          height: 26,
-          borderRadius: 5,
-          border: "none",
-          background: clock.playing ? "#c7ae7a" : "transparent",
-          color: clock.playing ? "#0b0c0f" : "#E6E3DA",
-          cursor: "pointer",
-        }}
-      >
-        {clock.playing ? <Pause size={15} strokeWidth={1.75} /> : <Play size={15} strokeWidth={1.75} />}
-      </button>
-
-      <span style={{ flex: 1 }} />
-      <div
-        style={{
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-          fontSize: 13,
-          color: "#E6E3DA",
-        }}
-      >
+      {/* left: where we are */}
+      <div className="justify-self-start font-mono text-[13px] text-foreground">
         {timecode(clock.currentFrame, clock.fps)}
       </div>
-      <span style={{ flex: 1 }} />
 
-      {/* Audio — one icon; volume (vertical) + mute + output device live in the popover. */}
-      <div ref={popRef} style={{ position: "relative" }}>
-        <button
-          type="button"
-          onClick={() => setAudioOpen((o) => !o)}
-          aria-label="Audio"
-          aria-expanded={audioOpen}
-          title="Volume + audio output"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 28,
-            height: 24,
-            borderRadius: 5,
-            border: "none",
-            background: audioOpen ? "#1b1e23" : "transparent",
-            color: audioOff ? "#6B716A" : "#9BA39B",
-            cursor: "pointer",
-          }}
+      {/* center: the transport cluster */}
+      <div className="flex items-center gap-1 justify-self-center">
+        <Button size="icon" onClick={() => skip(-1)} aria-label="Previous edit point" title="Previous edit point">
+          <SkipBack size={14} strokeWidth={1.75} />
+        </Button>
+        <Button
+          size="icon"
+          variant={clock.playing ? "default" : "ghost"}
+          onClick={() => instance.toggle()}
+          aria-label={clock.playing ? "Pause" : "Play"}
+          title={`${clock.playing ? "Pause" : "Play"} ( space )`}
         >
-          {audioOff ? <VolumeX size={15} strokeWidth={1.75} /> : <Volume2 size={15} strokeWidth={1.75} />}
-        </button>
-        {audioOpen ? (
-          <div
-            style={{
-              position: "absolute",
-              bottom: 30,
-              right: 0,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: 8,
-              padding: "10px 8px 8px",
-              borderRadius: 8,
-              border: "1px solid #262a2e",
-              background: "#131519",
-              boxShadow: "0 12px 28px -16px rgba(0,0,0,0.6)",
-              zIndex: 20,
-            }}
-          >
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={muted ? 0 : volume}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                onVolumeChange(v);
-                if (v > 0 && muted) onMutedChange(false);
-              }}
-              aria-label="Volume"
-              // Vertical slider — both the modern and the WebKit spelling.
-              style={{
-                writingMode: "vertical-lr",
-                direction: "rtl",
-                WebkitAppearance: "slider-vertical",
-                width: 18,
-                height: 84,
-                accentColor: "#c7ae7a",
-                cursor: "pointer",
-              }}
-            />
-            <button
-              type="button"
-              onClick={() => onMutedChange(!muted)}
-              aria-label={muted ? "Unmute" : "Mute"}
-              title={muted ? "Unmute" : "Mute"}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: 26,
-                height: 22,
-                borderRadius: 4,
-                border: "none",
-                background: "transparent",
-                color: muted ? "#c7ae7a" : "#9BA39B",
-                cursor: "pointer",
-              }}
-            >
-              {muted ? <VolumeX size={14} strokeWidth={1.75} /> : <Volume2 size={14} strokeWidth={1.75} />}
-            </button>
-            {SINK_SUPPORTED && outputs.length > 0 ? (
-              <select
-                value={sinkId}
-                onChange={(e) => onSinkChange(e.target.value)}
-                aria-label="Audio output device"
-                title="Audio output device"
-                style={{
-                  maxWidth: 130,
-                  borderRadius: 5,
-                  border: "1px solid #262a2e",
-                  background: "#0c0d0f",
-                  color: "#9BA39B",
-                  fontSize: 11,
-                  padding: "3px 4px",
-                  cursor: "pointer",
-                }}
+          {clock.playing ? <Pause size={15} strokeWidth={1.75} /> : <Play size={15} strokeWidth={1.75} />}
+        </Button>
+        <Button size="icon" onClick={() => skip(1)} aria-label="Next edit point" title="Next edit point">
+          <SkipForward size={14} strokeWidth={1.75} />
+        </Button>
+      </div>
+
+      {/* right: audio */}
+      <div className="justify-self-end">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="icon" aria-label="Audio" title="Volume + audio output">
+              {audioOff ? <VolumeX size={15} strokeWidth={1.75} /> : <Volume2 size={15} strokeWidth={1.75} />}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="top" align="end" className="w-[220px]">
+            <div className="flex items-center gap-2 px-2 py-2">
+              <button
+                type="button"
+                onClick={() => onMutedChange(!muted)}
+                aria-label={muted ? "Unmute" : "Mute"}
+                title={muted ? "Unmute" : "Mute"}
+                className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/60"
               >
-                <option value="">System default</option>
+                {audioOff ? <VolumeX size={14} strokeWidth={1.75} /> : <Volume2 size={14} strokeWidth={1.75} />}
+              </button>
+              <Slider
+                value={[muted ? 0 : Math.round(volume * 100)]}
+                max={100}
+                step={1}
+                aria-label="Volume"
+                onValueChange={([v]) => {
+                  const vol = (v ?? 0) / 100;
+                  onVolumeChange(vol);
+                  if (vol > 0 && muted) onMutedChange(false);
+                }}
+              />
+              <span className="w-7 shrink-0 text-right font-mono text-[10px] text-muted-foreground">
+                {muted ? 0 : Math.round(volume * 100)}
+              </span>
+            </div>
+            {SINK_SUPPORTED && outputs.length > 0 ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Output</DropdownMenuLabel>
+                <DropdownMenuCheckboxItem
+                  checked={sinkId === ""}
+                  onCheckedChange={() => onSinkChange("")}
+                >
+                  System default
+                </DropdownMenuCheckboxItem>
                 {outputs.map((o) => (
-                  <option key={o.id} value={o.id}>
+                  <DropdownMenuCheckboxItem
+                    key={o.id}
+                    checked={sinkId === o.id}
+                    onCheckedChange={() => onSinkChange(o.id)}
+                  >
                     {o.label}
-                  </option>
+                  </DropdownMenuCheckboxItem>
                 ))}
-              </select>
+              </>
             ) : null}
-          </div>
-        ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   );

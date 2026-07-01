@@ -62,9 +62,9 @@ const TRACK_H = { video: 56, audio: 40 } as const;
 const trackH = (t: Track): number => TRACK_H[t.kind];
 const RULER_HEIGHT = 36; // taller: reads as a dedicated control strip (the scrub zone)
 // Drop-zone strips above the top track and below the bottom track: dragging a clip
-// into one CREATES a new track of that clip's kind (video above, audio below) and
-// moves the clip onto it (Palmier's "drag into the gutter → new track").
-const GUTTER_H = 9;
+// (or a media tile / the source-monitor chip) into one CREATES a new track of the
+// matching kind (video above, audio below) and places it there.
+const GUTTER_H = 14;
 const MIN_TICK_PX = 64; // ruler ticks stay at least this far apart
 const MAX_PX_PER_FRAME = 60; // zoom-in ceiling (frame-level granularity)
 const MIN_PX_PER_FRAME = 0.02; // zoom-out floor (absolute; ~0.6px/sec at 30fps)
@@ -200,7 +200,9 @@ export function TimelineStrip({ editor, previewMuted, onTogglePreviewMute }: Tim
   const minScale = Math.min(MIN_PX_PER_FRAME, fitPxPerFrame);
   // The live, frozen scale. Falls back to fit only for the pre-fit render(s).
   const pxPerFrame = pxpf ?? fitPxPerFrame;
-  const laneWidth = GUTTER + totalFrames * pxPerFrame + TRAIL_SLACK_PX;
+  // The strip always FILLS the pane — the timeline is a standing entity, it never
+  // stops short of the right edge just because the content does.
+  const laneWidth = Math.max(GUTTER + totalFrames * pxPerFrame + TRAIL_SLACK_PX, paneWidth);
 
   const zoomIn = useCallback(
     () => setPxpf((p) => clamp((p ?? fitPxPerFrame) * STEP, minScale, MAX_PX_PER_FRAME)),
@@ -505,9 +507,11 @@ export function TimelineStrip({ editor, previewMuted, onTogglePreviewMute }: Tim
         // ARRAY end, not the visual stack. Audio always appends (= visual bottom).
         const position = "bottom";
         const newId = crypto.randomUUID();
+        const name =
+          kind === "video" ? `V${timeline.tracks.video.length + 1}` : `A${timeline.tracks.audio.length + 1}`;
         const toPosition = Math.max(0, d.gesture.placed.start + d.dxFrames);
         void (async () => {
-          await editor.commit({ op: "addTrack", args: { kind, id: newId, position } });
+          await editor.commit({ op: "addTrack", args: { kind, id: newId, name, position } });
           await editor.commit({
             op: "move",
             args: { uuid: d.gesture.uuid, toTrack: { trackId: newId }, toPosition, ripple: false, rippleAllTracks: false },
@@ -527,7 +531,7 @@ export function TimelineStrip({ editor, previewMuted, onTogglePreviewMute }: Tim
       }
       return null;
     });
-  }, [editor, previewStore]);
+  }, [editor, timeline, previewStore]);
 
   // Push the live drag as a compositor override so the preview monitor reacts to the
   // in-flight gesture — the frame at the new in/out point on a trim, the clip landed
@@ -582,7 +586,50 @@ export function TimelineStrip({ editor, previewMuted, onTogglePreviewMute }: Tim
         },
       });
     },
-    [editor, pxPerFrame],
+    [editor, timeline, pxPerFrame],
+  );
+
+  // A media drag dropped on a GUTTER → create a new track of the matching kind
+  // (video above / audio below), then place the span on it.
+  const onGutterMediaDrop = useCallback(
+    (side: "top" | "bottom", e: React.DragEvent, stripEl: HTMLElement) => {
+      const raw = e.dataTransfer.getData(MEDIA_DRAG_MIME);
+      if (!raw) return;
+      e.preventDefault();
+      let payload: MediaDragPayload;
+      try {
+        payload = JSON.parse(raw) as MediaDragPayload;
+      } catch {
+        return;
+      }
+      const kind = side === "top" ? "video" : "audio";
+      if ((payload.kind === "audio") !== (kind === "audio")) return;
+      const rect = stripEl.getBoundingClientRect();
+      const position = Math.max(0, Math.round((e.clientX - rect.left) / pxPerFrame));
+      const newId = crypto.randomUUID();
+      const name =
+        kind === "video" ? `V${timeline.tracks.video.length + 1}` : `A${timeline.tracks.audio.length + 1}`;
+      void (async () => {
+        // position:"bottom" APPENDS — the array end = the visual/compositing top.
+        await editor.commit({ op: "addTrack", args: { kind, id: newId, name, position: "bottom" } });
+        await editor.commit({
+          op: "overwrite",
+          args: {
+            track: { trackId: newId },
+            clip: {
+              kind: "clip",
+              id: crypto.randomUUID(),
+              resource: payload.path,
+              in: payload.in,
+              out: payload.out,
+              filters: [],
+            },
+            position,
+          },
+        });
+      })();
+    },
+    [editor, timeline, pxPerFrame],
   );
 
   // Blade — split the selected clip at the current playhead frame (the button; the
@@ -685,13 +732,13 @@ export function TimelineStrip({ editor, previewMuted, onTogglePreviewMute }: Tim
             scroll/playhead position. */}
         <div style={{ width: laneWidth, position: "relative", overflow: "hidden" }}>
           {/* Ruler — the ONLY scrub zone. Distinct background + a CTI flag handle. */}
+          {/* De-boxed: same field as the lanes, no strip borders — each tick is just
+              a left hairline + its label (the Premiere "quiet ruler"). */}
           <div
             style={{
               display: "flex",
               height: RULER_HEIGHT,
               position: "relative",
-              background: "#11141b",
-              borderBottom: "1px solid #232838",
               cursor: "ew-resize",
             }}
             onPointerDown={onRulerPointerDown}
@@ -720,11 +767,11 @@ export function TimelineStrip({ editor, previewMuted, onTogglePreviewMute }: Tim
                     left: t.frame * pxPerFrame,
                     top: 0,
                     bottom: 0,
-                    borderLeft: "1px solid #232838",
+                    borderLeft: "1px solid #1d2126",
                     paddingLeft: 4,
                     paddingTop: 3,
                     fontSize: 10,
-                    color: "#6b7280",
+                    color: "#6B716A",
                     fontFamily: "ui-monospace, monospace",
                     whiteSpace: "nowrap",
                   }}
@@ -738,7 +785,12 @@ export function TimelineStrip({ editor, previewMuted, onTogglePreviewMute }: Tim
 
           {/* Tracks in DISPLAY order — V(n)…V1 (compositing top first), then A1…A(n) —
               bracketed by the new-track gutter drop-zones. */}
-          <GutterDropZone side="top" active={drag?.newTrack === "top"} />
+          <GutterDropZone
+            side="top"
+            active={drag?.newTrack === "top"}
+            dragActive={Boolean(drag?.moved && drag.gesture.tool === "move")}
+            onMediaDrop={onGutterMediaDrop}
+          />
           {displayTracks(timeline).map((track) => (
             <TrackLane
               key={track.id}
@@ -755,7 +807,12 @@ export function TimelineStrip({ editor, previewMuted, onTogglePreviewMute }: Tim
               onMediaDrop={onMediaDrop}
             />
           ))}
-          <GutterDropZone side="bottom" active={drag?.newTrack === "bottom"} />
+          <GutterDropZone
+            side="bottom"
+            active={drag?.newTrack === "bottom"}
+            dragActive={Boolean(drag?.moved && drag.gesture.tool === "move")}
+            onMediaDrop={onGutterMediaDrop}
+          />
 
           <Playhead pxPerFrame={pxPerFrame} gutterWidth={GUTTER} rulerHeight={RULER_HEIGHT} />
 
@@ -810,8 +867,21 @@ function CtiHandle({ pxPerFrame }: { pxPerFrame: number }) {
 /** A thin drop-zone strip above the top track / below the bottom track. Dragging a
  *  clip of the matching kind into it creates a new track and moves the clip onto it.
  *  Subtly dashed at rest; gold when a matching drag is over it. */
-function GutterDropZone({ side, active }: { side: "top" | "bottom"; active: boolean }) {
-  const edge = active ? "1px dashed #c7ae7a" : "1px dashed rgba(230,227,218,0.07)";
+function GutterDropZone({
+  side,
+  active,
+  dragActive,
+  onMediaDrop,
+}: {
+  side: "top" | "bottom";
+  active: boolean;
+  /** True while ANY drag that could land here is in flight (an internal clip move
+   *  or a media drag) — lights the zone up so it's discoverable. */
+  dragActive: boolean;
+  onMediaDrop: (side: "top" | "bottom", e: React.DragEvent, stripEl: HTMLElement) => void;
+}) {
+  const [mediaOver, setMediaOver] = useState(false);
+  const lit = active || mediaOver;
   return (
     <div style={{ display: "flex", height: GUTTER_H }}>
       {/* frozen spacer under the header column */}
@@ -822,20 +892,44 @@ function GutterDropZone({ side, active }: { side: "top" | "bottom"; active: bool
           position: "sticky",
           left: 0,
           zIndex: 7,
+          display: "flex",
+          alignItems: "center",
+          paddingLeft: 10,
           background: "#0d0f14",
           borderRight: "1px solid #1b1e26",
+          fontSize: 9,
+          fontFamily: "ui-monospace, monospace",
+          letterSpacing: "0.08em",
+          color: lit ? "#c7ae7a" : dragActive ? "#9BA39B" : "#3a3f44",
         }}
-      />
+      >
+        + {side === "top" ? "V" : "A"}
+      </div>
       <div
         title={
           side === "top"
-            ? "drop a video clip here → new video track above"
-            : "drop an audio clip here → new audio track below"
+            ? "drop a video clip or media here → new video track above"
+            : "drop an audio clip or media here → new audio track below"
         }
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes(MEDIA_DRAG_MIME)) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "copy";
+            setMediaOver(true);
+          }
+        }}
+        onDragLeave={() => setMediaOver(false)}
+        onDrop={(e) => {
+          setMediaOver(false);
+          onMediaDrop(side, e, e.currentTarget as HTMLElement);
+        }}
         style={{
           flex: 1,
-          background: active ? "rgba(199,174,122,0.15)" : "transparent",
-          ...(side === "top" ? { borderBottom: edge } : { borderTop: edge }),
+          background: lit ? "rgba(199,174,122,0.18)" : "transparent",
+          border: `1px dashed ${lit ? "#c7ae7a" : dragActive ? "rgba(199,174,122,0.35)" : "rgba(230,227,218,0.08)"}`,
+          borderLeft: "none",
+          borderRight: "none",
+          transition: "background 120ms, border-color 120ms",
         }}
       />
     </div>

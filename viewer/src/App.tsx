@@ -18,6 +18,7 @@ import { Transport } from "./components/Transport";
 import { PreviewProvider } from "./PreviewProvider";
 import { SourceProvider, useSource } from "./SourceProvider";
 import type { TimelineResponse } from "./types";
+import { placeItems } from "./types";
 import { useTimelineEditor } from "./useTimelineEditor";
 
 // The graphic overlay is resolved PER-FRAME from the working IR (the graphic clip
@@ -187,6 +188,19 @@ function Stage({
     });
     setViewRev((r) => r + 1);
   }, []);
+  // Clip boundaries across all tracks — the transport's skip-back/forward targets.
+  const editPoints = useMemo(() => {
+    const pts = new Set<number>([0]);
+    for (const tr of [...editor.timeline.tracks.video, ...editor.timeline.tracks.audio]) {
+      for (const p of placeItems(tr)) {
+        if (p.item.kind !== "clip") continue;
+        pts.add(p.start);
+        pts.add(p.start + p.length);
+      }
+    }
+    return [...pts].sort((a, b) => a - b);
+  }, [editor.timeline]);
+
   const viewTimeline = useMemo(() => {
     if (previewMuted.size === 0) return editor.timeline;
     const blank = (t: (typeof editor.timeline.tracks.video)[number]) =>
@@ -331,6 +345,7 @@ function Stage({
               sinkId={sinkId}
             />
             <Transport
+              editPoints={editPoints}
               volume={volume}
               muted={muted}
               onVolumeChange={onVolumeChange}

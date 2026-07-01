@@ -1,14 +1,19 @@
-// Media panel — PROJECT-FIRST. The resting view is the media actually IN this
-// project (the unique sources placed on the timeline), as rich tiles: video/graphic
-// tiles show their first frame and PLAY on hover (streamed over the same /api/media
-// transport the monitor uses); audio shows as dense rows. The full disk catalog is
-// reachable on demand — type a query and Find (media.find) — never dumped wholesale.
-// Scan / add-root (catalog setup) stay tucked at the bottom.
+// Media panel — the PROJECT BIN (Premiere's project panel, vean-shaped). The
+// resting view is every asset imported into this project's media roots (the
+// sequestered per-project folders), grouped by folder, as TILES (hover-to-play,
+// streamed over /api/media) or a dense LIST — a persisted toggle. A gold dot marks
+// assets already placed on the timeline. Click loads the SOURCE monitor (pick a
+// span there); drag places it on a timeline track (or a gutter → new track).
+// Search (media.find) queries the catalog on demand; scan/add-root sit at the
+// bottom (setup, not the everyday flow).
+import { LayoutGrid, List } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchTimeline, mediaUrl, runAction } from "../../api";
-import { MEDIA_DRAG_MIME, type MediaDragPayload, useSource } from "../../SourceProvider";
-import { type Fps, isGraphicClip, type Timeline } from "../../types";
-import { Btn, C, Note, fieldStyle, mono, rowStyle } from "./ui";
+import { Button } from "@/components/ui/button";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { MEDIA_DRAG_MIME, type MediaDragPayload, type SourceMedia, useSource } from "../../SourceProvider";
+import type { Fps } from "../../types";
+import { C, Note, fieldStyle, mono, rowStyle } from "./ui";
 
 interface MediaAsset {
   id: string;
@@ -19,14 +24,8 @@ interface MediaAsset {
   mtimeMs: number | null;
 }
 
-/** One unique source used by the timeline: its path + kind + total placed time. */
-interface ProjectSource {
-  path: string;
-  name: string;
-  kind: "video" | "audio" | "graphic";
-  /** Total frames of this source placed across the timeline. */
-  frames: number;
-}
+type ViewMode = "tiles" | "list";
+const VIEW_KEY = "vean.mediaView";
 
 function fmtBytes(n: number | null): string {
   if (n == null) return "—";
@@ -40,13 +39,19 @@ function fmtBytes(n: number | null): string {
   return `${i === 0 ? value : value.toFixed(1)} ${units[i]}`;
 }
 
-function fmtSeconds(frames: number, fps: Fps): string {
-  const s = frames / (fps[0] / fps[1]);
-  return s >= 60 ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}` : `${s.toFixed(1)}s`;
-}
-
 function basename(p: string): string {
   return p.replace(/\\/g, "/").split("/").pop() ?? p;
+}
+
+/** Folder group for an asset: its relativePath's first segment, else by kind. */
+function groupOf(a: MediaAsset): string {
+  const rel = a.relativePath.replace(/\\/g, "/");
+  if (rel.includes("/")) return rel.split("/")[0] ?? "";
+  return a.kind === "audio" ? "audio" : "footage";
+}
+
+function sourceKind(kind: string): SourceMedia["kind"] {
+  return kind === "audio" ? "audio" : "video";
 }
 
 const kindColor: Record<string, string> = {
@@ -57,68 +62,42 @@ const kindColor: Record<string, string> = {
   unknown: "#6b7280",
 };
 
-/** Collect the unique real sources placed on the timeline (color generators are
- *  synthesized, not media — skipped). */
-function projectSources(timeline: Timeline): { sources: ProjectSource[]; fps: Fps } {
-  const byPath = new Map<string, ProjectSource>();
-  for (const [kind, tracks] of [
-    ["video", timeline.tracks.video],
-    ["audio", timeline.tracks.audio],
-  ] as const) {
-    for (const tr of tracks) {
-      for (const it of tr.items) {
-        if (it.kind !== "clip" || it.service === "color") continue;
-        const frames = it.out - it.in + 1;
-        const prev = byPath.get(it.resource);
-        if (prev) {
-          prev.frames += frames;
-        } else {
-          byPath.set(it.resource, {
-            path: it.resource,
-            name: it.label ? it.label.split(":")[0] : basename(it.resource),
-            kind: isGraphicClip(it) ? "graphic" : kind,
-            frames,
-          });
-        }
-      }
-    }
-  }
-  // Visual sources first (tiles), then audio (rows); stable by name within each.
-  const sources = [...byPath.values()].sort((a, b) =>
-    a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "audio" ? 1 : -1,
-  );
-  return { sources, fps: timeline.profile.fps };
-}
-
-/** A hover-to-play tile for a visual source (streams the real file). Click loads it
- *  into the SOURCE monitor (pick a span there); drag places the whole clip on a
- *  timeline track directly. */
-function SourceTile({
-  src,
+/** A hover-to-play bin tile. Click → source monitor; drag → timeline. */
+function BinTile({
+  asset,
   route,
   fps,
+  placed,
   onSelect,
 }: {
-  src: ProjectSource;
+  asset: MediaAsset;
   route?: string;
   fps: Fps;
+  placed: boolean;
   onSelect: () => void;
 }) {
   const fpsWhole = Math.max(1, Math.round(fps[0] / fps[1]));
+  const name = basename(asset.relativePath || asset.path);
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents: tiles are pointer affordances; the panel stays keyboard-reachable via the list
+    // biome-ignore lint/a11y/useKeyWithClickEvents: pointer affordance; the list view is keyboard-reachable
     <div
-      title={`${src.path}\nclick → source monitor · drag → timeline`}
+      title={`${asset.path}\nclick → source monitor · drag → timeline`}
       onClick={onSelect}
       draggable
       onDragStart={(e) => {
         const v = (e.currentTarget as HTMLElement).querySelector("video");
         if (!v || !Number.isFinite(v.duration) || v.duration <= 0) {
-          e.preventDefault(); // metadata not in yet — click into the source monitor instead
+          e.preventDefault();
           return;
         }
         const durF = Math.max(1, Math.round(v.duration * fpsWhole));
-        const payload: MediaDragPayload = { path: src.path, name: src.name, kind: src.kind, in: 0, out: durF - 1 };
+        const payload: MediaDragPayload = {
+          path: asset.path,
+          name,
+          kind: sourceKind(asset.kind),
+          in: 0,
+          out: durF - 1,
+        };
         e.dataTransfer.setData(MEDIA_DRAG_MIME, JSON.stringify(payload));
         e.dataTransfer.effectAllowed = "copy";
       }}
@@ -134,9 +113,9 @@ function SourceTile({
           border: `1px solid ${C.border}`,
         }}
       >
-        {/* biome-ignore lint/a11y/useMediaCaption: a silent hover preview, not playback */}
+        {/* biome-ignore lint/a11y/useMediaCaption: silent hover preview */}
         <video
-          src={mediaUrl(src.path, route)}
+          src={mediaUrl(asset.path, route)}
           muted
           playsInline
           preload="metadata"
@@ -149,17 +128,20 @@ function SourceTile({
           }}
           style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
         />
-        <span
-          style={{
-            position: "absolute",
-            left: 4,
-            bottom: 4,
-            width: 7,
-            height: 7,
-            borderRadius: 2,
-            background: kindColor[src.kind],
-          }}
-        />
+        {placed ? (
+          <span
+            title="placed on the timeline"
+            style={{
+              position: "absolute",
+              right: 4,
+              top: 4,
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background: "#c7ae7a",
+            }}
+          />
+        ) : null}
       </div>
       <div style={{ display: "flex", gap: 6, alignItems: "baseline", minWidth: 0 }}>
         <span
@@ -172,10 +154,10 @@ function SourceTile({
             whiteSpace: "nowrap",
           }}
         >
-          {src.name}
+          {name}
         </span>
         <span style={{ fontSize: 10, color: C.dim, fontFamily: mono, flexShrink: 0 }}>
-          {fmtSeconds(src.frames, fps)}
+          {fmtBytes(asset.sizeBytes)}
         </span>
       </div>
     </div>
@@ -184,32 +166,74 @@ function SourceTile({
 
 export function MediaPanel({ project, route }: { project?: string; route?: string }) {
   const { select } = useSource();
-  const [timeline, setTimeline] = useState<Timeline | null>(null);
-  const [results, setResults] = useState<MediaAsset[] | null>(null); // null = no search yet
+  const [assets, setAssets] = useState<MediaAsset[]>([]);
+  const [placedPaths, setPlacedPaths] = useState<Set<string>>(new Set());
+  const [fps, setFps] = useState<Fps>([30, 1]);
+  const [view, setView] = useState<ViewMode>(
+    () => (localStorage.getItem(VIEW_KEY) as ViewMode) || "tiles",
+  );
+  const [results, setResults] = useState<MediaAsset[] | null>(null); // null = no search
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [newRoot, setNewRoot] = useState("");
 
-  // The project's own media — derived from the timeline document itself.
+  const setViewPersist = (v: ViewMode) => {
+    setView(v);
+    localStorage.setItem(VIEW_KEY, v);
+  };
+
+  // The bin: everything in the project's media roots.
+  const loadBin = useCallback(async () => {
+    try {
+      const out = await runAction<MediaAsset[]>("media.list", {}, project);
+      setAssets(Array.isArray(out) ? out : []);
+    } catch (e) {
+      setErr(String((e as Error)?.message ?? e));
+    }
+  }, [project]);
+  useEffect(() => {
+    void loadBin();
+  }, [loadBin]);
+
+  // Which bin assets are already placed on the timeline (the gold dot).
   useEffect(() => {
     let cancelled = false;
     fetchTimeline(route)
-      .then((res) => !cancelled && setTimeline(res.timeline))
-      .catch(() => !cancelled && setTimeline(null));
+      .then((res) => {
+        if (cancelled) return;
+        setFps(res.timeline.profile.fps);
+        const placed = new Set<string>();
+        for (const tr of [...res.timeline.tracks.video, ...res.timeline.tracks.audio]) {
+          for (const it of tr.items) {
+            if (it.kind === "clip" && it.service !== "color") placed.add(it.resource);
+          }
+        }
+        setPlacedPaths(placed);
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, [route]);
 
-  const inProject = useMemo(() => (timeline ? projectSources(timeline) : null), [timeline]);
-  const tiles = inProject?.sources.filter((s) => s.kind !== "audio") ?? [];
-  const audio = inProject?.sources.filter((s) => s.kind === "audio") ?? [];
+  const groups = useMemo(() => {
+    const byGroup = new Map<string, MediaAsset[]>();
+    for (const a of assets) {
+      const g = groupOf(a);
+      const arr = byGroup.get(g) ?? [];
+      arr.push(a);
+      byGroup.set(g, arr);
+    }
+    for (const arr of byGroup.values())
+      arr.sort((x, y) => (x.relativePath || x.path).localeCompare(y.relativePath || y.path));
+    return [...byGroup.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [assets]);
 
   const find = useCallback(async () => {
     const q = query.trim();
     if (!q) {
-      setResults(null); // empty query → back to the project view, not a full dump
+      setResults(null);
       return;
     }
     setBusy(true);
@@ -228,8 +252,10 @@ export function MediaPanel({ project, route }: { project?: string; route?: strin
     setBusy(true);
     setErr(null);
     try {
-      await runAction("media.scan", {}, project);
-      if (results) await find();
+      // Scan EVERY root (the action scans one per call).
+      const roots = await runAction<Array<{ id: string }>>("media.root.list", {}, project);
+      for (const r of roots ?? []) await runAction("media.scan", { rootId: r.id }, project);
+      await loadBin();
     } catch (e) {
       setErr(String((e as Error)?.message ?? e));
     } finally {
@@ -244,30 +270,79 @@ export function MediaPanel({ project, route }: { project?: string; route?: strin
     try {
       await runAction("media.root.add", { path: newRoot.trim() }, project);
       setNewRoot("");
+      await scan();
     } catch (e) {
       setErr(String((e as Error)?.message ?? e));
-    } finally {
       setBusy(false);
     }
   };
 
+  const selectAsset = (a: MediaAsset) =>
+    select({ path: a.path, name: basename(a.relativePath || a.path), kind: sourceKind(a.kind) });
+
+  const Row = (a: MediaAsset, i: number) => (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: pointer affordance
+    <div
+      key={a.id}
+      style={{ ...rowStyle(i), cursor: "pointer" }}
+      title={`${a.path}\nclick → source monitor`}
+      onClick={() => selectAsset(a)}
+    >
+      <span
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: 2,
+          background: kindColor[a.kind] ?? kindColor.unknown,
+          flexShrink: 0,
+        }}
+      />
+      <span
+        style={{
+          flex: 1,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {basename(a.relativePath || a.path)}
+      </span>
+      {placedPaths.has(a.path) ? (
+        <span
+          title="placed on the timeline"
+          style={{ width: 6, height: 6, borderRadius: "50%", background: "#c7ae7a", flexShrink: 0 }}
+        />
+      ) : null}
+      <span style={{ color: C.dim, flexShrink: 0, fontFamily: mono, fontSize: 10 }}>
+        {fmtBytes(a.sizeBytes)}
+      </span>
+    </div>
+  );
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      {/* Search the disk catalog — results appear ONLY when you ask. */}
+      {/* Search + view toggle. */}
       <form
         onSubmit={(e) => {
           e.preventDefault();
           void find();
         }}
-        style={{ padding: "8px 10px", display: "flex", gap: 6, borderBottom: `1px solid ${C.border}` }}
+        style={{ padding: "8px 10px", display: "flex", gap: 6, alignItems: "center", borderBottom: `1px solid ${C.border}` }}
       >
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Find media on disk…"
+          placeholder="Find media…"
           style={fieldStyle}
         />
-        <Btn disabled={busy}>Find</Btn>
+        <ToggleGroup type="single" value={view} onValueChange={(v) => v && setViewPersist(v as ViewMode)}>
+          <ToggleGroupItem value="tiles" aria-label="Tile view" title="Tile view">
+            <LayoutGrid size={13} strokeWidth={1.75} />
+          </ToggleGroupItem>
+          <ToggleGroupItem value="list" aria-label="List view" title="List view">
+            <List size={13} strokeWidth={1.75} />
+          </ToggleGroupItem>
+        </ToggleGroup>
       </form>
       {err && <Note kind="error">{err}</Note>}
 
@@ -275,103 +350,49 @@ export function MediaPanel({ project, route }: { project?: string; route?: strin
         {results ? (
           <>
             <div style={sectionEyebrow}>
-              CATALOG · {results.length}
-              <button type="button" onClick={() => setResults(null)} style={clearBtn} title="Back to project media">
+              RESULTS · {results.length}
+              <button type="button" onClick={() => setResults(null)} style={clearBtn} title="Back to the bin">
                 ✕
               </button>
             </div>
-            {results.length === 0 && !busy ? <Note kind="dim">No matches in the catalog.</Note> : null}
-            {results.map((m, i) => (
-              <div key={m.id} style={rowStyle(i)} title={m.path}>
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 2,
-                    background: kindColor[m.kind] ?? kindColor.unknown,
-                    flexShrink: 0,
-                  }}
-                />
-                <span
-                  style={{
-                    flex: 1,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    fontFamily: mono,
-                  }}
-                >
-                  {m.relativePath || m.path}
-                </span>
-                <span style={{ color: C.dim, flexShrink: 0 }}>{fmtBytes(m.sizeBytes)}</span>
-              </div>
-            ))}
+            {results.length === 0 && !busy ? <Note kind="dim">No matches.</Note> : null}
+            {results.map(Row)}
           </>
+        ) : assets.length === 0 ? (
+          <Note kind="dim">Bin is empty. Add a media root below, then Scan.</Note>
         ) : (
-          <>
-            <div style={sectionEyebrow}>IN PROJECT{inProject ? ` · ${inProject.sources.length}` : ""}</div>
-            {inProject && inProject.sources.length === 0 ? (
-              <Note kind="dim">No media placed on this timeline yet.</Note>
-            ) : null}
-            {tiles.length > 0 && inProject ? (
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 8,
-                  padding: "8px 10px",
-                }}
-              >
-                {tiles.map((s) => (
-                  <SourceTile
-                    key={s.path}
-                    src={s}
-                    route={route}
-                    fps={inProject.fps}
-                    onSelect={() => select({ path: s.path, name: s.name, kind: s.kind })}
-                  />
-                ))}
+          groups.map(([group, arr]) => (
+            <div key={group}>
+              <div style={sectionEyebrow}>
+                {group.toUpperCase()} · {arr.length}
               </div>
-            ) : null}
-            {audio.length > 0 && inProject
-              ? audio.map((s, i) => (
-                  // biome-ignore lint/a11y/useKeyWithClickEvents: pointer affordance; source monitor reachable from tiles too
-                  <div
-                    key={s.path}
-                    style={{ ...rowStyle(i), cursor: "pointer" }}
-                    title={`${s.path}\nclick → source monitor (pick a span, then drag to the timeline)`}
-                    onClick={() => select({ path: s.path, name: s.name, kind: s.kind })}
-                  >
-                    <span
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: 2,
-                        background: kindColor.audio,
-                        flexShrink: 0,
-                      }}
-                    />
-                    <span
-                      style={{
-                        flex: 1,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {s.name}
-                    </span>
-                    <span style={{ color: C.dim, flexShrink: 0, fontFamily: mono, fontSize: 10 }}>
-                      {fmtSeconds(s.frames, inProject.fps)}
-                    </span>
+              {view === "tiles" ? (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, padding: "6px 10px 8px" }}>
+                    {arr
+                      .filter((a) => a.kind !== "audio")
+                      .map((a) => (
+                        <BinTile
+                          key={a.id}
+                          asset={a}
+                          route={route}
+                          fps={fps}
+                          placed={placedPaths.has(a.path)}
+                          onSelect={() => selectAsset(a)}
+                        />
+                      ))}
                   </div>
-                ))
-              : null}
-          </>
+                  {arr.filter((a) => a.kind === "audio").map(Row)}
+                </>
+              ) : (
+                arr.map(Row)
+              )}
+            </div>
+          ))
         )}
       </div>
 
-      {/* Catalog setup — tucked away; not part of the everyday flow. */}
+      {/* Catalog setup — tucked away. */}
       <div style={{ padding: "8px 10px", display: "flex", gap: 6, borderTop: `1px solid ${C.border}` }}>
         <input
           value={newRoot}
@@ -379,12 +400,12 @@ export function MediaPanel({ project, route }: { project?: string; route?: strin
           placeholder="/path/to/media"
           style={fieldStyle}
         />
-        <Btn onClick={addRoot} disabled={busy || !newRoot.trim()}>
+        <Button size="sm" variant="outline" onClick={addRoot} disabled={busy || !newRoot.trim()}>
           Add root
-        </Btn>
-        <Btn onClick={scan} disabled={busy} title="Rescan media roots">
+        </Button>
+        <Button size="sm" variant="outline" onClick={scan} disabled={busy} title="Rescan all media roots">
           Scan
-        </Btn>
+        </Button>
       </div>
     </div>
   );

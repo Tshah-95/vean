@@ -50,6 +50,7 @@ import type { ResolvedProject } from "../project/context";
 import { transcriptFromJobs } from "../query/transcript-read";
 import { TRANSCRIBE_JOB_KIND } from "../state/job-types";
 import { listJobsByKind } from "../state/jobs";
+import { listMediaRoots } from "../state/media";
 import { findByOutPath, remotionCacheDir } from "../state/remotionCache";
 import { resolveTimelineTarget } from "../state/timeline";
 import { listTimelines } from "../state/timeline";
@@ -234,6 +235,23 @@ function referencedResources(timeline: ReturnType<typeof fromMlt>): Set<string> 
     }
   }
   return out;
+}
+
+/** Is `resolved` inside one of the project's registered MEDIA ROOTS? The media
+ *  transport serves the project BIN (imported-but-not-yet-placed media — the
+ *  Media panel's tiles + the source monitor), not just timeline-referenced
+ *  resources. Roots are registered state (`vean media root add`), so this stays
+ *  an allow-list — never arbitrary disk. */
+function underMediaRoot(repo: string, resolved: string): boolean {
+  try {
+    for (const root of listMediaRoots(repo)) {
+      const base = resolve(root.path);
+      if (resolved === base || resolved.startsWith(`${base}/`)) return true;
+    }
+  } catch {
+    // No state DB / no roots — fall through to "not allowed".
+  }
+  return false;
 }
 
 /** Enrich the WIRE IR with Remotion-overlay identity recovered from the render
@@ -705,9 +723,15 @@ export function createPreviewHandler(
       if ("error" in got) return got.error;
       const allow = referencedResources(got.session.ir);
       const resolved = resolve(requested);
-      if (!allow.has(resolved)) {
+      // Timeline-referenced resources AND the project's registered media roots (the
+      // BIN — imported media previews before it's placed).
+      if (!allow.has(resolved) && !underMediaRoot(repo, resolved)) {
         return jsonResponse(
-          { ok: false, kind: "forbidden", detail: "path is not referenced by this timeline" },
+          {
+            ok: false,
+            kind: "forbidden",
+            detail: "path is not referenced by this timeline or a media root",
+          },
           403,
         );
       }
@@ -738,9 +762,13 @@ export function createPreviewHandler(
       if ("error" in got) return got.error;
       const allow = referencedResources(got.session.ir);
       const resolvedReq = resolve(requested);
-      if (!allow.has(resolvedReq)) {
+      if (!allow.has(resolvedReq) && !underMediaRoot(repo, resolvedReq)) {
         return jsonResponse(
-          { ok: false, kind: "forbidden", detail: "path is not referenced by this timeline" },
+          {
+            ok: false,
+            kind: "forbidden",
+            detail: "path is not referenced by this timeline or a media root",
+          },
           403,
         );
       }
