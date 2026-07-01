@@ -225,6 +225,15 @@ function Stage({
     return () => window.removeEventListener("keydown", onKey);
   }, [editor, clock]);
 
+  // AUTOSAVE — there is no Save button: a beat after any committed edit, the
+  // working IR serializes to disk, so the document is ALWAYS saved (the top bar
+  // shows the ambient "saving…/saved" state). ⌘S still forces an immediate save.
+  useEffect(() => {
+    if (!editor.dirty) return;
+    const t = setTimeout(() => void editor.save(), 1000);
+    return () => clearTimeout(t);
+  }, [editor.dirty, editor.save]);
+
   return (
     <AppShell
       title={data.timeline.title}
@@ -235,6 +244,7 @@ function Stage({
       width={data.profile.width}
       height={data.profile.height}
       diagnostics={diagnostics}
+      saveState={editor.dirty ? "saving" : "saved"}
       projects={projects}
       currentResolvedPath={data.resolvedPath}
       preview={

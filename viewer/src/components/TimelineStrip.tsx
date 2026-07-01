@@ -18,7 +18,7 @@
 // solves scale = paneWidth/totalFrames ONCE, not a live binding. We fit on load and
 // on document change, then leave it alone. The ruler picks a "nice" interval + label
 // format from the current scale.
-import { AudioLines, Film } from "lucide-react";
+import { AudioLines, Expand, Film, Magnet, Redo2, Slice, Undo2, ZoomIn, ZoomOut } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useClockInstance } from "../ClockProvider";
 import { usePreviewInstance } from "../PreviewProvider";
@@ -119,7 +119,15 @@ interface DragState {
    *  clip's kind and move onto it. "top" = a new video track above; "bottom" = a new
    *  audio track below. null = a normal (existing-track) move. */
   newTrack: "top" | "bottom" | null;
+  /** True once the pointer has travelled past the drag threshold. Until then the
+   *  gesture is a CLICK-IN-PROGRESS: no snap, no delta, no monitor preview — so a
+   *  plain click selects without the timeline or monitor reacting (the pro-NLE
+   *  drag-doesn't-start-until-you-move contract). */
+  moved: boolean;
 }
+
+/** Pointer travel (px) before a pointerdown becomes a DRAG. Below this it's a click. */
+const DRAG_THRESHOLD_PX = 4;
 
 export function TimelineStrip({ editor }: TimelineStripProps) {
   const { timeline, totalFrames, selectedId, diagnosticsByClip } = editor;
@@ -363,6 +371,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         ripple: gesture.ripple,
         toTrackId: track.id,
         newTrack: null,
+        moved: false,
       });
     },
     [editor],
@@ -393,6 +402,11 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
       }
       setDrag((d) => {
         if (!d) return d;
+        // Below the drag threshold this is still a CLICK: no snap, no delta, no
+        // preview — the clip just stays selected and nothing reacts. (Snapping on a
+        // raw pointerdown could otherwise yank dxFrames non-zero at fit zoom, which
+        // made a plain click jump the monitor.)
+        if (!d.moved && Math.abs(clientX - d.startClientX) < DRAG_THRESHOLD_PX) return d;
         const rawFrames = Math.round((clientX - d.startClientX) / pxPerFrame);
         const g = d.gesture;
         let dxFrames = rawFrames;
@@ -446,7 +460,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         const clamped = Math.max(bounds.min, Math.min(bounds.max, dxFrames));
         if (clamped !== dxFrames) snappedTo = null;
         dxFrames = clamped;
-        return { ...d, dxFrames, snappedTo, toTrackId, newTrack };
+        return { ...d, dxFrames, snappedTo, toTrackId, newTrack, moved: true };
       });
     },
     [pxPerFrame, snapCandidates, snapEnabled, timeline],
@@ -491,7 +505,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
   // returns null for a zero-frame / non-clip / graphic drag → the monitor holds the
   // live playhead frame until the drag actually bites.
   useEffect(() => {
-    if (!drag) return;
+    if (!drag || !drag.moved) return; // a plain click never touches the monitor
     previewStore.set(buildDragPreview(timeline, drag.gesture, drag.dxFrames));
   }, [drag, timeline, previewStore]);
 
@@ -532,58 +546,28 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 6,
-          padding: "6px 12px",
-          fontSize: 11,
-          color: "#6b7280",
+          gap: 4,
+          padding: "5px 12px",
           borderBottom: "1px solid #14171f",
         }}
       >
-        <span>timeline</span>
-        {drag ? (
-          <span style={{ color: "#c7ae7a", fontFamily: "ui-monospace, monospace" }}>
-            {drag.gesture.tool}
-            {drag.ripple ? " · ripple" : ""}
-          </span>
-        ) : null}
-
-        {/* Edit controls — blade, undo/redo, save, and the dirty/saved indicator. */}
-        <div style={{ width: 8 }} />
-        <button
-          type="button"
+        {/* Edit tools — lucide icons, tooltips carry the words. */}
+        <IconBtn
           onClick={onBlade}
           disabled={!selectedId}
-          style={{ ...zoomBtn, width: "auto", padding: "0 8px" }}
-          aria-label="Blade (split) at playhead"
-          title="Blade — split the selected clip at the playhead ( B )"
+          label="Blade — split the selected clip at the playhead ( B )"
         >
-          ⫶ Blade
-        </button>
-        <button type="button" onClick={editor.undo} disabled={!editor.canUndo} style={zoomBtn} aria-label="Undo" title="Undo ( ⌘Z )">
-          ↶
-        </button>
-        <button type="button" onClick={editor.redo} disabled={!editor.canRedo} style={zoomBtn} aria-label="Redo" title="Redo ( ⌘⇧Z )">
-          ↷
-        </button>
-        <button
-          type="button"
-          onClick={editor.save}
-          disabled={!editor.dirty && !editor.justSaved}
-          style={{
-            ...zoomBtn,
-            width: "auto",
-            padding: "0 8px",
-            color: editor.justSaved ? "#7fd99a" : editor.dirty ? "#e2c275" : "#6b7280",
-            borderColor: editor.dirty ? "#5a4a1f" : "#2a2e3a",
-          }}
-          aria-label="Save"
-          title="Save to disk ( ⌘S )"
-        >
-          {editor.justSaved ? "✓ Saved" : editor.dirty ? "● Save" : "Save"}
-        </button>
+          <Slice size={14} strokeWidth={1.75} />
+        </IconBtn>
+        <IconBtn onClick={editor.undo} disabled={!editor.canUndo} label="Undo ( ⌘Z )">
+          <Undo2 size={14} strokeWidth={1.75} />
+        </IconBtn>
+        <IconBtn onClick={editor.redo} disabled={!editor.canRedo} label="Redo ( ⌘⇧Z )">
+          <Redo2 size={14} strokeWidth={1.75} />
+        </IconBtn>
         {editor.lastError ? (
           <span
-            style={{ color: "#e08585", fontFamily: "ui-monospace, monospace", fontSize: 10 }}
+            style={{ color: "#e08585", fontFamily: "ui-monospace, monospace", fontSize: 10, marginLeft: 6 }}
             title={editor.lastError}
           >
             {editor.lastError.length > 36 ? `${editor.lastError.slice(0, 33)}…` : editor.lastError}
@@ -591,38 +575,24 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         ) : null}
 
         <div style={{ flex: 1 }} />
-        <button
-          type="button"
+        <IconBtn
           onClick={() => setSnapEnabled((s) => !s)}
-          aria-label="Toggle snapping"
-          aria-pressed={snapEnabled}
-          title={`Snapping ${snapEnabled ? "ON" : "OFF"} — click to ${snapEnabled ? "position freely" : "align edges to clips + playhead"}`}
-          style={{
-            ...zoomBtn,
-            width: "auto",
-            padding: "0 8px",
-            color: snapEnabled ? "#c7ae7a" : "#6b7280",
-            borderColor: snapEnabled ? "#5a4a1f" : "#2a2e3a",
-          }}
+          active={snapEnabled}
+          pressed={snapEnabled}
+          label={`Snapping ${snapEnabled ? "on" : "off"} — align edges to clips + the playhead`}
         >
-          {snapEnabled ? "🧲 Snap" : "Snap off"}
-        </button>
-        <div style={{ width: 8 }} />
-        <button type="button" onClick={zoomOut} disabled={pxPerFrame <= minScale + 1e-9} style={zoomBtn} aria-label="Zoom out" title="Zoom out ( − )">
-          −
-        </button>
-        <button
-          type="button"
-          onClick={zoomFit}
-          style={{ ...zoomBtn, width: "auto", padding: "0 8px", color: atFit ? "#c7ae7a" : "#9aa0ae" }}
-          aria-label="Zoom to fit"
-          title="Zoom to fit ( \\ )"
-        >
-          Fit
-        </button>
-        <button type="button" onClick={zoomIn} disabled={pxPerFrame >= MAX_PX_PER_FRAME - 1e-6} style={zoomBtn} aria-label="Zoom in" title="Zoom in ( = )">
-          +
-        </button>
+          <Magnet size={14} strokeWidth={1.75} />
+        </IconBtn>
+        <div style={{ width: 6 }} />
+        <IconBtn onClick={zoomOut} disabled={pxPerFrame <= minScale + 1e-9} label="Zoom out ( − )">
+          <ZoomOut size={14} strokeWidth={1.75} />
+        </IconBtn>
+        <IconBtn onClick={zoomFit} active={atFit} label="Fit the whole timeline in view ( \\ )">
+          <Expand size={14} strokeWidth={1.75} />
+        </IconBtn>
+        <IconBtn onClick={zoomIn} disabled={pxPerFrame >= MAX_PX_PER_FRAME - 1e-6} label="Zoom in ( = )">
+          <ZoomIn size={14} strokeWidth={1.75} />
+        </IconBtn>
       </div>
 
       <div
@@ -738,8 +708,10 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
   );
 }
 
-/** The CTI (current-time indicator) flag handle docked in the ruler — the explicit
- *  grab target for scrubbing. A downward triangle pinned to the playhead frame. */
+/** The CTI (current-time indicator) marker docked at the BOTTOM of the ruler — a
+ *  small, dimmed downward arrow whose tip meets the track rows at the playhead
+ *  frame. Deliberately quiet: no solid bar, no glow (the ruler itself is the scrub
+ *  surface; this just marks where you are). */
 function CtiHandle({ pxPerFrame }: { pxPerFrame: number }) {
   const clock = useClockInstance();
   const [frame, setFrame] = useState(clock.getSnapshot().currentFrame);
@@ -749,15 +721,14 @@ function CtiHandle({ pxPerFrame }: { pxPerFrame: number }) {
       style={{
         position: "absolute",
         left: frame * pxPerFrame,
-        top: 0,
+        bottom: 0,
         transform: "translateX(-50%)",
-        width: 13,
-        height: 13,
-        background: "#e2574c",
+        width: 9,
+        height: 7,
+        background: "rgba(226, 87, 76, 0.65)",
         clipPath: "polygon(0 0, 100% 0, 50% 100%)",
         pointerEvents: "none",
         zIndex: 6,
-        filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.5))",
       }}
     />
   );
@@ -853,9 +824,9 @@ function TrackLane({
           // A MOVE leaves the clip DIMMED at its origin while a translucent ghost
           // (MoveOverlay, on the TARGET lane) shows where it will land — so a
           // cross-track drop reads correctly. Other tools preview in place.
-          const isMoveSource = beingDragged && drag?.gesture.tool === "move";
+          const isMoveSource = beingDragged && drag?.moved && drag?.gesture.tool === "move";
           const diags = uuid ? diagnosticsByClip.get(uuid) : undefined;
-          const readout = beingDragged && drag ? gestureReadout(drag, p) : null;
+          const readout = beingDragged && drag?.moved ? gestureReadout(drag, p) : null;
           // Same-track flush neighbours decide whether an edge hover reads as a
           // roll (col-resize) or a trim (ew-resize).
           const prev = i > 0 ? placed[i - 1] : null;
@@ -907,7 +878,7 @@ function TrackLane({
         {/* MOVE overlay: drawn on the SOURCE lane (a dashed origin outline) and on
             the TARGET lane (the translucent ghost shell + a red wash over content the
             drop will OVERWRITE). Same lane when it's a same-track move. */}
-        {drag &&
+        {drag?.moved &&
         drag.gesture.tool === "move" &&
         (drag.gesture.trackId === track.id || drag.toTrackId === track.id) ? (
           <MoveOverlay track={track} drag={drag} placed={placed} pxPerFrame={pxPerFrame} />
@@ -1124,14 +1095,52 @@ function gestureReadout(drag: DragState, previewed: PlacedItem): string | null {
   }
 }
 
-const zoomBtn: React.CSSProperties = {
-  height: 20,
-  minWidth: 22,
-  borderRadius: 4,
-  border: "1px solid #2a2e3a",
-  background: "#161922",
-  color: "#9aa0ae",
-  cursor: "pointer",
-  fontSize: 13,
-  lineHeight: 1,
-};
+/** A quiet square icon button for the timeline toolbar: lucide glyph inherits
+ *  currentColor; gold when `active`; the words live in the tooltip/aria-label. */
+function IconBtn({
+  onClick,
+  disabled,
+  active,
+  pressed,
+  label,
+  children,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  active?: boolean;
+  pressed?: boolean;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      aria-pressed={pressed}
+      title={label}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 24,
+        height: 22,
+        borderRadius: 4,
+        border: "none",
+        background: "transparent",
+        color: active ? "#c7ae7a" : "#9BA39B",
+        cursor: disabled ? "default" : "pointer",
+        opacity: disabled ? 0.35 : 1,
+      }}
+      onMouseEnter={(e) => {
+        if (!disabled) (e.currentTarget as HTMLElement).style.background = "#1b1e23";
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLElement).style.background = "transparent";
+      }}
+    >
+      {children}
+    </button>
+  );
+}

@@ -38,7 +38,7 @@ export function TopBar({
   fps,
   width,
   height,
-  diagnostics,
+  saveState,
   projects = [],
   currentResolvedPath,
   onSettings,
@@ -49,7 +49,8 @@ export function TopBar({
   fps: Fps;
   width: number;
   height: number;
-  diagnostics?: { errors: number; warnings: number } | null;
+  /** Ambient autosave state — the document is always saved; this just says so. */
+  saveState?: "saved" | "saving";
   projects?: ProjectEntry[];
   currentResolvedPath?: string;
   onSettings: () => void;
@@ -82,16 +83,19 @@ export function TopBar({
         <span className="text-[13px] text-foreground">{title}</span>
       )}
       {displayRoute ? <span className="font-mono text-[11px] text-fg-3">{displayRoute}</span> : null}
+      {saveState ? (
+        <span
+          className={`font-mono text-[11px] ${saveState === "saving" ? "text-amber" : "text-fg-3"}`}
+          title="Edits autosave — the document on disk always matches what you see (⌘S forces it)"
+        >
+          {saveState === "saving" ? "saving…" : "saved"}
+        </span>
+      ) : null}
       <span className="flex-1" />
       <Badge>
         {width}×{height}
       </Badge>
       <Badge>{fpsLabel(fps)} fps</Badge>
-      {diagnostics ? (
-        <Badge tone={diagnostics.errors > 0 ? "error" : diagnostics.warnings > 0 ? "warn" : "ok"}>
-          {diagnostics.errors} err · {diagnostics.warnings} warn
-        </Badge>
-      ) : null}
       <button
         type="button"
         onClick={onSettings}

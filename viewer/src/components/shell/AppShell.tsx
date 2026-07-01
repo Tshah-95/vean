@@ -23,6 +23,8 @@ export interface AppShellProps {
   width: number;
   height: number;
   diagnostics?: { errors: number; warnings: number } | null;
+  /** Ambient autosave state shown in the top bar (there is no Save button). */
+  saveState?: "saved" | "saving";
   projects?: ProjectEntry[];
   currentResolvedPath?: string;
   /** Center of the top band: monitor + transport. */
@@ -46,7 +48,7 @@ export function AppShell(props: AppShellProps) {
         fps={props.fps}
         width={props.width}
         height={props.height}
-        diagnostics={props.diagnostics}
+        saveState={props.saveState}
         projects={props.projects}
         currentResolvedPath={props.currentResolvedPath}
         onSettings={() => setView("settings")}

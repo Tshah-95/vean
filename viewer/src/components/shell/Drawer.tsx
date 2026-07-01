@@ -59,7 +59,7 @@ export function Drawer({
         })}
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
-        {view === "media" ? <MediaPanel project={project} /> : null}
+        {view === "media" ? <MediaPanel project={project} route={route} /> : null}
         {view === "checks" ? <ChecksPanel route={route} /> : null}
         {view === "branch" ? <SessionsPanel project={project} route={route} baseTitle={baseTitle} /> : null}
         {view === "jobs" ? <RenderPanel route={route} /> : null}
