@@ -741,6 +741,43 @@ const actions = [
     },
   }),
   action({
+    id: "timeline.show",
+    title: "Show Timeline",
+    description:
+      "Structured inventory of a timeline — tracks, clips, frame spans, overlays, audio, diagnostics. The text half of the inspect pair (like get_timeline); pair with inspect.timeline for rendered frames.",
+    input: z.object({
+      uri: z.string().optional(),
+      timeline: z.string().optional(),
+      repo: z.string().optional(),
+    }),
+    output: z.unknown(),
+    scopes: ["timeline:read", "fs:read"],
+    effect: baseEffects.read,
+    aliases: ["timeline-inspect", "get-timeline", "timeline-summary"],
+    surfaces: { cli: { command: "timeline show" }, mcp: { name: "get-timeline" } },
+    async execute(ctx, input) {
+      const { parseDoc } = await import("../bridge/tools/core");
+      const { collectDiagnostics } = await import("../diagnostics");
+      const { summarizeTimeline } = await import("../query/summary");
+      const { resolveTimelineTarget } = await import("../state/timeline");
+      const project = projectFor(ctx, input.repo);
+      const timeline = resolveTimelineTarget(
+        project.rootPath,
+        project,
+        input.timeline ?? input.uri,
+      );
+      if ("ok" in timeline) return timeline;
+      const ir = parseDoc(await ctx.documents.read(timeline.uri));
+      return {
+        ok: true,
+        summary: summarizeTimeline(ir, collectDiagnostics(ir)),
+        uri: timeline.uri,
+        resolvedPath: timeline.resolvedPath,
+        project: timeline.project,
+      };
+    },
+  }),
+  action({
     id: "timeline.resolveValueAtFrame",
     title: "Resolve Value At Frame",
     description: "Resolve a parameter's effective value at a timeline frame.",

@@ -315,6 +315,30 @@ timeline
   });
 
 timeline
+  .command("show [file]")
+  .description(
+    "Show a compact structured inventory of a timeline: tracks, clips, frame spans, overlays, audio, diagnostics",
+  )
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit the structured JSON summary instead of the compact view")
+  .action(async (file: string | undefined, opts: { repo?: string; json?: boolean }) => {
+    const output = await printActionOutput(
+      "timeline.show",
+      { timeline: file, repo: opts.repo },
+      opts.json,
+    );
+    if (opts.json) return;
+    // Human view: render the compact summary text (the structured JSON is --json).
+    const result = output as { summary?: unknown };
+    if (result?.summary) {
+      const { formatTimelineSummary } = await import("./query/summary-format");
+      writeAllSync(`${formatTimelineSummary(result.summary as never)}\n`);
+    } else {
+      printJson(output);
+    }
+  });
+
+timeline
   .command("new <out>")
   .description("Create a blank .mlt timeline from a profile preset")
   .option(
