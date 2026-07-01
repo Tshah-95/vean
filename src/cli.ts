@@ -994,6 +994,59 @@ media
   });
 
 media
+  .command("import <path>")
+  .description("Catalog one file — link in place, or --copy it into a route/dir")
+  .option("--copy", "copy the file into --dest instead of linking in place")
+  .option("--dest <route-or-dir>", "copy destination: a route alias (media:proxy) or a directory")
+  .option("--role <role>", "root role when a new root is created for the copy destination")
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(
+    async (
+      path: string,
+      opts: { copy?: boolean; dest?: string; role?: string; repo?: string; json?: boolean },
+    ) => {
+      const output = await printActionOutput(
+        "media.import",
+        { path, copy: opts.copy, dest: opts.dest, role: opts.role, repo: opts.repo },
+        opts.json,
+      );
+      if (!opts.json) printJson(output);
+    },
+  );
+
+media
+  .command("relink")
+  .description("Reconnect cataloged assets whose file moved (by basename + content hash)")
+  .option("--id <id>", "relink one asset by id (default: all offline assets)")
+  .option("--search <dir>", "extra directory to search beyond the project's media roots")
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(async (opts: { id?: string; search?: string; repo?: string; json?: boolean }) => {
+    const output = await printActionOutput("media.relink", opts, opts.json);
+    if (!opts.json) printJson(output);
+  });
+
+media
+  .command("consolidate")
+  .description("Copy every source file a timeline references into a route/dir (Collect Files)")
+  .requiredOption("--dest <route-or-dir>", "copy destination: a route alias or a directory")
+  .option(
+    "--timeline <uri-or-route>",
+    "timeline path, file:// URI, or route alias (default timeline:main)",
+  )
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(async (opts: { dest: string; timeline?: string; repo?: string; json?: boolean }) => {
+    const output = await printActionOutput(
+      "media.consolidate",
+      { dest: opts.dest, timeline: opts.timeline, repo: opts.repo },
+      opts.json,
+    );
+    if (!opts.json) printJson(output);
+  });
+
+media
   .command("log-range <asset>")
   .description("Log a named sub-range (subclip) over a cataloged asset")
   .requiredOption("--in <frame>", "in-point (frame)", parseInteger)

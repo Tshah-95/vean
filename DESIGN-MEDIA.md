@@ -1,10 +1,11 @@
 # DESIGN-MEDIA — logged ranges, range-scoped labels, and the media catalog
 
-> Status: **Phase A + B landed** (2026-07-01) — the `media_ranges` /
+> Status: **Phases A + B + C landed** (2026-07-01) — the `media_ranges` /
 > `media_collections` schema, migration `0003_media_ranges`, the `src/state/media-ranges.ts`
 > layer, the `media.log-range` / `media.label` / `media.rate` / `media.marker` /
-> `media.range.*` / `media.collection.*` actions, their CLI + MCP projection, and
-> tests are on this branch. Phases C–E (copy/link verbs, content index, IR bridge)
+> `media.range.*` / `media.collection.*` actions (A+B), plus the copy/link verbs
+> `media.import` / `media.relink` / `media.consolidate` (C, Collect mode), their CLI +
+> MCP projection, and tests are on this branch. Phases D–E (content index, IR bridge)
 > remain. Extends the **Media routing contract** in [AGENTS.md](AGENTS.md) and the
 > deferred-action families in [DESIGN-MOVE3.md](DESIGN-MOVE3.md). Nothing here
 > contradicts the local-state contract: files stay on disk; only cache/coordination
@@ -250,9 +251,9 @@ action({
 | `media.collection.list` | List saved collections | stateRead |
 | `media.collection.resolve` | Evaluate a collection → matching assets/ranges (the **bin read**) | stateRead |
 | `media.add` | Catalog a single file by path (link + probe) — sugar over root+scan | update |
-| `media.import` | Explicit **copy** into a route (`--copy`, dest alias) — Clone-Tool equivalent | update, `fs:write` |
-| `media.consolidate` | Copy *used* media to a route (Collect / Consolidate-and-Transcode) | update, later |
-| `media.relink` | Re-resolve a dangling asset by `content_hash`/name | update |
+| `media.import` (done ✓) | Catalog one file — LINK in place, or `--copy` into a route/dir (Clone-Tool) | update, `fs:write` |
+| `media.consolidate` (done ✓, Collect mode) | Copy every file a timeline references into a route/dir (Premiere Collect Files); trim/handles/transcode deferred | update, `fs:write` |
+| `media.relink` (done ✓) | Re-resolve a dangling asset by basename, preferring a `content_hash` match | update |
 | `media.search` | **Content search** (transcript + semantic) → ranges — *deferred* | update, job |
 | `media.proxy` | Attach/generate a proxy (`transcode.ts` stub exists) — *deferred* | update, job |
 
@@ -316,8 +317,11 @@ and auditable.
   `range.list`/`range.remove`, `collection.save`/`list`/`resolve` + CLI + MCP
   projection + stable tests (`cli-media-ranges`, `media-range-math`); bounds
   clamped/validated at action time.
-- **C — copy/link verbs:** `media.import --copy`, `media.consolidate`,
-  `media.relink`.
+- **C — copy/link verbs (done ✓):** `media.import` (link / `--copy`),
+  `media.relink` (basename + content-hash), `media.consolidate` (Collect mode —
+  copy a timeline's referenced media into a dest; trim/handles/transcode deferred).
+  Pure resource collection in `src/driver/consolidate.ts`; tests `cli-media-import`,
+  `media-consolidate`.
 - **D — content index (deferred):** wire whisper transcript + embeddings →
   `media.search` → ranges.
 - **E — decisions:** asset↔clip IR bridge (if derive-by-path proves insufficient);

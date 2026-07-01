@@ -1676,6 +1676,140 @@ const actions = [
     },
   }),
   action({
+    id: "media.import",
+    title: "Import a Media File",
+    description:
+      "Catalog one file — LINK it in place (default) or --copy it into a route/dir (Clone-Tool style).",
+    aliases: ["media.add"],
+    input: z.object({
+      repo: z.string().optional(),
+      path: z.string(),
+      copy: z.boolean().optional(),
+      dest: z.string().optional(),
+      role: z.string().optional(),
+    }),
+    output: z.unknown(),
+    scopes: ["media:write", "state:write", "fs:read", "fs:write"],
+    effect: {
+      kind: "update",
+      mutates: ["projectState"],
+      openWorld: false,
+      destructive: false,
+      idempotency: "idempotent",
+      reversibility: "snapshot",
+      dryRun: "none",
+      approval: "ask",
+      audit: "metadata",
+      job: { mode: "inline", cancellable: false, retrySafe: true },
+    },
+    surfaces: { cli: { command: "media import" }, mcp: { name: "media-import" } },
+    async execute(ctx, input) {
+      const { importMediaFile } = await import("../state/media");
+      return importMediaFile(repoFor(ctx, input.repo), {
+        path: input.path,
+        copy: input.copy,
+        dest: input.dest,
+        role: input.role,
+      });
+    },
+  }),
+  action({
+    id: "media.relink",
+    title: "Relink Offline Media",
+    description:
+      "Reconnect cataloged assets whose file moved — by basename, preferring a content-hash match.",
+    input: z.object({
+      repo: z.string().optional(),
+      id: z.string().optional(),
+      search: z.string().optional(),
+    }),
+    output: z.unknown(),
+    scopes: ["media:write", "state:write", "fs:read"],
+    effect: {
+      kind: "update",
+      mutates: ["projectState"],
+      openWorld: false,
+      destructive: false,
+      idempotency: "idempotent",
+      reversibility: "snapshot",
+      dryRun: "none",
+      approval: "ask",
+      audit: "metadata",
+      job: { mode: "inline", cancellable: false, retrySafe: true },
+    },
+    surfaces: { cli: { command: "media relink" }, mcp: { name: "media-relink" } },
+    async execute(ctx, input) {
+      const { relinkMedia } = await import("../state/media");
+      return relinkMedia(repoFor(ctx, input.repo), { id: input.id, search: input.search });
+    },
+  }),
+  action({
+    id: "media.consolidate",
+    title: "Consolidate Timeline Media",
+    description:
+      "Copy every source file a timeline references into a route/dir (Premiere Collect Files). Full copies — the trim/handles/transcode variant is deferred.",
+    input: z.object({
+      repo: z.string().optional(),
+      uri: z.string().optional(),
+      timeline: z.string().optional(),
+      dest: z.string(),
+    }),
+    output: z.unknown(),
+    scopes: ["timeline:read", "fs:read", "fs:write"],
+    effect: {
+      kind: "update",
+      mutates: [],
+      openWorld: false,
+      destructive: false,
+      idempotency: "idempotent",
+      reversibility: "manual",
+      dryRun: "none",
+      approval: "ask",
+      audit: "metadata",
+      job: { mode: "inline", cancellable: false, retrySafe: true },
+    },
+    surfaces: { cli: { command: "media consolidate" }, mcp: { name: "media-consolidate" } },
+    async execute(ctx, input) {
+      const { copyFileSync, existsSync, mkdirSync } = await import("node:fs");
+      const { basename, dirname, isAbsolute, join, resolve } = await import("node:path");
+      const { parseDoc } = await import("../bridge/tools/core");
+      const { resolveTimelineTarget } = await import("../state/timeline");
+      const { resolveRouteAlias } = await import("../state/media");
+      const { timelineSourceFiles } = await import("../driver/consolidate");
+      const project = projectFor(ctx, input.repo);
+      const timeline = resolveTimelineTarget(
+        project.rootPath,
+        project,
+        input.timeline ?? input.uri,
+      );
+      if ("ok" in timeline) return timeline;
+      const state = parseDoc(await ctx.documents.read(timeline.uri));
+
+      let destDir: string;
+      if (input.dest.includes(":") && !isAbsolute(input.dest)) {
+        const alias = resolveRouteAlias(project.rootPath, input.dest);
+        destDir = alias?.target ? resolve(alias.target) : resolve(project.rootPath, input.dest);
+      } else {
+        destDir = resolve(project.rootPath, input.dest);
+      }
+      mkdirSync(destDir, { recursive: true });
+
+      const sources = timelineSourceFiles(state, dirname(timeline.resolvedPath));
+      const copied: Array<{ from: string; to: string }> = [];
+      const missing: string[] = [];
+      for (const src of sources) {
+        if (!existsSync(src)) {
+          missing.push(src);
+          continue;
+        }
+        const to = join(destDir, basename(src));
+        copyFileSync(src, to);
+        copied.push({ from: src, to });
+      }
+      return { dest: destDir, copied, missing, timeline: timeline.uri };
+    },
+  }),
+  action({
     id: "route.set",
     title: "Set Route Alias",
     description: "Set a project route alias such as media:raw or renders:review.",
