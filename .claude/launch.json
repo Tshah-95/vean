@@ -1,0 +1,16 @@
+{
+  // Claude Desktop preview-pane config (Preview button → the vean web viewer).
+  // scripts/preview-launch.ts binds PORT when the app reassigns it (autoPort),
+  // else 5176 — keep that default in sync with "port" here. 5176 avoids vean's
+  // other well-known ports (5174 = `vean open --view browser`, 5175 = viewer Vite).
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "vean-viewer",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["scripts/preview-launch.ts"],
+      "port": 5176,
+      "autoPort": true
+    }
+  ]
+}

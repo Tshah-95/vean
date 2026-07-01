@@ -256,7 +256,9 @@ method is in [ROADMAP.md](ROADMAP.md). Codex agents should follow this resolver
 and read the repo-local skill file directly when named; do not depend on
 Claude-only skill discovery. Claude Code can load this checkout as a plugin with
 `claude --plugin-dir /Users/tejas/Github/vean`; `.lsp.json`, `.mcp.json`, and
-`skills/` are the Claude plugin-facing shims.
+`skills/` are the Claude plugin-facing shims, and `.claude/launch.json` wires
+the Claude Desktop preview pane to this checkout's live viewer (via
+`scripts/preview-launch.ts`, port 5176/`PORT` — see the `view` skill).
 
 ### Parallelization / thread model
 

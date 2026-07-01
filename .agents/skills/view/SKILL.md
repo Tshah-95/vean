@@ -80,6 +80,17 @@ menus (File → Open Project…, Add Media Root…). If the user said "the app" 
 "Tauri," default to `--dev`; if they said "just let me see it" or you know native
 isn't built, offer/use `--view browser`.
 
+### Claude Desktop's Preview pane (the in-app sibling)
+
+In a Claude Desktop (Code tab) session, the **Preview button** serves the same
+live viewer *inside the app*: `.claude/launch.json` runs
+`scripts/preview-launch.ts`, which starts `vean preview --no-open` on port 5176
+— or whatever port the app reassigns via the `PORT` env var (`autoPort`) — with
+the project resolved like `drive` does (`.vean/worktree.json` `defaultProject` →
+this checkout). Same HMR viewer, same worktree-latest code; the user just clicks
+Preview instead of getting a separate window. If they ask why Preview shows the
+wrong project, that pointer file is where to look.
+
 ## Report what they're looking at
 
 The user needs to know the window reflects the **right** worktree and project —
