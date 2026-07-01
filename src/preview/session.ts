@@ -154,7 +154,11 @@ export type SessionEditOutcome = SessionEditResult | SessionEditError;
  *  identity (the same principle as op identity being the stable uuid, not an
  *  ephemeral index). */
 export class SessionStore {
-  private readonly sessions = new Map<string, TimelineSession>();
+  /** The per-route working-copy map. Injectable so a `bun --hot` dev server can hand
+   *  in a `globalThis`-held map that SURVIVES reloads: the store itself is rebuilt
+   *  each reload (with freshly-evaluated parse/op code), but the working IR + undo
+   *  history in this map persist. Defaults to a private map otherwise. */
+  constructor(private readonly sessions = new Map<string, TimelineSession>()) {}
 
   /** Get the live session for `uri`, lazy-loading + parsing the `.mlt` from disk on
    *  first touch via `loadXml`. `loadXml(uri)` returns the file text; the store

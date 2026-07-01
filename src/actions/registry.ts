@@ -1030,6 +1030,16 @@ const actions = [
           _stop: handle.stop,
         };
       }
+      // Under `bun --hot` a backend edit re-runs this whole action. The server was
+      // already re-bound + handler-swapped by startPreviewServer; the one-time boot
+      // side effects (browser open + the keepalive await) must NOT repeat. Guard on
+      // globalThis so a reload re-entry returns immediately, leaving the FIRST run's
+      // keepalive promise holding the process alive.
+      const boot = globalThis as { __veanPreviewBooted?: boolean };
+      if (boot.__veanPreviewBooted) {
+        return { ok: true, hotReloaded: true, url: handle.url, port: handle.port, repo };
+      }
+      boot.__veanPreviewBooted = true;
       if (input.open !== false) {
         try {
           const opener =

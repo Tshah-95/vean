@@ -314,14 +314,16 @@ function getSession(
  *  directly without binding a port, and so `Bun.serve` just wraps it. */
 export function createPreviewHandler(
   opts: PreviewServerOptions,
+  sessions: SessionStore = new SessionStore(),
 ): (req: Request) => Promise<Response> {
   const repo = opts.repo;
   const veanRoot = opts.veanRoot ?? veanRepoRoot();
   const distDir = join(veanRoot, "viewer", "dist");
   const defaultRoute = opts.timeline;
-  // One working-copy store per server instance: holds each route's in-memory IR +
-  // undo/redo history across requests for the lifetime of this preview process.
-  const sessions = new SessionStore();
+  // The working-copy store (route → in-memory IR + undo/redo history). INJECTABLE so
+  // the `bun --hot` dev server passes a store backed by a globalThis-held map whose
+  // working state survives a reload while this handler is rebuilt with freshly-
+  // evaluated op code. A fresh store per instance otherwise (tests, prod, detached).
 
   const handle = async function handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
@@ -792,38 +794,90 @@ export function createPreviewHandler(
   return withCrossOriginIsolation(handle);
 }
 
+// ─── Backend HMR (bun --hot) state preservation ──────────────────────────────
+// Under `bun --hot`, ALL top-level code re-runs on every backend edit while
+// `globalThis` persists. So the Vite child, the bound `Bun.serve`, its handle, and
+// the working-copy SESSION MAP live on `globalThis` and are reused across reloads;
+// each reload only rebuilds a FRESH fetch handler (closing over the re-evaluated
+// `src/ops` + session code and the persisted map) and swaps it onto the running
+// server via `server.reload({ fetch })`. Net: edited ops take effect live AND the
+// in-memory working IR + undo/redo history survive — the canonical Bun dev loop
+// (see DESIGN research: bun.com/docs/runtime/hot). Enabled only when
+// `VEAN_PREVIEW_HOT=1` (set by the preview command's --hot re-exec); tests / prod /
+// detached callers keep the fresh-server-per-call behavior.
+type HotPreviewState = {
+  vite?: ViteDevHandle | null;
+  server?: ReturnType<typeof Bun.serve>;
+  handle?: PreviewServerHandle;
+  sessionMap?: Map<string, TimelineSession>;
+};
+declare global {
+  var __veanPreviewHot: HotPreviewState | undefined;
+}
+
 /** Start the preview server on 127.0.0.1:port. Returns a handle with the URL and
  *  a `stop()`. The caller (the `preview.serve` action) keeps the process alive.
  *
  *  In dev mode (the default) this also starts and owns a managed Vite dev server
  *  so the live HMR viewer "just works" with no second terminal — `stop()` tears
  *  down BOTH the HTTP server and Vite. It is async because it waits for Vite to be
- *  ready before binding, so "ready" means the UI is ready, not just the API. */
+ *  ready before binding, so "ready" means the UI is ready, not just the API.
+ *
+ *  Under `VEAN_PREVIEW_HOT=1` (the --hot dev re-exec) it is hot-idempotent: the
+ *  Vite child, bound server, and working-copy session map persist on `globalThis`,
+ *  so a reload only swaps a freshly-evaluated fetch handler (see the block above). */
 export async function startPreviewServer(opts: PreviewServerOptions): Promise<PreviewServerHandle> {
   const veanRoot = opts.veanRoot ?? veanRepoRoot();
-
-  // Dev (default): bring up a managed Vite child and proxy to its actual port.
-  // Prod (--prod): no Vite — serve the viewer/dist snapshot.
-  let vite: ViteDevHandle | null = null;
-  if (opts.dev) {
-    const { ensureViteDevServer } = await import("./viteDev");
-    vite = await ensureViteDevServer({ veanRoot });
+  const hot = process.env.VEAN_PREVIEW_HOT === "1";
+  let g: HotPreviewState | undefined;
+  if (hot) {
+    globalThis.__veanPreviewHot ??= {};
+    g = globalThis.__veanPreviewHot;
   }
 
-  const handle = createPreviewHandler({
-    ...opts,
-    veanRoot,
-    ...(vite ? { vitePort: vite.port } : {}),
-  });
+  // Dev (default): bring up a managed Vite child and proxy to its actual port.
+  // Prod (--prod): no Vite — serve the viewer/dist snapshot. Under --hot the Vite
+  // child is spawned ONCE and reused across reloads (never re-spawned).
+  let vite: ViteDevHandle | null = g?.vite ?? null;
+  if (opts.dev && !vite) {
+    const { ensureViteDevServer } = await import("./viteDev");
+    vite = await ensureViteDevServer({ veanRoot });
+    if (g) g.vite = vite;
+  }
+
+  // The working-copy MAP survives reloads (globalThis); the SessionStore wrapping it
+  // is rebuilt each call so parse/get run freshly-evaluated code, while the working
+  // IR + undo history it holds persist. A private map otherwise.
+  let sessionMap: Map<string, TimelineSession>;
+  if (g) {
+    g.sessionMap ??= new Map();
+    sessionMap = g.sessionMap;
+  } else {
+    sessionMap = new Map();
+  }
+  const fetchHandler = createPreviewHandler(
+    { ...opts, veanRoot, ...(vite ? { vitePort: vite.port } : {}) },
+    new SessionStore(sessionMap),
+  );
+
+  // Hot reload of an already-running server: swap the freshly-built handler onto the
+  // existing Bun.serve (port + Vite + session state all preserved) and reuse the
+  // handle. This is where an edited op becomes live without a restart.
+  if (g?.server) {
+    g.server.reload({ fetch: fetchHandler });
+    process.stderr.write("vean preview: backend hot-reloaded (src/ops + preview)\n");
+    return g.handle as PreviewServerHandle;
+  }
+
   const server = Bun.serve({
     port: opts.port,
     hostname: "127.0.0.1",
-    fetch: handle,
+    fetch: fetchHandler,
     // Long renders: don't time out the proxy-render request.
     idleTimeout: 0,
   });
   const boundPort = server.port ?? opts.port;
-  return {
+  const handle: PreviewServerHandle = {
     url: `http://127.0.0.1:${boundPort}`,
     port: boundPort,
     stop: () => {
@@ -831,4 +885,9 @@ export async function startPreviewServer(opts: PreviewServerOptions): Promise<Pr
       vite?.stop();
     },
   };
+  if (g) {
+    g.server = server;
+    g.handle = handle;
+  }
+  return handle;
 }

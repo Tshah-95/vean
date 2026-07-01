@@ -689,11 +689,32 @@ program
     }) => {
       // Dev (live Vite + HMR) is the default; --prod opts into the dist snapshot.
       const dev = !opts.prod;
+      // Backend HMR by default: in dev, run the server under `bun --hot` so backend
+      // edits (src/ops, src/preview, src/diagnostics) hot-reload into the RUNNING
+      // server — edited ops take effect live and the in-memory working IR + undo
+      // history survive (preserved via globalThis; see startPreviewServer). Bun's
+      // --hot is a process flag, so we re-exec ourselves ONCE under it: the child is
+      // the actual server; this parent just forwards signals + the exit code. --prod,
+      // the detached/test action path, and the already-hot child all skip this.
+      if (dev && process.env.VEAN_PREVIEW_HOT !== "1") {
+        const child = Bun.spawn([process.execPath, "--hot", Bun.main, ...process.argv.slice(2)], {
+          env: { ...process.env, VEAN_PREVIEW_HOT: "1" },
+          stdio: ["inherit", "inherit", "inherit"],
+        });
+        const forward = (sig: NodeJS.Signals) => {
+          try {
+            child.kill(sig);
+          } catch {}
+        };
+        process.on("SIGINT", () => forward("SIGINT"));
+        process.on("SIGTERM", () => forward("SIGTERM"));
+        process.exit(await child.exited);
+      }
       // The bound URL isn't known up front under the ephemeral default — the
       // action prints it once the server binds. Just announce the mode here.
       console.error(
         dev
-          ? "vean preview: live viewer (Vite + HMR, auto-started) — edits to viewer/ show live"
+          ? "vean preview: live viewer (Vite + HMR, auto-started) — backend HMR via bun --hot; edits to viewer/ + src/ops show live"
           : "vean preview: serving the viewer/dist snapshot (--prod)",
       );
       console.error("  press Ctrl-C to stop");
