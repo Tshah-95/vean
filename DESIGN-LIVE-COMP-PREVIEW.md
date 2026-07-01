@@ -164,15 +164,22 @@ Phases are independently shippable and verifiable. **P0 is the unlock; P1 makes 
 payoff; P3–P5 make it honest, fast, and authorable.** Each lands behind a gate (golden/drive proof),
 matching the repo's verification philosophy.
 
-### P0 — Dynamic composition registry (the unlock)  ·  small
-- Replace the static `COMPOSITIONS` const ([viewer/src/remotion/registry.ts](viewer/src/remotion/registry.ts))
-  with a registry built from `import.meta.glob("@remotion-comp/*.tsx")` (lazy). `resolveComposition(id)`
-  resolves any project comp by id, with the existing default fallback for the unknown/legacy case.
-- Each comp exposes its `defaults` (defaultProps) — read them from the module (a named export
-  convention, or `getCompositions`-style metadata) so the Player is configured correctly per comp.
-- **Gate:** a 2nd, non-`LowerThird` comp added to `remotion/src/compositions/` renders live in the
-  viewer, slaved to the clock, **without touching `registry.ts`** (drive proof + `__veanOverlay`
-  bridge asserting the resolved comp id).
+### P0 — Dynamic composition registry (the unlock)  ·  small  ·  ✅ SHIPPED (2026-06-30, gated)
+- Replaced the static `COMPOSITIONS` const ([viewer/src/remotion/registry.ts](viewer/src/remotion/registry.ts))
+  with a registry built from `import.meta.glob("@remotion-comp/*.tsx", { eager: true })`.
+  `resolveComposition(id)` resolves any project comp by id (stays synchronous — async/lazy is P1), with
+  the existing default fallback for the unknown/legacy case.
+- Module → `{component, defaults}` mapping is the pure, unit-tested helper
+  [viewer/src/remotion/resolve.ts](viewer/src/remotion/resolve.ts). Convention: comp filename = id;
+  component = `default` export (preferred) or a named export matching the id (legacy `LowerThird`);
+  defaults = `defaults` export or legacy `<camelId>Defaults` or `{}`.
+- **✅ SHIPPED + GATED.** Proof: added a real 2nd comp (`Title`) by only dropping
+  `remotion/src/compositions/Title.tsx` — **zero edit to `registry.ts`**. Gates green: unit test
+  (`tests/composition-registry.test.ts`, 8 cases), viewer typecheck + build (`Title` globbed into the
+  bundle), and the headless drive gate `bun run verify:live-comp` — the running viewer's dynamic
+  registry discovered `[LowerThird, Title]`, the live `<Player>` resolved `compositionId === "Title"`,
+  rendered it over footage, and stayed slaved to the master clock (frame 30 = 30). A new
+  `corpus/demo/title-overlay.mlt` fixture + the `__veanCompositions()` bridge back the gate.
 
 ### P1 — Async load lifecycle  ·  medium
 - `resolveComposition` async + `OverlayPlayer` Suspense/loading state; `deriveOverlay` kicks the load

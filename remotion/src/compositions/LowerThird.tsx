@@ -109,3 +109,8 @@ export const LowerThird: React.FC<LowerThirdProps> = ({ title, subtitle, accent,
     </AbsoluteFill>
   );
 };
+
+// Default export = the composition component (the going-forward registry convention;
+// the named `LowerThird` export stays for the producer `Root.tsx`). The viewer's glob
+// registry resolves `default` first, so this is the live-preview entry point.
+export default LowerThird;

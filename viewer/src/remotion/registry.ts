@@ -2,27 +2,23 @@
 // workspace's `registerRoot`/`<Composition>` registry (`remotion/src/Root.tsx`).
 //
 // WHY THIS EXISTS (the bug it closes)
-//   The live `@remotion/player` overlay (`OverlayPlayer.tsx`) used to HARDCODE the
-//   `LowerThird` component for EVERY graphic clip, regardless of which composition
-//   the clip actually referenced. So a timeline whose overlay is a different comp
-//   (or the same comp with different props) previewed as the wrong graphic. The
-//   producer path (`vean remotion render <CompositionId> …`) renders the REAL comp
-//   by id; the live path must do the same to stay the "two compositing paths of ONE
-//   composition" the Remotion seam promises (live preview ≈ export, not a stand-in).
+//   The live `@remotion/player` overlay (`OverlayPlayer.tsx`) resolves the ACTUAL
+//   composition a graphic clip names (its IR `composition.id`) to a React component,
+//   so live preview renders the same comp the producer bakes to ProRes — the "two
+//   compositing paths of ONE composition" the Remotion seam promises. A clip names its
+//   composition via the IR `composition` field (`{ id, props }`), round-tripped through
+//   the `vean:composition` / `vean:compositionProps` producer properties.
 //
-//   A clip names its composition via the IR `composition` field (`{ id, props }`),
-//   which round-trips through the `vean:composition` / `vean:compositionProps`
-//   producer properties (`src/ir/{serialize,parse}.ts`). The viewer reads that off
-//   the GRAPHIC clip (App `deriveOverlay`) and resolves the component + its defaults
-//   HERE, by id. New compositions are added in ONE place — the same `@remotion-comp`
-//   source the producer renders — so the live and export registries never drift.
-//
-// IDENTICAL SOURCE, ONE COPY
-//   The components are imported from the SIBLING `remotion/` workspace via the
-//   `@remotion-comp` Vite alias (vite.config.ts) + the `dedupe` of remotion/react —
-//   the exact same module the producer renders to ProRes. There is no second
-//   implementation to keep in sync; this file is purely the id → component map.
-import { LowerThird, lowerThirdDefaults } from "@remotion-comp/LowerThird";
+// DYNAMIC (P0 — live-comp-preview): the registry is no longer a hand-maintained const.
+//   Every comp in the sibling workspace's `compositions/` dir is discovered at
+//   build/dev time by an EAGER Vite glob, so `resolveComposition` stays SYNCHRONOUS
+//   (async/lazy loading is P1). Adding a comp is enough — drop `remotion/src/
+//   compositions/<Id>.tsx` and it resolves by id, with HMR (Vite watches the glob), and
+//   NO edit here. `@remotion-comp` is the vite.config alias to `remotion/src/
+//   compositions`; remotion/react are DEDUPED there (a second copy breaks the Player's
+//   frame context — see vite.config.ts). The module → `{component, defaults}` mapping
+//   is the pure `./resolve` helper (unit-tested without the glob).
+import { type CompModule, idFromPath, pickComposition } from "./resolve";
 
 /** A registered composition: the React component the `<Player>` mounts plus the
  *  default props it renders with when a graphic clip names this id but carries no
@@ -32,22 +28,38 @@ export interface RegisteredComposition {
   defaults: Record<string, unknown>;
 }
 
-/** The id → composition map. Keys MUST match the `<Composition id=…>` ids the
- *  Remotion `Root.tsx` registers (and the `vean:composition` ids the producer
- *  stamps), so a clip authored against the producer resolves the same component
- *  in live preview. Add a composition in BOTH places (here + Root.tsx) — the
- *  producer and the live player are the two compositing paths of one comp. */
-export const COMPOSITIONS: Record<string, RegisteredComposition> = {
-  LowerThird: {
-    component: LowerThird as React.ComponentType<Record<string, unknown>>,
-    defaults: lowerThirdDefaults as Record<string, unknown>,
-  },
-};
+// Eager so the map is built synchronously at module load (resolveComposition stays
+// sync; OverlayPlayer resolves in a useMemo). A project has a handful of comps, so the
+// upfront cost is negligible; per-comp lazy loading is a P1 optimization.
+const modules = import.meta.glob<CompModule>("@remotion-comp/*.tsx", { eager: true });
+
+/** The id → composition map, discovered from the glob. Keys are the comp filenames
+ *  (== the `<Composition id=…>` ids the producer stamps), so a clip authored against
+ *  the producer resolves the same component in live preview — no drift, no dual list. */
+export const COMPOSITIONS: Record<string, RegisteredComposition> = {};
+for (const [path, mod] of Object.entries(modules)) {
+  const id = idFromPath(path);
+  const picked = pickComposition(id, mod);
+  if (picked) {
+    COMPOSITIONS[id] = {
+      component: picked.component as React.ComponentType<Record<string, unknown>>,
+      defaults: picked.defaults,
+    };
+  }
+}
 
 /** The fallback composition id — used when a graphic clip carries no `composition`
  *  metadata (the legacy label-/cache-path-only overlays that predate the IR field).
  *  These previewed as `LowerThird` historically, so keep that behaviour for them. */
 export const DEFAULT_COMPOSITION_ID = "LowerThird";
+
+// Headless bridge: the ids the dynamic registry discovered from the glob. Lets the
+// `verify:live-comp` drive gate assert a NEW comp (e.g. `Title`) was picked up WITHOUT
+// a registration edit here — the P0 proof. Browser-only (the glob never runs elsewhere).
+if (typeof window !== "undefined") {
+  (window as unknown as { __veanCompositions?: () => string[] }).__veanCompositions = () =>
+    Object.keys(COMPOSITIONS);
+}
 
 /** Resolve a composition by id to its component + default props. Falls back to the
  *  default composition when the id is unknown or absent, so the live player NEVER
@@ -62,7 +74,7 @@ export function resolveComposition(id: string | undefined): {
   const resolvedId = id && COMPOSITIONS[id] ? id : DEFAULT_COMPOSITION_ID;
   const entry = COMPOSITIONS[resolvedId] ?? COMPOSITIONS[DEFAULT_COMPOSITION_ID];
   if (!entry) {
-    // Unreachable (the default is always registered) — narrow for the type checker.
+    // Unreachable (LowerThird is always in the glob) — narrow for the type checker.
     throw new Error(`no composition registered for "${resolvedId}" or the default`);
   }
   return { id: resolvedId, component: entry.component, defaults: entry.defaults };

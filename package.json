@@ -57,6 +57,7 @@
     "graphic-overlay:build": "bun corpus/demo/build-graphic-overlay.ts",
     "verify:move5": "bun scripts/verify-move5.ts",
     "verify:live-overlay": "bun scripts/verify-live-overlay.ts",
+    "verify:live-comp": "bun scripts/verify-live-comp.ts",
     "lsp": "bun src/bridge/lsp/server.ts",
     "mcp": "bun src/bridge/mcp/server.ts",
     "move2:e2e": "bun scripts/move2-e2e.ts",
