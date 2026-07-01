@@ -105,6 +105,14 @@ export function ClipBlock({
   const badge = errs.length > 0 ? "error" : warns.length > 0 ? "warn" : null;
   const badgeTitle = [...errs, ...warns].map((d) => `${d.code}: ${d.message}`).join("\n");
 
+  // Media-limit cues (Premiere-style): the head is at the source's FIRST frame, or
+  // the tail at its LAST — no source frames left to extend that side, so the strip's
+  // trim wall stops the drag there. A color generator is positionless (no source
+  // window) and an un-probed clip has an unknown tail, so neither flags that edge.
+  const atMediaStart = item.service !== "color" && item.in <= 0;
+  const atMediaEnd =
+    item.service !== "color" && item.length != null && item.out >= item.length - 1;
+
   return (
     <div
       data-clip-id={item.id}
@@ -159,6 +167,12 @@ export function ClipBlock({
         </>
       ) : null}
 
+      {/* Media-limit markers — a corner triangle when this side is at the source's
+          first/last frame (no handle left to extend). Informational + always on (not
+          tied to selection); a ghost preview shell omits them. */}
+      {!ghost && atMediaStart ? <MediaLimit side="left" /> : null}
+      {!ghost && atMediaEnd ? <MediaLimit side="right" /> : null}
+
       {/* Diagnostic badge (ambient; never blocks). */}
       {badge ? (
         <div
@@ -209,6 +223,34 @@ export function ClipBlock({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** A small corner triangle marking that the clip is at its SOURCE limit on this side
+ *  — the head is at the source's first frame (left) or the tail at its last (right),
+ *  so there are no more frames to extend into. Premiere's "media limit" cue: purely
+ *  informational (the strip's `gestureDxBounds` wall is what actually stops the drag),
+ *  neutral-toned so it reads as "hard stop", not an error. */
+function MediaLimit({ side }: { side: "left" | "right" }) {
+  return (
+    <div
+      title={
+        side === "left"
+          ? "at media start — no source frames left to extend the head"
+          : "at media end — no source frames left to extend the tail"
+      }
+      style={{
+        position: "absolute",
+        top: 1,
+        [side]: 1,
+        width: 7,
+        height: 7,
+        background: "rgba(232,234,242,0.6)",
+        // A right triangle hugging this corner (top + this-side edges).
+        clipPath: side === "left" ? "polygon(0 0, 100% 0, 0 100%)" : "polygon(0 0, 100% 0, 100% 100%)",
+        zIndex: 6,
+      }}
+    />
   );
 }
 
