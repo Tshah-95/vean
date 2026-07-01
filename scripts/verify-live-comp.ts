@@ -11,7 +11,7 @@
 //   graphic clip names composition "Title" (a comp added purely by dropping
 //   `remotion/src/compositions/Title.tsx` into the dir) — in a HEADLESS browser via the
 //   `drive` harness, and asserts:
-//     (a) the OverlayPlayer mounted (deriveOverlay found the graphic clip);
+//     (a) the OverlayPlayer mounted (resolveOverlayAt found the graphic clip);
 //     (b) the DYNAMIC registry discovered BOTH comps from the glob —
 //         `window.__veanCompositions()` includes "LowerThird" AND "Title" — with no
 //         registration edit (the P0 unlock);
@@ -122,7 +122,7 @@ async function main(): Promise<void> {
     // ── (a) the OverlayPlayer mounted for the graphic clip ──────────────────────
     if (!abWaitFn("window.__veanOverlay !== undefined", 8000)) {
       fail(
-        "(a) OverlayPlayer did NOT mount — deriveOverlay returned present:false for the graphic-clip fixture",
+        "(a) OverlayPlayer did NOT mount — resolveOverlayAt returned present:false for the graphic-clip fixture",
       );
     } else {
       const ov = abEval("window.__veanOverlay()") as {

@@ -12,7 +12,7 @@
 //   `cache/remotion/` graphic clip via qtblend) in a HEADLESS browser via the `drive`
 //   harness (`scripts/drive.ts` + `agent-browser`, the same loopback URL the Mac app's
 //   WKWebView renders) and asserts, end-to-end:
-//     (a) App `deriveOverlay` returns present:true → the `OverlayPlayer` MOUNTS
+//     (a) App `resolveOverlayAt` returns present:true → the `OverlayPlayer` MOUNTS
 //         (the `window.__veanOverlay` bridge exists only because it did);
 //     (b) the `@remotion/player` is SLAVED to the master clock — seek the clock and
 //         the Player's frame follows (`playerFrame === masterFrame`);
@@ -132,12 +132,12 @@ async function main(): Promise<void> {
       return;
     }
 
-    // ── (a) deriveOverlay present:true → the OverlayPlayer mounted ──────────────
+    // ── (a) resolveOverlayAt present:true → the OverlayPlayer mounted ──────────────
     // The `__veanOverlay` bridge is installed by OverlayPlayer, which App renders
-    // ONLY when deriveOverlay found a graphic clip. Its presence IS the assertion.
+    // ONLY when resolveOverlayAt found a graphic clip. Its presence IS the assertion.
     if (!abWaitFn("window.__veanOverlay !== undefined", 8000)) {
       fail(
-        "(a) OverlayPlayer did NOT mount — deriveOverlay returned present:false for a graphic-clip fixture",
+        "(a) OverlayPlayer did NOT mount — resolveOverlayAt returned present:false for a graphic-clip fixture",
       );
       // Without the Player, (b) and (d) are moot; still check (c) below.
     } else {
@@ -149,7 +149,7 @@ async function main(): Promise<void> {
       };
       if (ov.present === true && ov.durationInFrames === 90) {
         pass(
-          `(a) deriveOverlay present:true → OverlayPlayer mounted (durationInFrames=${ov.durationInFrames})`,
+          `(a) resolveOverlayAt present:true → OverlayPlayer mounted (durationInFrames=${ov.durationInFrames})`,
         );
       } else {
         fail(

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- HAND-AUTHORED live-comp-preview fixture (NOT a serializer emission — does NOT
+     round-trip byte-identically; nothing gates on its round-trip). Drives the P1b
+     fault-isolation gate (verify:live-error): its single graphic clip names composition
+     "BoomProbe" with props {"boom":true}, so the live comp THROWS during render. The gate
+     asserts the editor SURVIVES (footage/UI alive), the overlay is HIDDEN (no ⚠️ over the
+     footage), and window.__veanOverlayError is populated with the failing comp. -->
+<mlt LC_NUMERIC="C" version="7.38.0" root="" title="vean — fault-isolation (throwing overlay comp)">
+  <profile description="vertical-1080x1920-30" width="1080" height="1920" progressive="1" sample_aspect_num="1" sample_aspect_den="1" display_aspect_num="9" display_aspect_den="16" frame_rate_num="30" frame_rate_den="1" colorspace="709"/>
+  <producer id="producerbg" in="0" out="89">
+    <property name="length">90</property>
+    <property name="mlt_service">color</property>
+    <property name="resource">0</property>
+    <property name="shotcut:uuid">{vean-producerbg}</property>
+  </producer>
+  <producer id="producer0" in="0" out="89">
+    <property name="length">90</property>
+    <property name="mlt_service">color</property>
+    <property name="resource">#FF0E5C63</property>
+    <property name="shotcut:uuid">base</property>
+  </producer>
+  <producer id="producerboom" in="0" out="89">
+    <property name="length">90</property>
+    <property name="resource">.vean/cache/remotion/boom.mov</property>
+    <property name="shotcut:uuid">gfx-boom</property>
+    <property name="vean:composition">BoomProbe</property>
+    <property name="vean:compositionProps">{"boom":true}</property>
+  </producer>
+  <playlist id="playlist0">
+    <property name="shotcut:video">1</property>
+    <property name="shotcut:audio">0</property>
+    <property name="shotcut:name">V1</property>
+    <entry producer="producer0" in="0" out="89"/>
+  </playlist>
+  <playlist id="playlist1">
+    <property name="shotcut:video">1</property>
+    <property name="shotcut:audio">0</property>
+    <property name="shotcut:name">V2</property>
+    <entry producer="producerboom" in="0" out="89"/>
+  </playlist>
+  <tractor id="tractor1" shotcut="1" title="vean — fault-isolation (throwing overlay comp)">
+    <track producer="producerbg"/>
+    <track producer="playlist0"/>
+    <track producer="playlist1"/>
+    <transition id="transition0" mlt_service="qtblend" in="0" out="89">
+      <property name="a_track">1</property>
+      <property name="b_track">2</property>
+    </transition>
+  </tractor>
+</mlt>
