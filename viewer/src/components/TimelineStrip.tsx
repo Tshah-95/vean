@@ -18,6 +18,7 @@
 // solves scale = paneWidth/totalFrames ONCE, not a live binding. We fit on load and
 // on document change, then leave it alone. The ruler picks a "nice" interval + label
 // format from the current scale.
+import { AudioLines, Film } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useClockInstance } from "../ClockProvider";
 import { usePreviewInstance } from "../PreviewProvider";
@@ -37,8 +38,13 @@ import type { TimelineEditor } from "../useTimelineEditor";
 import { ClipBlock } from "./ClipBlock";
 import { Playhead } from "./Playhead";
 
-const GUTTER = 56;
-const ROW_HEIGHT = 34;
+const GUTTER = 76; // wider: room for a type icon + the track name in the header
+// Per-kind track heights (variable — video taller for a thumbnail-ready lane, audio
+// medium for a waveform). The pointer→track math walks cumulative offsets (below),
+// NOT a single uniform row height, so the drag/trim/move gestures still hit the
+// right lane at any height.
+const TRACK_H = { video: 56, audio: 40 } as const;
+const trackH = (t: Track): number => TRACK_H[t.kind];
 const RULER_HEIGHT = 36; // taller: reads as a dedicated control strip (the scrub zone)
 const MIN_TICK_PX = 64; // ruler ticks stay at least this far apart
 const MAX_PX_PER_FRAME = 60; // zoom-in ceiling (frame-level granularity)
@@ -53,6 +59,20 @@ export interface TimelineStripProps {
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+/** Resolve which track lane a local Y (relative to the lanes' top — i.e. already
+ *  past the ruler) falls in, by walking the ordered tracks' cumulative heights.
+ *  Replaces the old uniform-ROW_HEIGHT division so variable-height lanes still map a
+ *  pointer to the correct track for a move/drop. Clamps to the last track past the end. */
+function trackAtY(ordered: Track[], yLocal: number): Track | null {
+  let top = 0;
+  for (const t of ordered) {
+    const h = trackH(t);
+    if (yLocal >= top && yLocal < top + h) return t;
+    top += h;
+  }
+  return ordered.length ? (ordered[ordered.length - 1] ?? null) : null;
+}
 
 /** Adaptive ruler interval (in frames) + a label formatter, chosen so ticks are
  *  ≥ MIN_TICK_PX apart. */
@@ -352,8 +372,9 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
       let pointerTrack: Track | null = null;
       if (laneEl) {
         const rect = laneEl.getBoundingClientRect();
-        const rowIndex = Math.floor((clientY - rect.top - RULER_HEIGHT) / ROW_HEIGHT);
-        pointerTrack = orderedTracks[clamp(rowIndex, 0, orderedTracks.length - 1)] ?? null;
+        // Variable-height lanes: walk cumulative track heights instead of dividing by
+        // a uniform ROW_HEIGHT, so the move/drop still lands on the lane under the pointer.
+        pointerTrack = trackAtY(orderedTracks, clientY - rect.top - RULER_HEIGHT);
       }
       setDrag((d) => {
         if (!d) return d;
@@ -731,22 +752,30 @@ function TrackLane({
   const previewed = applyPreview(placed, drag);
 
   return (
-    <div style={{ display: "flex", height: ROW_HEIGHT, borderBottom: "1px solid #14171f" }}>
+    <div style={{ display: "flex", height: trackH(track), borderBottom: "1px solid #14171f" }}>
       <div
         style={{
           width: GUTTER,
           flex: "0 0 auto",
           display: "flex",
           alignItems: "center",
+          gap: 6,
           paddingLeft: 10,
+          paddingRight: 6,
           fontSize: 11,
           fontFamily: "ui-monospace, monospace",
           color: track.kind === "audio" ? "#7fd9c0" : "#9ab4d9",
           background: "#0d0f14",
           borderRight: "1px solid #1b1e26",
+          overflow: "hidden",
         }}
       >
-        {label}
+        {track.kind === "audio" ? (
+          <AudioLines size={13} strokeWidth={1.75} style={{ flexShrink: 0 }} />
+        ) : (
+          <Film size={13} strokeWidth={1.75} style={{ flexShrink: 0 }} />
+        )}
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
       </div>
       {/* Lane background: a pointerdown here (not on a clip) deselects. */}
       <div
