@@ -1047,6 +1047,64 @@ media
   });
 
 media
+  .command("place")
+  .description("Place a logged range (or asset + in/out) as a labeled clip on the timeline")
+  .option("--range <id>", "logged-range id to place (uses its in/out + name)")
+  .option("--asset <ref>", "asset id/path/alias to place (needs --out)")
+  .option("--in <frame>", "in-point (frame)", parseInteger)
+  .option("--out <frame>", "out-point (frame)", parseInteger)
+  .option("--label <label>", "override the clip label (defaults to the range's name)")
+  .option(
+    "--timeline <uri-or-route>",
+    "timeline path, file:// URI, or route alias (default timeline:main)",
+  )
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(
+    async (opts: {
+      range?: string;
+      asset?: string;
+      in?: number;
+      out?: number;
+      label?: string;
+      timeline?: string;
+      repo?: string;
+      json?: boolean;
+    }) => {
+      const output = await printActionOutput(
+        "media.place",
+        {
+          range: opts.range,
+          asset: opts.asset,
+          in: opts.in,
+          out: opts.out,
+          label: opts.label,
+          timeline: opts.timeline,
+          repo: opts.repo,
+        },
+        opts.json,
+      );
+      if (!opts.json) printJson(output);
+    },
+  );
+
+media
+  .command("usage")
+  .description(
+    "Which cataloged assets/ranges a timeline uses, which are unused, which are unmatched",
+  )
+  .option(
+    "--timeline <uri-or-route>",
+    "timeline path, file:// URI, or route alias (default timeline:main)",
+  )
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(async (opts: { timeline?: string; repo?: string; json?: boolean }) => {
+    const output = await printActionOutput("media.usage", opts, opts.json);
+    if (!opts.json) printJson(output);
+  });
+
+media
   .command("log-range <asset>")
   .description("Log a named sub-range (subclip) over a cataloged asset")
   .requiredOption("--in <frame>", "in-point (frame)", parseInteger)

@@ -2082,6 +2082,143 @@ const actions = [
     },
   }),
   action({
+    id: "media.place",
+    title: "Place Media on the Timeline",
+    description:
+      "Place a logged range (or an asset + in/out) as a labeled clip on the timeline — a plain reference (no catalog id in the IR). Multiple placements of one source are independent clips.",
+    input: z.object({
+      repo: z.string().optional(),
+      uri: z.string().optional(),
+      timeline: z.string().optional(),
+      range: z.string().optional(),
+      asset: z.string().optional(),
+      in: frame.optional(),
+      out: frame.optional(),
+      label: z.string().optional(),
+      track: trackAddrInput.optional(),
+      createTrackIfMissing: z.boolean().default(true),
+    }),
+    output: z.unknown(),
+    scopes: ["timeline:write", "media:read", "fs:read", "fs:write"],
+    effect: {
+      kind: "update",
+      mutates: ["timeline", "filesystem"],
+      openWorld: false,
+      destructive: false,
+      idempotency: "non-idempotent",
+      reversibility: "inverse-op",
+      dryRun: "none",
+      approval: "ask",
+      audit: "full-input",
+    },
+    surfaces: { cli: { command: "media place" }, mcp: { name: "media-place" } },
+    async execute(ctx, input) {
+      const { parseDoc, serializeDoc } = await import("../bridge/tools/core");
+      const { resolveTimelineTarget } = await import("../state/timeline");
+      const { resolvePlacement } = await import("../state/media-ranges");
+      const { addFootage } = await import("./timelineBuild");
+      const project = projectFor(ctx, input.repo);
+      let spec: Awaited<ReturnType<typeof resolvePlacement>>;
+      try {
+        spec = resolvePlacement(project.rootPath, {
+          range: input.range,
+          asset: input.asset,
+          in: input.in,
+          out: input.out,
+          label: input.label,
+        });
+      } catch (e) {
+        return {
+          ok: false,
+          kind: "placement-unresolved",
+          detail: e instanceof Error ? e.message : String(e),
+        };
+      }
+      const timeline = resolveTimelineTarget(
+        project.rootPath,
+        project,
+        input.timeline ?? input.uri,
+      );
+      if ("ok" in timeline) return timeline;
+      const state = parseDoc(await ctx.documents.read(timeline.uri));
+
+      let trackId: string | undefined;
+      if (input.track) {
+        if ("trackId" in input.track) trackId = input.track.trackId;
+        else {
+          const t = state.tracks[input.track.kind][input.track.index];
+          if (!t) {
+            return {
+              ok: false,
+              kind: "track-not-found",
+              detail: `no ${input.track.kind} track at index ${input.track.index}`,
+              uri: timeline.uri,
+            };
+          }
+          trackId = t.id;
+        }
+      }
+
+      const result = addFootage(state, {
+        resource: spec.resource,
+        inFrame: spec.inFrame,
+        durationFrames: spec.durationFrames,
+        ...(spec.label ? { label: spec.label } : {}),
+        ...(trackId ? { trackId } : {}),
+        createTrackIfMissing: input.createTrackIfMissing ?? true,
+      });
+      if (!("state" in result)) {
+        return { ok: false, kind: result.kind, detail: editErrorMsg(result), uri: timeline.uri };
+      }
+      await ctx.documents.write(timeline.uri, serializeDoc(result.state));
+      return {
+        ok: true,
+        clipId: result.consequences.clipsAdded.at(-1)?.uuid,
+        placed: spec,
+        consequences: result.consequences,
+        inverse: result.inverse,
+        trackId: result.trackId,
+        createdTrack: result.createdTrack,
+        uri: timeline.uri,
+        resolvedPath: timeline.resolvedPath,
+        touchedUris: [timeline.uri],
+        project: timeline.project,
+      };
+    },
+  }),
+  action({
+    id: "media.usage",
+    title: "Media Usage on a Timeline",
+    description:
+      "Derive which cataloged assets + ranges a timeline USES, which are UNUSED, and which timeline sources aren't cataloged (unmatched). Matched by path — read-only, no IR change.",
+    input: z.object({
+      repo: z.string().optional(),
+      uri: z.string().optional(),
+      timeline: z.string().optional(),
+    }),
+    output: z.unknown(),
+    scopes: ["timeline:read", "media:read", "state:read", "fs:read"],
+    effect: baseEffects.read,
+    surfaces: { cli: { command: "media usage" }, mcp: { name: "media-usage" } },
+    async execute(ctx, input) {
+      const { dirname } = await import("node:path");
+      const { parseDoc } = await import("../bridge/tools/core");
+      const { resolveTimelineTarget } = await import("../state/timeline");
+      const { timelineSourceFiles } = await import("../driver/consolidate");
+      const { mediaUsage } = await import("../state/media-ranges");
+      const project = projectFor(ctx, input.repo);
+      const timeline = resolveTimelineTarget(
+        project.rootPath,
+        project,
+        input.timeline ?? input.uri,
+      );
+      if ("ok" in timeline) return timeline;
+      const state = parseDoc(await ctx.documents.read(timeline.uri));
+      const referenced = timelineSourceFiles(state, dirname(timeline.resolvedPath));
+      return { ...mediaUsage(project.rootPath, referenced), timeline: timeline.uri };
+    },
+  }),
+  action({
     id: "worktree.whereami",
     title: "Where Am I",
     description:

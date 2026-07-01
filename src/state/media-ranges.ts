@@ -21,7 +21,7 @@ import { mediaAssets, mediaCollections, mediaRanges, routeAliases } from "./sche
 
 export type MediaRangeRecord = typeof mediaRanges.$inferSelect;
 export type MediaCollectionRecord = typeof mediaCollections.$inferSelect;
-type MediaAssetRow = typeof mediaAssets.$inferSelect;
+export type MediaAssetRow = typeof mediaAssets.$inferSelect;
 
 /** The closed set of range kinds. `custom` is the open escape hatch. */
 export const RANGE_KINDS = [
@@ -410,4 +410,136 @@ function evaluateQuery(
   ranges = ranges.filter((r) => keep.has(r.assetId));
   assets.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
   return { assets, ranges };
+}
+
+// ─── Placement + usage (Phase E of DESIGN-MEDIA) ────────────────────────────────
+
+export type PlacementInput = {
+  /** A logged-range id to place (uses its in/out + name)… */
+  range?: string;
+  /** …or an asset ref with explicit bounds. */
+  asset?: string;
+  in?: number;
+  out?: number;
+  /** Override the label carried onto the clip (defaults to the range's name). */
+  label?: string;
+};
+
+/** A resolved placement (what `addFootage` needs): absolute resource + frame window. */
+export type PlacementSpec = {
+  resource: string;
+  inFrame: number;
+  durationFrames: number;
+  label?: string;
+};
+
+/**
+ * Resolve a logged range (or an asset + in/out) to a placement spec. The catalog is the
+ * SOURCE of the slice; the placed clip is a plain reference (resource + in/out + label) —
+ * no machine-local catalog id leaks into the portable IR (see DESIGN-MEDIA §bridge).
+ */
+export function resolvePlacement(repo: string, input: PlacementInput): PlacementSpec {
+  const project = initializeProject(repo);
+  const handle = openStateDb(project.rootPath);
+  try {
+    let asset: MediaAssetRow | undefined;
+    let inFrame: number | null | undefined;
+    let outFrame: number | null | undefined;
+    let label = input.label;
+    if (input.range) {
+      const range = handle.db
+        .select()
+        .from(mediaRanges)
+        .where(and(eq(mediaRanges.projectId, project.id), eq(mediaRanges.id, input.range)))
+        .get();
+      if (!range) throw new Error(`no logged range "${input.range}"`);
+      asset = handle.db
+        .select()
+        .from(mediaAssets)
+        .where(and(eq(mediaAssets.projectId, project.id), eq(mediaAssets.id, range.assetId)))
+        .get();
+      if (!asset) throw new Error("the range's source asset is no longer cataloged");
+      inFrame = input.in ?? range.inFrame;
+      outFrame = input.out ?? range.outFrame;
+      label = label ?? range.value ?? undefined;
+    } else if (input.asset) {
+      asset = resolveAssetRef(handle, project.id, project.rootPath, input.asset);
+      inFrame = input.in ?? 0;
+      outFrame = input.out;
+    } else {
+      throw new Error("place needs a range id or an asset");
+    }
+    const lo = inFrame ?? 0;
+    let hi = outFrame;
+    if (hi == null) {
+      const count = assetFrameCount(asset);
+      if (count == null) {
+        throw new Error(
+          "no out-point and the asset's length is unknown — probe it or pass an out-point",
+        );
+      }
+      hi = count - 1;
+    }
+    if (hi < lo) throw new Error(`out-point ${hi} is before in-point ${lo}`);
+    return {
+      resource: asset.path,
+      inFrame: lo,
+      durationFrames: hi - lo + 1,
+      label: label ?? undefined,
+    };
+  } finally {
+    handle.sqlite.close();
+  }
+}
+
+export type MediaUsage = {
+  used: Array<{ asset: MediaAssetRow; ranges: MediaRangeRecord[] }>;
+  unused: MediaAssetRow[];
+  unmatched: string[];
+};
+
+/**
+ * Join a timeline's referenced source files (from `timelineSourceFiles`) against the
+ * catalog by resolved path — "which cataloged assets + ranges are USED, which are
+ * UNUSED, and which timeline sources aren't cataloged (unmatched)". The association is
+ * DERIVED here, never stored in the IR.
+ */
+export function mediaUsage(repo: string, referenced: string[]): MediaUsage {
+  const project = initializeProject(repo);
+  const handle = openStateDb(project.rootPath);
+  try {
+    const refSet = new Set(referenced.map((p) => resolve(p)));
+    const assets = handle.db
+      .select()
+      .from(mediaAssets)
+      .where(eq(mediaAssets.projectId, project.id))
+      .all();
+    const allRanges = handle.db
+      .select()
+      .from(mediaRanges)
+      .where(eq(mediaRanges.projectId, project.id))
+      .all();
+    const rangesByAsset = new Map<string, MediaRangeRecord[]>();
+    for (const r of allRanges) {
+      const list = rangesByAsset.get(r.assetId) ?? [];
+      list.push(r);
+      rangesByAsset.set(r.assetId, list);
+    }
+    const used: MediaUsage["used"] = [];
+    const unused: MediaAssetRow[] = [];
+    const matched = new Set<string>();
+    for (const a of assets) {
+      const ap = resolve(a.path);
+      if (refSet.has(ap)) {
+        used.push({ asset: a, ranges: rangesByAsset.get(a.id) ?? [] });
+        matched.add(ap);
+      } else {
+        unused.push(a);
+      }
+    }
+    const unmatched = [...refSet].filter((p) => !matched.has(p));
+    return { used, unused, unmatched };
+  } finally {
+    handle.sqlite.close();
+  }
 }

@@ -1,12 +1,14 @@
 # DESIGN-MEDIA — logged ranges, range-scoped labels, and the media catalog
 
-> Status: **Phases A + B + C landed** (2026-07-01) — the `media_ranges` /
+> Status: **Phases A + B + C + E landed** (2026-07-01) — the `media_ranges` /
 > `media_collections` schema, migration `0003_media_ranges`, the `src/state/media-ranges.ts`
 > layer, the `media.log-range` / `media.label` / `media.rate` / `media.marker` /
-> `media.range.*` / `media.collection.*` actions (A+B), plus the copy/link verbs
-> `media.import` / `media.relink` / `media.consolidate` (C, Collect mode), their CLI +
-> MCP projection, and tests are on this branch. Phases D–E (content index, IR bridge)
-> remain. Extends the **Media routing contract** in [AGENTS.md](AGENTS.md) and the
+> `media.range.*` / `media.collection.*` actions (A+B), the copy/link verbs
+> `media.import` / `media.relink` / `media.consolidate` (C, Collect mode), and the
+> place/usage bridge `media.place` / `media.usage` (E, derive-by-path — no catalog id
+> in the IR), all with CLI + MCP projection and tests. **Phase D (content index over
+> transcript + embeddings) remains, gated on the whisper.cpp live wiring.** Extends the
+> **Media routing contract** in [AGENTS.md](AGENTS.md) and the
 > deferred-action families in [DESIGN-MOVE3.md](DESIGN-MOVE3.md). Nothing here
 > contradicts the local-state contract: files stay on disk; only cache/coordination
 > state lives in `.vean/vean.db`.
@@ -137,16 +139,26 @@ export const mediaCollections = sqliteTable(
 );
 ```
 
-### The asset↔clip bridge (a decision — recommend derive-first)
+### The asset↔clip bridge (done ✓ — derive-by-path, no IR change)
 
-Today a clip's `resource` is a raw path. To let relink/offline diagnostics and
-"which logged ranges are used" flow end-to-end:
+A clip's `resource` is a raw path, and it stays that way. The bridge is **derived**,
+never stored:
 
-- **Now (no IR change):** derive the link by resolving `clip.resource` against
-  `media_assets.path` / `content_hash`. Zero serializer risk; works immediately.
-- **Later (IR change, deferred):** add optional `assetId` to the `Clip` type,
-  serialized as a `vean:asset.id` producer property (exactly like provenance) so
-  it survives export. Only if derive-by-path proves insufficient.
+- **`media.place`** turns a logged range (or `asset + in/out`) into a **plain timeline
+  clip** — `{resource, in, out}` via the existing `addFootage` op (so undo, consequences,
+  and the ordered inverse come for free). The range's name is carried onto the clip's
+  in-session `label`, but **`clip.label` is not serialized to the `.mlt`** — so the
+  portable document holds only the edit (slices), never a machine-local catalog id.
+  Multiple placements of one source are independent clips (the IR model), each a
+  reference into the one file on disk (efficient by construction).
+- **`media.usage`** answers "which cataloged assets + ranges does this timeline USE,
+  which are UNUSED, which sources aren't cataloged (unmatched)" by resolving
+  `clip.resource` against `media_assets.path`. The label/identity of a placed clip is
+  *derived* from the catalog here, not read off the `.mlt`.
+- **Deliberately NOT done:** an explicit `assetId`/`rangeId` on the `Clip` type. Pinning
+  a `.vean/vean.db` (gitignored, machine-local) id into the portable `.mlt` would break
+  reproduce-from-git+media. If a durable link is ever needed, key it on `content_hash`
+  (reproducible), never the DB row id.
 
 ## The actions
 
@@ -322,26 +334,25 @@ and auditable.
   copy a timeline's referenced media into a dest; trim/handles/transcode deferred).
   Pure resource collection in `src/driver/consolidate.ts`; tests `cli-media-import`,
   `media-consolidate`.
-- **D — content index (deferred):** wire whisper transcript + embeddings →
-  `media.search` → ranges.
-- **E — decisions:** asset↔clip IR bridge (if derive-by-path proves insufficient);
-  the app's bin-read surface over `media.collection.resolve`.
+- **E — place/usage bridge (done ✓):** `media.place` (logged range → plain timeline
+  clip via `addFootage`) and `media.usage` (derive used/unused/unmatched by path).
+  Derive-by-path only — no catalog id in the IR. Test `cli-media-place`.
+- **D — content index (deferred, gated):** wire whisper transcript + embeddings →
+  `media.search` → ranges. Blocked on the whisper.cpp live wiring (fixture-only).
 
-**Gates (A + B, green):** stable JSON for every action via the CLI subprocess
-(`tests/cli-media-ranges.test.ts`); pure frame-math unit tests
-(`tests/media-range-math.test.ts`) pin the clamp/round-trip; collection query eval
-is deterministic; full suite + `typecheck` + `biome` pass.
+**Gates (A + B + C + E, green):** stable JSON for every action via the CLI subprocess
+(`cli-media-ranges`, `cli-media-import`, `cli-media-place`); pure unit tests
+(`media-range-math`, `media-consolidate`) pin the clamp/round-trip and resource walk;
+collection + usage query eval are deterministic; full suite + `typecheck` + `biome` pass.
 
-## Open decisions (need a call)
+## Decisions (all resolved 2026-07-01)
 
-1. **asset↔clip bridge:** derive-by-path now vs. explicit serialized `assetId`
-   later. *Recommend derive-first.*
-2. **Whole-asset tags:** null-bounds range (kills `labels_json`) vs. keep
-   `labels_json`. *Recommend null-bounds range; deprecate the column.*
-3. **`kind` taxonomy:** fixed enum + `'custom'` vs. open string. *Recommend fixed
-   enum + `'custom'`.*
-4. **Placing a logged range:** should `media.log-range` output feed directly into
-   an existing append/overwrite op (place this subclip)? *Recommend yes — the
-   range carries the in/out the op needs.*
-5. **Content-search sequencing:** gated behind whisper.cpp live wiring (currently
-   fixture-only). Confirm it stays in Phase D.
+1. **asset↔clip bridge:** ✅ derive-by-path (`media.usage`); explicit serialized
+   `assetId` rejected (would pin a machine-local id into the portable IR).
+2. **Whole-asset tags:** ✅ null-bounds range; `labels_json` deprecated.
+3. **`kind` taxonomy:** ✅ fixed enum + `'custom'`.
+4. **Placing a logged range:** ✅ `media.place` feeds the existing `addFootage`
+   append op; the range's name rides on the clip's in-session `label` (which is
+   *not* serialized — the durable label association is derived by `media.usage`).
+5. **Content-search sequencing:** ✅ stays in Phase D, gated on the whisper.cpp live
+   wiring (currently fixture-only).
