@@ -21,6 +21,9 @@ export interface ClipBlockProps {
   readout?: string | null;
   /** True while this clip is being dragged (dims it as a "ghost" at the origin). */
   dragging?: boolean;
+  /** Render as a translucent SHELL (the live move preview at the drag target): you
+   *  see the label + outline but see THROUGH it to the content it will land on. */
+  ghost?: boolean;
   /** Pointerdown on the clip body — begins a contextual gesture (clips only). */
   onPointerDown?: (e: React.PointerEvent) => void;
   /** The hover cursor (the lane sets it per zone via pointer-move; default grab). */
@@ -41,6 +44,7 @@ export function ClipBlock({
   diagnostics,
   readout = null,
   dragging = false,
+  ghost = false,
   onPointerDown,
   cursor = "grab",
 }: ClipBlockProps) {
@@ -111,19 +115,24 @@ export function ClipBlock({
         width,
         top: 2,
         bottom: 2,
-        background: bg,
-        border: `1px solid ${border}`,
-        boxShadow: selected ? "0 0 0 1px #c7ae7a, 0 0 8px rgba(199,174,122,0.35)" : "none",
+        // A ghost is a translucent shell: a see-through fill + a dashed accent border
+        // so the target content shows through and the "this is a preview" reads.
+        background: ghost ? "rgba(199,174,122,0.14)" : bg,
+        border: ghost ? "1.5px dashed #c7ae7a" : `1px solid ${border}`,
+        boxShadow:
+          !ghost && selected ? "0 0 0 1px #c7ae7a, 0 0 8px rgba(199,174,122,0.35)" : "none",
         borderRadius: 4,
         overflow: "visible",
         display: "flex",
         alignItems: "center",
         paddingLeft: 6,
         fontSize: 11,
-        color: "#cfd3dc",
+        color: ghost ? "#e6d6b0" : "#cfd3dc",
         whiteSpace: "nowrap",
         opacity: dragging ? 0.4 : 1,
-        zIndex: selected ? 3 : 1,
+        // The moving shell floats above the static rows (and their collision tints).
+        zIndex: ghost ? 5 : selected ? 3 : 1,
+        pointerEvents: ghost ? "none" : undefined,
         cursor,
         touchAction: "none",
       }}

@@ -87,6 +87,9 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
   const scrubbing = useRef(false);
   const prevZoom = useRef(1);
   const [drag, setDrag] = useState<DragState | null>(null);
+  // Snapping toggle (magnet). On by default; turn OFF for free-frame positioning —
+  // the fix for "it snaps to random points / won't stop where I want".
+  const [snapEnabled, setSnapEnabled] = useState(true);
 
   useEffect(() => {
     const el = laneRef.current;
@@ -274,27 +277,35 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
       setDrag((d) => {
         if (!d) return d;
         const rawFrames = Math.round((e.clientX - d.startClientX) / pxPerFrame);
-        // Snap the MOVED EDGE to nearby candidates (move/slide: the clip start;
-        // trimIn/roll: the head; trimOut: the tail). Snapping is on the resulting
-        // edge frame, then converted back to a delta.
         const g = d.gesture;
-        let anchor: number; // the edge frame this gesture moves, pre-snap
-        if (g.tool === "move" || g.tool === "slide") anchor = g.placed.start + rawFrames;
-        else if (g.tool === "trimIn") anchor = g.placed.start + rawFrames;
-        else if (g.tool === "trimOut") anchor = g.placed.start + g.placed.length + rawFrames;
-        else if (g.tool === "roll") {
-          // The seam sits at the right half's start (= left half's end).
-          const seamBase = g.neighbours.right?.start ?? g.placed.start;
-          anchor = seamBase + rawFrames;
-        } else anchor = g.placed.start + rawFrames; // slip: no snap meaning, keep raw
         let dxFrames = rawFrames;
         let snappedTo: number | null = null;
-        if (g.tool !== "slip") {
-          const snapped = snapFrame(anchor, snapCandidates, pxPerFrame);
-          if (snapped.snappedTo != null) {
-            dxFrames = rawFrames + (snapped.frame - anchor);
-            snappedTo = snapped.snappedTo;
+        // Snap the moved EDGE(S) to nearby candidates, unless snapping is off or this
+        // is a slip (no edge to snap). A MOVE considers BOTH of its edges (start AND
+        // end) and locks to whichever is closest to a candidate — so a clip aligns on
+        // either side, not just its head (the "snaps to random points / never snaps"
+        // fix: only the start used to be a candidate). Other tools snap their one
+        // moved edge (trimIn/roll: the head; trimOut: the tail; slide: the start).
+        if (snapEnabled && g.tool !== "slip") {
+          const edges: number[] =
+            g.tool === "move"
+              ? [g.placed.start + rawFrames, g.placed.start + g.placed.length + rawFrames]
+              : g.tool === "trimOut"
+                ? [g.placed.start + g.placed.length + rawFrames]
+                : g.tool === "roll"
+                  ? [(g.neighbours.right?.start ?? g.placed.start) + rawFrames]
+                  : [g.placed.start + rawFrames]; // move-start / slide / trimIn
+          let bestAdj = 0;
+          let bestDist = Number.POSITIVE_INFINITY;
+          for (const anchor of edges) {
+            const snapped = snapFrame(anchor, snapCandidates, pxPerFrame);
+            if (snapped.snappedTo != null && Math.abs(snapped.frame - anchor) < bestDist) {
+              bestDist = Math.abs(snapped.frame - anchor);
+              bestAdj = snapped.frame - anchor;
+              snappedTo = snapped.snappedTo;
+            }
           }
+          dxFrames = rawFrames + bestAdj;
         }
         // Clamp move/slide so the clip start never goes negative.
         if (g.tool === "move" || g.tool === "slide") {
@@ -303,7 +314,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         return { ...d, dxFrames, snappedTo };
       });
     },
-    [pxPerFrame, snapCandidates],
+    [pxPerFrame, snapCandidates, snapEnabled],
   );
 
   const onLanePointerUp = useCallback(() => {
@@ -407,6 +418,23 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         ) : null}
 
         <div style={{ flex: 1 }} />
+        <button
+          type="button"
+          onClick={() => setSnapEnabled((s) => !s)}
+          aria-label="Toggle snapping"
+          aria-pressed={snapEnabled}
+          title={`Snapping ${snapEnabled ? "ON" : "OFF"} — click to ${snapEnabled ? "position freely" : "align edges to clips + playhead"}`}
+          style={{
+            ...zoomBtn,
+            width: "auto",
+            padding: "0 8px",
+            color: snapEnabled ? "#c7ae7a" : "#6b7280",
+            borderColor: snapEnabled ? "#5a4a1f" : "#2a2e3a",
+          }}
+        >
+          {snapEnabled ? "🧲 Snap" : "Snap off"}
+        </button>
+        <div style={{ width: 8 }} />
         <button type="button" onClick={zoomOut} disabled={zoom <= MIN_ZOOM + 1e-6} style={zoomBtn} aria-label="Zoom out" title="Zoom out ( − )">
           −
         </button>
@@ -612,6 +640,10 @@ function TrackLane({
           const uuid = isClip ? (p.item as { id: string }).id : null;
           const selected = uuid != null && uuid === selectedId;
           const beingDragged = drag != null && uuid === drag.gesture.uuid;
+          // A MOVE renders the dragged clip as a translucent SHELL at the target
+          // (the origin stays visible as a faint outline via MoveOverlay); other
+          // tools preview in place.
+          const isMoveGhost = beingDragged && drag?.gesture.tool === "move";
           const diags = uuid ? diagnosticsByClip.get(uuid) : undefined;
           const readout = beingDragged && drag ? gestureReadout(drag, p) : null;
           // Same-track flush neighbours decide whether an edge hover reads as a
@@ -630,6 +662,7 @@ function TrackLane({
               diagnostics={diags}
               readout={readout}
               dragging={false}
+              ghost={isMoveGhost}
               cursor={isClip ? "grab" : "default"}
               {...(isClip
                 ? {
@@ -661,8 +694,76 @@ function TrackLane({
             />
           );
         })}
+        {/* MOVE overlay on the track that owns the dragged clip: a faint outline of
+            where it WAS, plus a red wash over any content the drop will OVERWRITE. */}
+        {drag && drag.gesture.trackId === track.id && drag.gesture.tool === "move" ? (
+          <MoveOverlay drag={drag} placed={placed} pxPerFrame={pxPerFrame} />
+        ) : null}
       </div>
     </div>
+  );
+}
+
+/** The live MOVE affordance drawn on the source track: a dashed outline at the
+ *  clip's ORIGIN (so you see where it came from) and a red overwrite-wash over every
+ *  clip the shell's target span covers (the destructive drop, previewed before you
+ *  let go — non-ripple move now stamps over content). Uses the RAW (un-previewed)
+ *  placements for collision math. Purely visual; pointer-transparent. */
+function MoveOverlay({
+  drag,
+  placed,
+  pxPerFrame,
+}: {
+  drag: DragState;
+  placed: PlacedItem[];
+  pxPerFrame: number;
+}) {
+  const g = drag.gesture;
+  const target = Math.max(0, g.placed.start + drag.dxFrames);
+  const len = g.placed.length;
+  const collisions: Array<{ start: number; width: number }> = [];
+  for (const p of placed) {
+    if (p.item.kind !== "clip") continue;
+    if ((p.item as { id: string }).id === g.uuid) continue;
+    const iStart = Math.max(target, p.start);
+    const iEnd = Math.min(target + len, p.start + p.length);
+    if (iEnd > iStart) collisions.push({ start: iStart, width: iEnd - iStart });
+  }
+  return (
+    <>
+      <div
+        style={{
+          position: "absolute",
+          left: g.placed.start * pxPerFrame,
+          width: g.placed.length * pxPerFrame,
+          top: 2,
+          bottom: 2,
+          border: "1px dashed #4a5265",
+          borderRadius: 4,
+          background: "rgba(0,0,0,0.22)",
+          pointerEvents: "none",
+          zIndex: 0,
+        }}
+      />
+      {collisions.map((c) => (
+        <div
+          key={`ov-${c.start}`}
+          title="this content will be overwritten"
+          style={{
+            position: "absolute",
+            left: c.start * pxPerFrame,
+            width: c.width * pxPerFrame,
+            top: 2,
+            bottom: 2,
+            background: "rgba(226,87,76,0.28)",
+            border: "1px solid rgba(226,87,76,0.7)",
+            borderRadius: 4,
+            pointerEvents: "none",
+            zIndex: 4,
+          }}
+        />
+      ))}
+    </>
   );
 }
 
