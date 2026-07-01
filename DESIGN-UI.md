@@ -203,13 +203,24 @@ full-width-timeline model after the Palmier-Pro reference.)* *Gate met:* drawer
 tabs switch; timeline full width; Checks lists diagnostics; zero console errors;
 timeline gestures intact.
 
-**Phase 3 — Timeline richness (next).** Taller/cleaner tracks + richer headers;
-voice tracks = **waveform + transcript peek**; an A/V clip's embedded audio as a
-**linked companion lane**; **drag-into-the-gutter → new track** above/below.
-Absorbs the old timeline restyle + adds capability. **Fork to decide here:** the
-linked audio is *display-only* (a companion lane that trims/moves with its video)
-vs. *modeled* as a real A/V pair in the IR (touches the document model + ops,
-since MLT carries A/V as one producer) — default is display-first.
+**Phase 3 — Timeline richness (next).** Split by data availability (a viewer probe
+found waveforms / transcripts / embedded-audio detection are NOT in the viewer API
+today):
+- **3a (viewer-only, buildable now):** taller/cleaner **variable-height tracks**
+  (video taller, audio medium), **richer track headers** (type icon + name), and
+  **drag-into-the-gutter → new track** (wired to the existing `addTrack` op).
+  Requires reworking the drag system's pointer→track math, which assumes a uniform
+  `ROW_HEIGHT`.
+- **3b (needs 3 small backend endpoints):** an **audio peaks** endpoint (ffmpeg →
+  cached downsampled waveform), a **transcript read** endpoint (expose the
+  server-side `Transcript`), and surfacing **`audioStreams`/hasAudio** in the
+  timeline JSON — then the real **waveform lane**, **transcript peek** (only where a
+  clip has actually been transcribed — absent, never faked), and the **linked-audio
+  companion lane**.
+
+Linked audio is **display-only** for now (a companion lane that trims/moves with
+its video); *modeling* it as a real A/V pair in the IR is the deferred split
+documented in the appendix below.
 
 **Phase 4 — Inspector / Consequences / Chat live.** Selected-clip inspector rows;
 `preview-op` → live Consequences before commit; chat wired to the edit bridge.
@@ -225,6 +236,65 @@ shows the calm, data-forward feel.
 
 **Later — configurable panels.** Relocatable + resizable + persisted layout
 (structured-for now via `layout.ts`; built when we want it).
+
+## Appendix: modeling linked A/V (the "split") — what it would take
+
+Display-only linked audio (Phase 3b) draws the mp4's embedded audio as a companion
+lane; the clip stays **one producer** in the IR. Eventually we may want a real
+**split** (detach the audio into its own editable clip). This is the spec-grounded
+map (mined from Shotcut `DetachAudioCommand` + MLT's avformat producer), so the
+decision to build it later starts from fact, not a guess.
+
+**How Shotcut does it (the answer key).** "Detach Audio" is a **one-way split**,
+not a persistent link. It replaces one A/V producer with **two independent
+producers referencing the same file**, distinguished by MLT stream selectors:
+- **video-only** copy → `audio_index=-1` **and** `astream=-1` (the relative
+  `astream`/`vstream` override the absolute `*_index`, so Shotcut sets both), stays
+  on the original track;
+- **audio-only** copy → `video_index=-1` **and** `vstream=-1`, placed on an audio
+  track (a new one is created if none is blank across the span; audio tracks are
+  marked `shotcut:audio`);
+- `shotcut:defaultAudioIndex` is stored so the audio can later be re-attached.
+
+**There is no A/V link concept.** The only association is Shotcut's generic
+`shotcut:group` *integer* on the clip's cut — and Detach Audio doesn't even create
+one; it only carries a pre-existing group forward. "Move together" is emulated by
+**selection expansion** (grabbing one group member selects them all, one shared
+delta). Crucially, **trim / split / ripple-delete are NOT group-aware** — they act
+per-clip, so a detached pair silently **desyncs** on any trim. That footgun is
+exactly the class of bug vean's diagnostics exist to catch — a place to be *better
+than the spec*, not just mine it.
+
+**What vean's typed IR would need** (two orthogonal concepts Shotcut entangles):
+1. **Per-producer stream selectors** on the clip source: `audioIndex` / `videoIndex`
+   (absolute, `-1`=off) + `astream` / `vstream` (relative, `-1`=off, override the
+   absolute), plus an optional `defaultAudioIndex` for reattach and a derived
+   `hasAudio`. Serialize/parse + golden round-trip for audio-only/video-only
+   producers.
+2. **A typed link** on the clip (better than Shotcut's loose int): `link: { id,
+   role: "video"|"audio", partnerIds }` — so the IR distinguishes "an A/V pair from
+   one detach" from "user grouped 5 clips," and diagnostics can reason about it.
+
+**What a `detachAudio` op touches:** guard (only if `hasAudio`); clone → set
+`audioIndex/astream=-1` (video-only, keep in place) and `videoIndex/vstream=-1`
+(audio-only); find-or-create an audio track (report track creation in
+`consequences`); preserve `defaultAudioIndex`; **auto-create the link group** (so
+vean prevents the silent-desync Shotcut allows); inverse = re-merge to the single
+producer + remove any created track. Companion ops: `linkClips` / `unlinkClips` /
+`reattachAudio`.
+
+**Diagnostics it unlocks:** dangling link (partner deleted); A/V desync (linked
+clips whose in/out or position drifted after a trim/split); redundant selector
+(`audioIndex=-1` on a file with no audio); ripple hazard (a per-track ripple that
+would desync a linked partner); invalid selector (index beyond the file's stream
+count — needs a probe).
+
+**Ops that must become link-aware:** move (shift both), trim (at minimum *diagnose*
+the desync; ideally a "trim both" code action), split (split both halves), ripple/
+lift (ripple both tracks or flag). The payoff of the resolver's "human gesture =
+agent action = one op": link-awareness lives in the op + diagnostics layer **once**,
+not per surface. *Sources: Shotcut `src/commands/timelinecommands.cpp`,
+`src/docks/timelinedock.cpp`; MLT `producer_avformat.yml`.*
 
 ## Invariants (don't regress)
 
