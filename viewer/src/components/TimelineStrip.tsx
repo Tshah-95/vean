@@ -46,6 +46,10 @@ const GUTTER = 76; // wider: room for a type icon + the track name in the header
 const TRACK_H = { video: 56, audio: 40 } as const;
 const trackH = (t: Track): number => TRACK_H[t.kind];
 const RULER_HEIGHT = 36; // taller: reads as a dedicated control strip (the scrub zone)
+// Drop-zone strips above the top track and below the bottom track: dragging a clip
+// into one CREATES a new track of that clip's kind (video above, audio below) and
+// moves the clip onto it (Palmier's "drag into the gutter → new track").
+const GUTTER_H = 9;
 const MIN_TICK_PX = 64; // ruler ticks stay at least this far apart
 const MAX_PX_PER_FRAME = 60; // zoom-in ceiling (frame-level granularity)
 const MIN_PX_PER_FRAME = 0.02; // zoom-out floor (absolute; ~0.6px/sec at 30fps)
@@ -111,6 +115,10 @@ interface DragState {
    *  it crosses lanes. Defaults to the source track; a different (same-kind) id is a
    *  cross-track move. */
   toTrackId: string;
+  /** A move whose pointer is over a gutter drop-zone → create a NEW track of the
+   *  clip's kind and move onto it. "top" = a new video track above; "bottom" = a new
+   *  audio track below. null = a normal (existing-track) move. */
+  newTrack: "top" | "bottom" | null;
 }
 
 export function TimelineStrip({ editor }: TimelineStripProps) {
@@ -354,6 +362,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         snappedTo: null,
         ripple: gesture.ripple,
         toTrackId: track.id,
+        newTrack: null,
       });
     },
     [editor],
@@ -370,11 +379,17 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
       const laneEl = laneRef.current;
       const orderedTracks: Track[] = [...timeline.tracks.video, ...timeline.tracks.audio];
       let pointerTrack: Track | null = null;
+      let gutterZone: "top" | "bottom" | null = null;
       if (laneEl) {
         const rect = laneEl.getBoundingClientRect();
-        // Variable-height lanes: walk cumulative track heights instead of dividing by
-        // a uniform ROW_HEIGHT, so the move/drop still lands on the lane under the pointer.
-        pointerTrack = trackAtY(orderedTracks, clientY - rect.top - RULER_HEIGHT);
+        // The tracks start GUTTER_H below the ruler (the top drop-zone strip). Above
+        // that strip → top gutter; past the last track's bottom → bottom gutter; else
+        // walk cumulative track heights (variable lanes) to the lane under the pointer.
+        const yLocal = clientY - rect.top - RULER_HEIGHT;
+        const tracksH = orderedTracks.reduce((sum, t) => sum + trackH(t), 0);
+        if (yLocal < GUTTER_H) gutterZone = "top";
+        else if (yLocal >= GUTTER_H + tracksH) gutterZone = "bottom";
+        else pointerTrack = trackAtY(orderedTracks, yLocal - GUTTER_H);
       }
       setDrag((d) => {
         if (!d) return d;
@@ -384,11 +399,15 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         let snappedTo: number | null = null;
         // Cross-track: a MOVE lands on the lane under the pointer, but never crosses
         // KIND (video↔audio — the op rejects it). If the pointer is over a
-        // different-kind lane, keep the last valid (same-kind) target.
+        // different-kind lane, keep the last valid (same-kind) target. Over a matching
+        // gutter drop-zone, flag a NEW-track drop (video→top, audio→bottom).
         let toTrackId = d.toTrackId;
-        if (g.tool === "move" && pointerTrack) {
+        let newTrack: "top" | "bottom" | null = null;
+        if (g.tool === "move") {
           const srcKind = orderedTracks.find((t) => t.id === g.trackId)?.kind;
-          if (pointerTrack.kind === srcKind) toTrackId = pointerTrack.id;
+          if (gutterZone === "top" && srcKind === "video") newTrack = "top";
+          else if (gutterZone === "bottom" && srcKind === "audio") newTrack = "bottom";
+          else if (pointerTrack && pointerTrack.kind === srcKind) toTrackId = pointerTrack.id;
         }
         // Snap the moved EDGE(S) to nearby candidates, unless snapping is off or this
         // is a slip (no edge to snap). A MOVE considers BOTH of its edges (start AND
@@ -427,7 +446,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         const clamped = Math.max(bounds.min, Math.min(bounds.max, dxFrames));
         if (clamped !== dxFrames) snappedTo = null;
         dxFrames = clamped;
-        return { ...d, dxFrames, snappedTo, toTrackId };
+        return { ...d, dxFrames, snappedTo, toTrackId, newTrack };
       });
     },
     [pxPerFrame, snapCandidates, snapEnabled, timeline],
@@ -436,6 +455,21 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
   const onLanePointerUp = useCallback(() => {
     setDrag((d) => {
       if (!d) return null;
+      // Gutter drop → create a new track of the clip's kind, then move onto it.
+      if (d.gesture.tool === "move" && d.newTrack) {
+        const kind = d.newTrack === "top" ? "video" : "audio";
+        const position = d.newTrack === "top" ? "top" : "bottom";
+        const newId = crypto.randomUUID();
+        const toPosition = Math.max(0, d.gesture.placed.start + d.dxFrames);
+        void (async () => {
+          await editor.commit({ op: "addTrack", args: { kind, id: newId, position } });
+          await editor.commit({
+            op: "move",
+            args: { uuid: d.gesture.uuid, toTrack: { trackId: newId }, toPosition, ripple: false, rippleAllTracks: false },
+          });
+        })().finally(() => previewStore.clear());
+        return null;
+      }
       const inv = buildInvocation(d.gesture, d.dxFrames, d.ripple, d.toTrackId);
       if (inv) {
         // Keep the previewed frame on screen until the commit lands, THEN clear —
@@ -650,7 +684,8 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
             </div>
           </div>
 
-          {/* Tracks: video (top) then audio. */}
+          {/* Tracks: video (top) then audio, bracketed by gutter drop-zones. */}
+          <GutterDropZone side="top" active={drag?.newTrack === "top"} />
           {timeline.tracks.video.map((track) => (
             <TrackLane
               key={track.id}
@@ -677,6 +712,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
               route={editor.route}
             />
           ))}
+          <GutterDropZone side="bottom" active={drag?.newTrack === "bottom"} />
 
           <Playhead pxPerFrame={pxPerFrame} gutterWidth={GUTTER} rulerHeight={RULER_HEIGHT} />
 
@@ -722,6 +758,28 @@ function CtiHandle({ pxPerFrame }: { pxPerFrame: number }) {
         pointerEvents: "none",
         zIndex: 6,
         filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.5))",
+      }}
+    />
+  );
+}
+
+/** A thin drop-zone strip above the top track / below the bottom track. Dragging a
+ *  clip of the matching kind into it creates a new track and moves the clip onto it.
+ *  Subtly dashed at rest; gold when a matching drag is over it. */
+function GutterDropZone({ side, active }: { side: "top" | "bottom"; active: boolean }) {
+  const edge = active ? "1px dashed #c7ae7a" : "1px dashed rgba(230,227,218,0.07)";
+  return (
+    <div
+      title={
+        side === "top"
+          ? "drop a video clip here → new video track above"
+          : "drop an audio clip here → new audio track below"
+      }
+      style={{
+        height: GUTTER_H,
+        marginLeft: GUTTER,
+        background: active ? "rgba(199,174,122,0.15)" : "transparent",
+        ...(side === "top" ? { borderBottom: edge } : { borderTop: edge }),
       }}
     />
   );
