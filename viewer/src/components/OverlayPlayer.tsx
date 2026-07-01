@@ -14,6 +14,7 @@
 // hardcoded to LowerThird, and the overlay is ALWAYS alpha-composited over the
 // footage below (the transparent background reveals the footage compositor's canvas).
 import { Player, type PlayerRef } from "@remotion/player";
+import { OverlayErrorBoundary } from "./OverlayErrorBoundary";
 import { useEffect, useMemo, useRef } from "react";
 import { resolveComposition } from "../remotion/registry";
 import { useClock, useClockInstance } from "../ClockProvider";
@@ -155,21 +156,23 @@ export function OverlayPlayer({
         opacity: present ? 1 : 0,
       }}
     >
-      <Player
-        ref={playerRef}
-        component={resolved.component as never}
-        durationInFrames={Math.max(1, durationInFrames)}
-        fps={compFps}
-        compositionWidth={width}
-        compositionHeight={height}
-        inputProps={playerProps as never}
-        controls={false}
-        loop={false}
-        clickToPlay={false}
-        doubleClickToFullscreen={false}
-        acknowledgeRemotionLicense
-        style={{ width: "100%", height: "100%", background: "transparent" }}
-      />
+      <OverlayErrorBoundary compositionId={resolved.id}>
+        <Player
+          ref={playerRef}
+          component={resolved.component as never}
+          durationInFrames={Math.max(1, durationInFrames)}
+          fps={compFps}
+          compositionWidth={width}
+          compositionHeight={height}
+          inputProps={playerProps as never}
+          controls={false}
+          loop={false}
+          clickToPlay={false}
+          doubleClickToFullscreen={false}
+          acknowledgeRemotionLicense
+          style={{ width: "100%", height: "100%", background: "transparent" }}
+        />
+      </OverlayErrorBoundary>
     </div>
   );
 }
