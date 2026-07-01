@@ -769,12 +769,17 @@ program
       const appDir = join(import.meta.dir, "..", "app");
       const launchDev = () => {
         console.error(
-          `vean: launching the dev app on ${label} (tauri:dev — first compile is slow) …`,
+          `vean: launching the dev app on ${label} (tauri:dev — first compile is slow; the viewer hot-reloads once it's up) …`,
         );
         Bun.spawn(["bun", "run", "tauri:dev"], {
           cwd: appDir,
           stdout: "inherit",
           stderr: "inherit",
+          // Serve the live Vite/HMR viewer in the native dev window (edits under
+          // viewer/ hot-reload in place). The Rust shell also infers this from the
+          // debug build profile; setting it makes the intent explicit + build-flag
+          // independent. The shipped release app never sees this and keeps --prod.
+          env: { ...process.env, VEAN_PREVIEW_MODE: "dev" },
         });
       };
       if (opts.dev) return launchDev();

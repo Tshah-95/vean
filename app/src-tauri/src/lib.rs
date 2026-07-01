@@ -155,22 +155,42 @@ fn renderer_env(app: &AppHandle) -> Vec<(String, String)> {
     Vec::new()
 }
 
+/// Whether the preview sidecar should serve the live Vite/HMR viewer (dev) or the
+/// pre-built `viewer/dist` snapshot (prod). Priority:
+///   1. `VEAN_PREVIEW_MODE=dev|prod` — explicit override (`vean open --view app
+///      --dev` sets `dev`; a developer can force either).
+///   2. otherwise the build profile: `tauri dev` builds debug → HMR; `tauri build`
+///      builds release → snapshot. This makes the dev app hot-reload the viewer
+///      with zero config while the shipped app keeps the static snapshot.
+/// Dev is then GUARDED on the `viewer/` source actually being present — a shipped
+/// bundle has no source (or `bun`/Vite) to run a dev server, so it falls back to
+/// the snapshot even if it somehow reaches here as a debug build.
+fn preview_dev_mode() -> bool {
+    let want_dev = match std::env::var("VEAN_PREVIEW_MODE").as_deref() {
+        Ok("dev") => true,
+        Ok("prod") => false,
+        _ => cfg!(debug_assertions),
+    };
+    want_dev && vean_repo().join("viewer").join("vite.config.ts").exists()
+}
+
 /// Spawn `vean preview` against `project`, bound to `port`, with the renderer env
-/// (bundled sidecars or, when empty, system deps). The viewer it serves is read
-/// from `<repo>/viewer/dist`.
+/// (bundled sidecars or, when empty, system deps). In dev-from-source (`tauri dev`)
+/// it serves the live Vite/HMR viewer so edits under `viewer/` hot-reload straight
+/// into this native window; the shipped release bundle serves the pre-built
+/// `<repo>/viewer/dist` snapshot (see `preview_dev_mode`).
 fn spawn_sidecar(project: &PathBuf, port: u16, env: &[(String, String)]) -> std::io::Result<Child> {
     let cli = vean_repo().join("src").join("cli.ts");
     let mut cmd = Command::new(vean_bin());
-    cmd.arg(cli)
-        .arg("preview")
-        .arg("--no-open")
-        // The app serves the pre-built viewer/dist snapshot — `vean preview` now
-        // defaults to the live Vite/HMR dev server, which the shipped bundle has no
-        // source (or `bun`/Vite) to run. `--prod` pins it to the static viewer it
-        // ships. (Live HMR is the *web* dev path: `drive` / `vean preview` / `vean
-        // open --view browser`, not the native window.)
-        .arg("--prod")
-        .arg("--port")
+    cmd.arg(cli).arg("preview").arg("--no-open");
+    // `vean preview` defaults to the live Vite/HMR dev server; `--prod` pins it to
+    // the static viewer/dist snapshot. Pass `--prod` only when NOT dev-from-source —
+    // so the dev native window hot-reloads the viewer (the whole point) while the
+    // shipped bundle, which has no source or Vite to run, keeps the snapshot.
+    if !preview_dev_mode() {
+        cmd.arg("--prod");
+    }
+    cmd.arg("--port")
         .arg(port.to_string())
         .arg("--repo")
         .arg(project)
@@ -181,10 +201,11 @@ fn spawn_sidecar(project: &PathBuf, port: u16, env: &[(String, String)]) -> std:
     cmd.spawn()
 }
 
-/// Block until the sidecar port accepts connections (or time out after ~15s). Once
-/// the Bun server is listening it can serve viewer/dist + the read API immediately.
-fn wait_for_port(port: u16) -> bool {
-    for _ in 0..150 {
+/// Block until the sidecar port accepts connections, polling every 100ms for up to
+/// `max_attempts` tries (or give up). Once the Bun server is listening it can serve
+/// the viewer + the read API immediately.
+fn wait_for_port(port: u16, max_attempts: u32) -> bool {
+    for _ in 0..max_attempts {
         if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
             return true;
         }
@@ -198,7 +219,12 @@ fn wait_for_port(port: u16) -> bool {
 /// secure-context mixed-content blocking, and lets native menu gestures stay
 /// Rust-side (so they survive the navigation away from the app shell).
 fn navigate_to_sidecar(app: &AppHandle, port: u16) {
-    if !wait_for_port(port) {
+    // Prod binds almost instantly (it's just a static host). Dev awaits Vite
+    // readiness *before* it binds the port, and a first-ever run also pre-bundles
+    // viewer deps — so give dev a much larger budget (~90s vs ~15s) or the initial
+    // `tauri dev` launch would abandon a sidecar that's merely still warming up.
+    let attempts = if preview_dev_mode() { 900 } else { 150 };
+    if !wait_for_port(port, attempts) {
         return;
     }
     if let Some(window) = app.get_webview_window("main") {
