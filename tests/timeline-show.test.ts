@@ -146,6 +146,26 @@ describe("summarizeTimeline — clip detail", () => {
     expect(item.overlay).toBe("graphic");
     expect(item.composition).toBe("Title");
   });
+
+  it("treats a cache/remotion clip that also names a composition as LIVE graphic (not baked)", () => {
+    // The viewer's precedence: isGraphicClip (resource under cache/remotion) wins over
+    // a bare composition field — the composition just names which comp renders live.
+    const tl = timeline(LANDSCAPE, {
+      video: [
+        videoTrack(
+          clip("/proj/.vean/cache/remotion/ChatRetire.mov", {
+            dur: 90,
+            id: "g3",
+            composition: { id: "ChatRetire" },
+          }),
+        ),
+      ],
+    });
+    const item = summarizeTimeline(tl).tracks[0]?.items[0];
+    if (item?.kind !== "clip") throw new Error("expected clip");
+    expect(item.overlay).toBe("graphic");
+    expect(item.composition).toBe("ChatRetire");
+  });
 });
 
 describe("summarizeTimeline — diagnostics fold-in", () => {

@@ -86,6 +86,10 @@ export async function ensureViteDevServer(opts: {
   veanRoot: string;
   /** Where to route the child's startup line (default: process.stderr). */
   log?: (message: string) => void;
+  /** The active project's `remotion/src/compositions` dir, when it has one. Passed to
+   *  the Vite child as VEAN_PROJECT_COMPS_DIR so the `@project-comp` alias resolves to
+   *  it — the viewer then discovers THAT project's comps live (see vite.config.ts). */
+  projectCompsDir?: string;
 }): Promise<ViteDevHandle> {
   const log = opts.log ?? ((m: string) => process.stderr.write(`${m}\n`));
   const viewerDir = join(opts.veanRoot, "viewer");
@@ -103,7 +107,14 @@ export async function ensureViteDevServer(opts: {
   const child: ChildProcess = spawn("bun", ["run", "dev"], {
     cwd: viewerDir,
     stdio: ["ignore", "inherit", "inherit"],
-    env: { ...process.env, VEAN_VIEWER_PORT: String(port) },
+    env: {
+      ...process.env,
+      VEAN_VIEWER_PORT: String(port),
+      // Per-project comp discovery: point the viewer's `@project-comp` alias at the
+      // active project's compositions dir so its own comps render live. Omitted when
+      // the project has none (the alias then falls back to an empty dir).
+      ...(opts.projectCompsDir ? { VEAN_PROJECT_COMPS_DIR: opts.projectCompsDir } : {}),
+    },
   });
 
   let exited = false;

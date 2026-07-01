@@ -31,13 +31,23 @@ export interface RegisteredComposition {
 // Eager so the map is built synchronously at module load (resolveComposition stays
 // sync; OverlayPlayer resolves in a useMemo). A project has a handful of comps, so the
 // upfront cost is negligible; per-comp lazy loading is a P1 optimization.
-const modules = import.meta.glob<CompModule>("@remotion-comp/*.tsx", { eager: true });
+const workspaceModules = import.meta.glob<CompModule>("@remotion-comp/*.tsx", { eager: true });
+// PER-PROJECT comps: the ACTIVE project's OWN `remotion/src/compositions` dir, aliased
+// to `@project-comp` (the preview server sets VEAN_PROJECT_COMPS_DIR when it launches
+// Vite for a project; an empty dir otherwise). So `vean open retire` discovers retire's
+// ChatRetire alongside the shared workspace comps — no registry edit, no copy into the
+// shared dir. A project comp SHADOWS a workspace comp of the same id (registered LAST),
+// so a project can override a shared comp with its own.
+const projectModules = import.meta.glob<CompModule>("@project-comp/*.tsx", { eager: true });
 
-/** The id → composition map, discovered from the glob. Keys are the comp filenames
+/** The id → composition map, discovered from the globs. Keys are the comp filenames
  *  (== the `<Composition id=…>` ids the producer stamps), so a clip authored against
  *  the producer resolves the same component in live preview — no drift, no dual list. */
 export const COMPOSITIONS: Record<string, RegisteredComposition> = {};
-for (const [path, mod] of Object.entries(modules)) {
+for (const [path, mod] of [
+  ...Object.entries(workspaceModules),
+  ...Object.entries(projectModules),
+]) {
   const id = idFromPath(path);
   const picked = pickComposition(id, mod);
   if (picked) {

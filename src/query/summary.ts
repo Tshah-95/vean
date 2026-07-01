@@ -196,13 +196,23 @@ function fadeFrames(clip: Clip): { in?: number; out?: number } {
   return { in: fadeIn, out: fadeOut };
 }
 
-/** Classify a clip's overlay identity from the IR alone (no preview coupling): a
- *  baked `composition` field → `composited`; a `graphic:<id>` label → `graphic`. */
+/** Classify a clip's overlay identity from the IR alone (no preview coupling),
+ *  matching the viewer's precedence (isGraphicClip wins over a bare composition
+ *  field): a clip is a LIVE `graphic` overlay if its resource is under
+ *  `cache/remotion/` OR it carries a `graphic:` label — even when it also names a
+ *  composition (the composition just names which comp renders live). Only a
+ *  `composition` field WITHOUT those markers is the baked, footage-`composited` path. */
 function overlayOf(clip: Clip): { overlay?: "composited" | "graphic"; composition?: string } {
-  if (clip.composition) return { overlay: "composited", composition: clip.composition.id };
-  if (clip.label?.startsWith("graphic:")) {
-    return { overlay: "graphic", composition: clip.label.slice("graphic:".length) };
+  const isGraphic =
+    /cache\/remotion\//.test(clip.resource.replace(/\\/g, "/")) ||
+    /^graphic\b/i.test(clip.label ?? "");
+  if (isGraphic) {
+    const labelId = clip.label?.startsWith("graphic:")
+      ? clip.label.slice("graphic:".length)
+      : undefined;
+    return { overlay: "graphic", composition: clip.composition?.id ?? labelId };
   }
+  if (clip.composition) return { overlay: "composited", composition: clip.composition.id };
   return {};
 }
 

@@ -15,6 +15,15 @@ export default defineConfig({
     alias: {
       // Reuse the producer's compositions from the sibling workspace by source.
       "@remotion-comp": resolve(__dirname, "..", "remotion", "src", "compositions"),
+      // PER-PROJECT comps: the ACTIVE project's own `remotion/src/compositions` dir,
+      // passed by the preview server via VEAN_PROJECT_COMPS_DIR when it launches Vite
+      // for a project — so `vean open <project>` renders THAT project's comps live
+      // (e.g. retire's ChatRetire), not just the shared workspace's. Absent (a bare
+      // `bun run viewer:dev`) it points at a real EMPTY dir, so the project glob
+      // resolves to nothing rather than erroring.
+      "@project-comp":
+        process.env.VEAN_PROJECT_COMPS_DIR ??
+        resolve(__dirname, "src", "remotion", "no-project-comps"),
     },
     // The aliased composition lives under the sibling `remotion/` workspace, whose
     // bare `import "remotion"` (and React) would otherwise resolve to THAT

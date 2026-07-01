@@ -841,7 +841,14 @@ export async function startPreviewServer(opts: PreviewServerOptions): Promise<Pr
   let vite: ViteDevHandle | null = g?.vite ?? null;
   if (opts.dev && !vite) {
     const { ensureViteDevServer } = await import("./viteDev");
-    vite = await ensureViteDevServer({ veanRoot });
+    // Per-project comp discovery: if the active project has its own Remotion
+    // compositions, tell the viewer's `@project-comp` alias where to find them so
+    // they render live (e.g. retire's ChatRetire) — no copy into the shared workspace.
+    const projectComps = join(opts.repo, "remotion", "src", "compositions");
+    vite = await ensureViteDevServer({
+      veanRoot,
+      ...(existsSync(projectComps) ? { projectCompsDir: projectComps } : {}),
+    });
     if (g) g.vite = vite;
   }
 
