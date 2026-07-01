@@ -337,6 +337,51 @@ export type AddTrackArgs = z.infer<typeof addTrackArgs>;
 export const removeTrackArgs = z.object({ track: trackAddrSchema });
 export type RemoveTrackArgs = z.infer<typeof removeTrackArgs>;
 
+// ─── A/V split (the detachAudio family) ───────────────────────────────────────
+// Shotcut's "Detach Audio" is a one-way split (see
+// artifacts/research/shotcut-detach-audio-2026-07-01.md): one A/V producer becomes
+// a video-only clip (audio selectors off) that stays in place + an audio-only clip
+// (video selectors off) on an audio track, joined — in vean — by a TYPED link so
+// the pair can never silently desync (the footgun Shotcut leaves open). Companions
+// `reattachAudio` / `linkClips` / `unlinkClips` complete the family.
+
+/** detachAudio — split the clip `uuid` into a video-only half (in place) + an
+ *  audio-only half on an audio track, joined by an auto-created typed link. */
+export const detachAudioArgs = z.object({
+  /** The A/V clip to split. Must have audio on (`hasAudio`) — else a typed error. */
+  uuid: z.string().min(1),
+});
+export type DetachAudioArgs = z.infer<typeof detachAudioArgs>;
+
+/** reattachAudio — the convenience inverse of `detachAudio`: re-merge a detached
+ *  video/audio pair back into the single A/V producer (remove the audio-only half
+ *  + its link, clear the video half's audio-off selectors), removing an audio
+ *  track iff it is left empty by the merge. Addressed by EITHER half's uuid. */
+export const reattachAudioArgs = z.object({
+  /** Either half of a detached A/V pair (the video-only or the audio-only clip). */
+  uuid: z.string().min(1),
+});
+export type ReattachAudioArgs = z.infer<typeof reattachAudioArgs>;
+
+/** linkClips — join two-or-more clips into one typed link group (so the ops treat
+ *  them as one A/V/graphic unit). The FIRST uuid is the `video` role (the anchor);
+ *  the rest are `audio` (partners move/report against the anchor). A clip already
+ *  in another link group is re-linked into this one (its prior link is captured for
+ *  the inverse). */
+export const linkClipsArgs = z.object({
+  /** ≥2 clip uuids to link. `uuids[0]` is the anchor (role `video`). */
+  uuids: z.array(z.string().min(1)).min(2),
+});
+export type LinkClipsArgs = z.infer<typeof linkClipsArgs>;
+
+/** unlinkClips — dissolve the link group(s) the named clips belong to, clearing
+ *  `link` on every member (not just the named clips — a group is atomic). */
+export const unlinkClipsArgs = z.object({
+  /** One-or-more clip uuids; the FULL link group of each is dissolved. */
+  uuids: z.array(z.string().min(1)).min(1),
+});
+export type UnlinkClipsArgs = z.infer<typeof unlinkClipsArgs>;
+
 // gain dB ⇄ multiplier (shared by gain.ts + its inverse). 0 dB = 1.0.
 /** Linear amplitude multiplier for `db` decibels (0 dB → 1). */
 export function dbToGain(db: number): number {

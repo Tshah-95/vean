@@ -3,7 +3,14 @@ import type { SchemaSummary } from "../actions/schema-summary";
 import { summarizeSchema } from "../actions/schema-summary";
 import { OP_NAMES, REGISTRY } from "./index";
 
-export type OpCategory = "placement" | "trim" | "transition" | "audio" | "filter" | "track";
+export type OpCategory =
+  | "placement"
+  | "trim"
+  | "transition"
+  | "audio"
+  | "filter"
+  | "track"
+  | "link";
 
 export type OpExample = {
   name: string;
@@ -247,6 +254,62 @@ const descriptors: BaseDescriptor[] = [
       inverse: "_restoreTransitions",
       prompt: "remove the last composite transition",
       args: { count: 1 },
+    },
+  ),
+  op(
+    "detachAudio",
+    "Detach Audio",
+    "audio",
+    "Split an A/V clip into a video-only clip plus a linked audio-only clip.",
+    ["split-audio", "detach-audio"],
+    {
+      inverse: "_reattachAudio",
+      prompt: "detach the audio from this interview clip",
+      args: { uuid: "clip-3" },
+      description:
+        "Use this to separate a clip's audio onto its own track so it can be edited independently. The two halves are joined by a typed A/V link so trim/split/ripple can keep them in sync; the audio lands on a blank audio track (a new one is created if none is free across the clip's span).",
+    },
+  ),
+  op(
+    "reattachAudio",
+    "Reattach Audio",
+    "audio",
+    "Re-merge a detached video/audio pair back into one A/V clip.",
+    ["merge-audio", "reattach-audio"],
+    {
+      inverse: "_redetachAudio",
+      prompt: "reattach the audio to this clip",
+      args: { uuid: "clip-3" },
+      description:
+        "Use this to undo a detach: pass EITHER half of a linked A/V pair and the audio is merged back into the single producer, removing the audio track if the merge leaves it empty.",
+    },
+  ),
+  op(
+    "linkClips",
+    "Link Clips",
+    "link",
+    "Join two or more clips into one typed link group (move/trim together).",
+    ["link-clips", "group-clips"],
+    {
+      inverse: "_restoreLinks",
+      prompt: "link this video and its voiceover so they move together",
+      args: { uuids: ["clip-3", "clip-9"] },
+      description:
+        "Use this to make clips behave as one unit: the first uuid is the anchor (video role), the rest are partners (audio role). A move then shifts every member by the same delta and the diagnostics can flag a trim/split that would desync them.",
+    },
+  ),
+  op(
+    "unlinkClips",
+    "Unlink Clips",
+    "link",
+    "Dissolve the link group(s) the named clips belong to.",
+    ["unlink-clips", "ungroup-clips"],
+    {
+      inverse: "_restoreLinks",
+      prompt: "unlink these clips so they move independently",
+      args: { uuids: ["clip-3"] },
+      description:
+        "Use this to break a link: the FULL group of each named clip is dissolved (a group is atomic), so every member's link is cleared.",
     },
   ),
   op(

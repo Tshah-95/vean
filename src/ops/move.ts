@@ -47,6 +47,7 @@ import {
   cloneTimeline,
   consolidateBlanks,
   findClip,
+  findLinkedPartners,
   findTrack,
   insertEntryAt,
   playtime,
@@ -58,6 +59,7 @@ import {
   type EditError,
   type MoveArgs,
   type Op,
+  type OpInvocation,
   type OpResult,
   editError,
   isEditError,
@@ -65,7 +67,108 @@ import {
   noConsequences,
 } from "./types";
 
+// ─── move — the public, LINK-AWARE entry point ────────────────────────────────
+// A linked clip (an A/V pair from detachAudio, or a manual linkClips group) moves
+// as ONE unit: every partner shifts by the SAME frame delta on its OWN track, so a
+// detached audio half tracks its video (no lip-sync drift — the desync Shotcut's
+// non-group-aware move allows). Mechanics: locate the primary + its partners,
+// compute delta = toPosition − srcPosition, and emit a `_compound` of the primary
+// move plus one same-track partner move per partner (each a `_moveOne`, so partners
+// don't re-expand their own links). Because `_compound` composes each sub-move's
+// capturing inverse in reverse, the whole linked move inverts exactly (contract
+// law #2). An UNLINKED clip skips straight to `moveOne` (zero overhead, unchanged).
 export const move: Op<MoveArgs> = (state, args): OpResult | EditError => {
+  const src = findClip(state, args.uuid);
+  if (!src) return editError({ kind: "clip-not-found", uuid: args.uuid });
+
+  const partners = findLinkedPartners(state, src.clip);
+  if (partners.length === 0) {
+    // Not linked — the plain single-clip move (no compound overhead).
+    return moveOne(state, args);
+  }
+
+  // The frame delta the primary travels; partners shift by the same amount on their
+  // own tracks (position-preserving relative to the primary).
+  const delta = args.toPosition - src.position;
+  if (delta === 0 && sameTrackAddr(args.toTrack, src)) {
+    // A no-op move of a linked unit — identity result (nothing shifts).
+    return moveOne(state, args);
+  }
+
+  // Guard: a partner can't shift before frame 0 (negative timeline position).
+  for (const p of partners) {
+    if (p.position + delta < 0) {
+      return editError({
+        kind: "frame-out-of-range",
+        frame: p.position + delta,
+        bound: 0,
+        detail: `move: shifting linked partner "${p.clip.id}" by ${delta} would place it before frame 0`,
+      });
+    }
+  }
+
+  // Thread state through the PRIMARY move (may cross tracks) then each partner move
+  // (by `delta`, on its own track), calling `moveOne` DIRECTLY (no `apply` — that
+  // would import the registry and form a cycle). Collect every sub-move's inverse;
+  // the whole linked move inverts by re-applying them in reverse (a `_compound`).
+  const subMoves: MoveArgs[] = [
+    { ...args },
+    ...partners.map(
+      (p): MoveArgs => ({
+        uuid: p.clip.id,
+        toTrack: { trackId: p.trackId },
+        toPosition: p.position + delta,
+        ripple: args.ripple,
+        rippleAllTracks: false, // partners shift the group, not other tracks
+      }),
+    ),
+  ];
+
+  let cur = state;
+  const inverses: OpInvocation[] = [];
+  const merged = noConsequences();
+  for (const m of subMoves) {
+    const r = moveOne(cur, m);
+    if (isEditError(r)) return r;
+    cur = r.state;
+    inverses.push(r.inverse);
+    mergeInto(merged, r.consequences);
+  }
+
+  return {
+    state: cur,
+    consequences: merged,
+    inverse: { op: "_compound", args: { steps: [...inverses].reverse() } },
+  };
+};
+
+/** Fold one consequence report into an accumulator (link-aware move merges the
+ *  primary + partner sub-move reports into one). Mirrors the private merge in
+ *  `index.ts::mergeConsequences`; kept local so move avoids importing the registry. */
+function mergeInto(into: Consequences, add: Consequences): void {
+  into.clipsAdded.push(...add.clipsAdded);
+  into.clipsRemoved.push(...add.clipsRemoved);
+  into.clipsMoved.push(...add.clipsMoved);
+  into.clipsTrimmed.push(...add.clipsTrimmed);
+  into.blanksCreated.push(...add.blanksCreated);
+  into.blanksRemoved.push(...add.blanksRemoved);
+  into.ripple.push(...add.ripple);
+  into.durationDelta += add.durationDelta;
+  into.warnings.push(...add.warnings);
+}
+
+/** True iff the move's destination track is the clip's CURRENT track (so a
+ *  delta-0 move is a genuine no-op we can short-circuit). */
+function sameTrackAddr(addr: MoveArgs["toTrack"], src: ReturnType<typeof findClip>): boolean {
+  if (!src) return false;
+  if ("trackId" in addr) return addr.trackId === src.trackId;
+  return addr.kind === src.trackKind && addr.index === src.trackIndex;
+}
+
+// ─── moveOne — the single-clip move core (NOT link-aware) ─────────────────────
+// The original move body. Exposed as the internal `_moveOne` op so the link-aware
+// `move` can drive partner sub-moves without them re-expanding their links.
+export const moveOne: Op<MoveArgs> = (state, args): OpResult | EditError => {
   // ── Locate the clip (the thing being moved) and the destination track ──
   const src = findClip(state, args.uuid);
   if (!src) return editError({ kind: "clip-not-found", uuid: args.uuid });
@@ -114,13 +217,14 @@ export const move: Op<MoveArgs> = (state, args): OpResult | EditError => {
   const sameSlot = sameTrack && args.toPosition === srcPosition;
 
   // A no-op move (same track, same position) — return a valid identity result so
-  // callers can compose without special-casing.
+  // callers can compose without special-casing. The inverse names `_moveOne` (this
+  // same non-link-aware core), so undoing a partner sub-move never re-expands links.
   if (sameSlot) {
     const next = cloneTimeline(state);
     return {
       state: next,
       consequences: noConsequences(),
-      inverse: { op: "move", args: { ...args } },
+      inverse: { op: "_moveOne", args: { ...args } },
     };
   }
 
@@ -142,7 +246,9 @@ export const move: Op<MoveArgs> = (state, args): OpResult | EditError => {
     state: next,
     consequences: c,
     inverse: {
-      op: "move",
+      // `_moveOne` (the non-link-aware core) BACK to the origin — so undoing a
+      // partner ripple sub-move stays scoped to that one clip (no re-expansion).
+      op: "_moveOne",
       args: {
         uuid: moved.id,
         toTrack: { trackId: srcTrackId },

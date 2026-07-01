@@ -28,6 +28,7 @@ import {
   cloneTimeline,
   dissolveConsumesAt,
   findClip,
+  linkDesyncWarning,
   playtime,
   splitEntryAt,
   trackItems,
@@ -106,6 +107,19 @@ export const split: Op<SplitArgs> = (state, args): OpResult | EditError => {
     playtime: playtime(leftClip),
   });
   c.durationDelta = 0; // a split moves no frames on the timeline
+
+  // Record a link desync (record, don't corrupt): splitting ONE half of a linked
+  // A/V pair leaves the partner un-split, so a later edit on either half can drift
+  // them. The split is performed correctly; we flag the drift for the diagnostics
+  // layer. Both halves share the original clip's `link`, so partners are the same.
+  c.warnings.push(
+    ...linkDesyncWarning(
+      state,
+      loc.clip,
+      "split",
+      `cut at frame ${args.frame}; the linked partner was not split`,
+    ),
+  );
 
   return {
     state: next,
