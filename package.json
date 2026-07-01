@@ -65,7 +65,8 @@
     "lsp": "bun src/bridge/lsp/server.ts",
     "mcp": "bun src/bridge/mcp/server.ts",
     "move2:e2e": "bun scripts/move2-e2e.ts",
-    "verify:claude-code": "bun src/cli.ts doctor --host claude-code --surface mcp-lsp"
+    "verify:claude-code": "bun src/cli.ts doctor --host claude-code --surface mcp-lsp",
+    "lint:comps": "bun scripts/comp-lint.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

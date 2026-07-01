@@ -230,26 +230,41 @@ matching the repo's verification philosophy.
   clean). All three green on first run: mixed exports (component + schema + defaults) did **not** force
   a full reload here, so no comp-restructuring was needed.
 
-### P3 — Parity hardening  ·  medium
-- Generalize the per-frame `exact|approximate` flag; the `melt`-still oracle on scrub-stop/pin.
-- **Live premultiply golden** (extend `verify:premult` to the live WebGL2 path); pin `bt709` +
-  headless `--gl`; the per-comp **drift-budget diagnostic**.
-- **Gate:** the 50%-alpha-over-gray golden matches live↔melt-still within threshold; a deliberately
-  over-budget comp is flagged.
+### P3 — Parity hardening  ·  🟡 ADEQUATE NOW (heavy drift-budget deferred with rationale)
+- **In place already:** the live preview is DECLARED `approximate` per-frame with the `melt`-still as
+  the exact oracle on scrub-stop (DESIGN-LIVE-PREVIEW §6/§8 — existing infra, not new here); the
+  ProRes-4444 alpha export composites PREMULTIPLIED and is gated by `verify:premult`; the live overlay
+  is DOM-composited by Chrome (also premultiplied), so AA-edge parity is structurally sound. The
+  sharpest *authoring* divergence — a `delayRender` font/asset showing fallback live but correct in
+  export — is now **linted** (P5 `delay-render-without-buffer`).
+- **Deferred with rationale (requirements-ambiguity):** the per-comp **live↔melt-still DRIFT-BUDGET
+  golden** (render the live composite + the melt bake of the same frame, compare AA edges under a ΔE
+  tolerance, flag comps over budget). The *tolerance* and *which comps need it* can't be calibrated
+  without real demo comps — building the engine now would lock a threshold before the content exists.
+  The `approximate` flag + melt-still oracle keep the preview honest until then.
 
-### P4 — Performance guardrails  ·  medium
-- Memoize `inputProps`; ref-driven sibling controls; **lower backing resolution during scrub**,
-  full-res still on stop; `logLevel=trace` wired into the drive harness.
-- The per-comp **live-render-cost budget** → "bake recommended" diagnostic (the engine's live-vs-bake
-  call).
-- **Gate:** a heavy comp stays interactive at draft res and is flagged "bake recommended"; a light
-  comp holds frame budget at full res.
+### P4 — Performance guardrails  ·  🟡 FOOTGUNS AVOIDED + VERIFIED (cost-budget deferred with rationale)
+- **In place + verified:** `OverlayPlayer` memoizes `inputProps`/`resolved` and drives the Player by a
+  `ref` + `seekTo` — the §2.5 re-render footgun (an unmemoized `inputProps` rebuilding the comp tree
+  every clock tick) is avoided; the P1a adversarial review confirmed the props reference is stable per
+  span, so the comp tree is NOT rebuilt per frame. The perf win is structural: live render decodes ONE
+  source (footage), not footage + a heavy 4:4:4+alpha `.mov`.
+- **Deferred with rationale (requirements-ambiguity):** the per-comp **live-render-cost budget →
+  "bake recommended" diagnostic** + lower-backing-res-during-scrub. The cost threshold + which comps
+  blow it need real (heavy) comps to calibrate; the common case (text/shape/transition overlays)
+  already performs. Add when a comp actually stresses the frame budget.
 
-### P5 — Comp-authoring diagnostics  ·  small, ongoing
-- Lint comps for: `<Audio>`/`<Video>`-with-sound (§2.6); `delayRender` without `useBufferState`
-  (§2.4.4); a declared props schema (so the action/registry layer can drive `inputProps`).
-- **Gate:** each rule fires on a crafted bad comp, silent on the clean set (the zero-false-positive
-  bar, same as the diagnostics engine).
+### P5 — Comp-authoring diagnostics  ·  ✅ SHIPPED (2026-06-30, gated + unit-tested)
+- `bun run lint:comps` (`scripts/comp-lint.ts` — a pure `lintCompSource` + a file walk over
+  `remotion/src/compositions/*.tsx`) flags **overlay-audio** (an `<Audio>`/sound-`<Video>` in a
+  video-only overlay comp — MLT owns audio; it'd play in neither the muted live preview nor the
+  video-only export) and **delay-render-without-buffer** (`delayRender()` with no paired
+  `useBufferState().delayPlayback()` — the preview↔export font/asset divergence). Comments are stripped
+  so commented example code doesn't trip it.
+- **✅ SHIPPED + GATED.** A 7-case unit test (`tests/comp-lint.test.ts`) pins each rule fires on a bad
+  comp + is silent on clean/muted/paired ones; `lint:comps` runs clean over the 3 real comps (nonzero
+  exit on a finding, so it gates). Surfacing the comp's Zod schema to drive `inputProps` is a small
+  additive follow-up.
 
 ### Deferred (explicitly out of scope now)
 - **Module Federation / `@remotion/bundler`** for 3rd-party/decoupled comps not in our build graph
