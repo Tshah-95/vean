@@ -22,13 +22,17 @@ Three forks were decided. They are locked; this doc is their expansion.
    the gold accent `#C7AE7A`, Hanken Grotesk + JetBrains Mono, the 8px radius, the
    8/16/24/40 spacing ladder, mono uppercase eyebrows, "hover lights the row up by
    brightness, not background," and tick-curve motion (no springs).
-3. **Left icon rail of destinations** — a thin left rail
-   (Edit / Media / Checks / Branch / Jobs) where each item fills a *contextual
-   content-rail* (Carlo's 76px icon rail + 224px content rail pattern). The
-   **monitor + timeline never swap** — that is the hard line vs Resolve's bottom
-   page-rail (mode-switching). The right side becomes **Inspector + Consequences +
-   agent chat** (net new — the differentiator). Both AI-native editors (Palmier,
-   Descript) converged on single-workspace-plus-sidebar, not mode-switching.
+3. **Left drawer with icon-only tabs + a full-width timeline** *(revised
+   2026-07-01 after a Palmier-Pro reference — this supersedes the earlier "vertical
+   icon rail" model)*. There is **no vertical icon rail**: navigation is an
+   **icon-only tab row atop a left drawer** (Media / Checks / Branch / Jobs / Chat;
+   **no "Edit"** — the editor view is the persistent thing, not a nav target). The
+   drawer + a right panel occupy a **top band** that shares vertical space with the
+   **preview**; the **timeline spans the full width beneath them** (horizontal
+   space is the scarce resource in an editor — give it all to the timeline). The
+   right panel holds **Inspector / Format / Consequences**; **chat is a drawer
+   tab**. Both AI-native editors (Palmier, Descript) converged on
+   single-workspace-plus-sidebar, not mode-switching.
 
 ## Why (the ethos in one paragraph)
 
@@ -103,104 +107,124 @@ the shadcn semantic names. Dark-only. Neutral field; Carlo everything-else.
 
 ## The shell (where things live)
 
-Four zones, left → right. (Mockup rendered in the design session; this is its
-spec.)
+*(Revised 2026-07-01. The earlier four-column icon-rail layout is superseded by
+the drawer-tabs + full-width-timeline model below — Palmier-shaped.)* A full-width
+top bar; a TOP BAND split three ways; a FULL-WIDTH TIMELINE beneath.
 
 ```
-┌──────┬───────────┬─────────────────────────────┬────────────┐
-│ icon │ content   │  monitor (neutral surround)  │ INSPECTOR  │
-│ rail │ rail      │  ───────────────────────────  │ props      │
-│ 48–  │ (contextual│  transport (play/tc/scrub)   │ ─────────  │
-│ 56px │  ~200px)  │  ───────────────────────────  │ CONSEQUEN. │
-│      │           │  TIMELINE (ruler + tracks)   │ preview-op │
-│ ●Edit│           │                              │ ─────────  │
-│ Media│           │                              │ chat pill  │
-│ Checks(2)                                        │            │
-│ Branch                                           │            │
-│ Jobs │           │                              │            │
-│ ⚙ R  │           │                              │            │
-└──────┴───────────┴─────────────────────────────┴────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│ TOP BAR: vean · project ▾    1920×1080 · 24fps    ⚙  Export    │
+├──────────────┬──────────────────────────────┬─────────────────┤
+│ LEFT DRAWER  │                              │ RIGHT PANEL     │
+│ [▣ ! ⑂ ▤ ✦] │      PREVIEW (neutral)       │ INSPECTOR       │
+│  icon tabs   │      ──────────────────       │ FORMAT          │
+│ media grid / │      transport                │ CONSEQUENCES    │
+│ checks /     │                              │                 │
+│ branch /     │                              │                 │
+│ jobs / chat  │                              │                 │
+├──────────────┴──────────────────────────────┴─────────────────┤
+│ TIMELINE — full width (taller/cleaner tracks, gutters)         │
+└───────────────────────────────────────────────────────────────┘
 ```
 
-- **Icon rail (destinations, not modes).** ~48–56px. Lucide icons + 11px labels.
-  Active = gold icon tile (`bg` gold@15% + gold glyph), inactive muted, hover
-  brightens the tile only. Destinations: **Edit** (default workspace), **Media**,
-  **Checks** (diagnostics — with a count badge), **Branch** (worktrees/agent
-  diffs), **Jobs** (renders + transcription + probes). Bottom-anchored: **Settings**
-  + project switcher avatar. Clicking a destination fills the content rail; it does
-  **not** rearrange the monitor/timeline.
-- **Content rail (contextual, collapsible ~200px).** The active destination's
-  content: Media = dense clip rows (kind-dot + name + duration, light-up hover);
-  Checks = the diagnostic list; Branch = worktree/session list; Jobs = job rows.
-  Re-clicking the active destination collapses it (Carlo behavior); the stage
-  reclaims the width.
-- **Stage (center).** Monitor on a **neutral `--vean-bg-inset` surround**, single
-  (FCP-style — vean has no source/program split and shouldn't invent one). Below:
-  the transport strip (play, timecode, scrubber, volume) — split out of today's
-  crammed toolbar. Below that: the **timeline** (its own tool row: blade / undo /
-  redo / snap / zoom; ruler; track lanes with the existing gesture algebra and
-  clip-level diagnostic badges).
-- **Inspector + Consequences + Chat (right).** Net new. **Inspector**: the selected
-  clip's properties as dense label:value rows (in / out / length / opacity /
-  track) — there is *no* inspector today. **Consequences**: the `preview-op`
-  result (ripple/overwrite/inverse) shown before commit — vean's "consequences
-  before a frame renders" thesis made visible. **Chat**: the agent input pill; the
-  agent and the human drive the same ops.
+- **Top bar.** Product mark, project switcher, route, resolution/fps/diagnostics
+  badges, a **Settings** gear, and **Export**.
+- **Left drawer (top band).** An **icon-only tab header** (Media / Checks / Branch
+  / Jobs / Chat — active = gold tile, hover-brighten, a dot on Checks when
+  non-zero) over a body that renders the active section. This *replaces* the
+  vertical rail: nav lives at the top of the drawer so it doesn't spend a
+  full-height column on horizontal space. Fixed width for now; the timeline sits
+  below it, not beside it. Settings is a drawer view reached via the top-bar gear
+  (not a visible tab).
+- **Preview (top band, center).** The monitor on a **neutral `--vean-bg-inset`
+  surround**, single (FCP-style — vean has no source/program split), with the
+  transport strip below it.
+- **Right panel (top band).** **Inspector** (selected clip's in/out/length/dials),
+  **Format** (resolution / fps / aspect — the resting content), **Consequences**
+  (the `preview-op` result before commit — vean's "consequences before a frame
+  renders" thesis made visible).
+- **Timeline (full-width bottom band).** Spans the entire width below the top band
+  (horizontal space is the scarce resource). Phase 3 makes it rich: taller/cleaner
+  tracks, richer headers, voice tracks with **waveform + transcript peek**, an A/V
+  clip's embedded audio as a **linked companion lane**, and **drag-into-the-gutter
+  → new track** above/below.
 
-### Re-homing the six old tabs
+### Re-homing the old six-tab sidebar
 
-| Today (6 peer tabs, right rail) | New home |
+| Old (6 peer tabs, right rail) | New home |
 |---|---|
-| Media | icon rail → **Media** (content rail) |
-| Sessions | icon rail → **Branch** |
-| Jobs, Render | icon rail → **Jobs** |
-| Setup, Project | **project switcher** (rail bottom) + **Settings** |
-| — | right side → **Inspector / Consequences / Chat** (new) |
+| Media | drawer tab → **Media** |
+| Sessions | drawer tab → **Branch** |
+| Jobs, Render | drawer tab → **Jobs** |
+| Setup, Project | top-bar **gear** → Settings (Project folded in) |
+| — | drawer tab → **Chat**; right panel → **Inspector / Format / Consequences** |
 
 Jobs and Project stub panels are deleted, not ported.
 
-## Component inventory to build
+### Configurable panels (later)
 
-- **shadcn primitives** (copy from Carlo's `src/components/ui/`): Button, Card,
-  Dialog, Popover, Sheet, Select, Tooltip, ScrollArea, plus `cn()`.
-- **Ported carlo components:** `Eyebrow`, the dense-row pattern, `Inspectable`
-  (touch-safe hover reveal — reuse for the ± / diagnostic hovers), the motion
-  keyframes.
-- **New vean shell components:** `AppShell` (the 4-zone grid), `IconRail`,
-  `ContentRail` (+ per-destination fills: `MediaRail`, `ChecksRail`, `BranchRail`,
-  `JobsRail`), `Inspector`, `ConsequencesPanel`, `ChatPanel`.
-- **Restyled existing:** `TimelineStrip`, `ClipBlock`, `Transport`, `PreviewPane`,
-  `Header` — driven off tokens, no inline hex.
+The shell reads panel sizes from a hardcoded `LayoutConfig` (`shell/layout.ts`)
+against a tab registry (`DRAWER_TABS`) — the exact shape it needs to become
+**user-editable + persisted to `.vean/vean.db`**. Enabling drag-relocate + resize
+later is "make the config editable + add splitters + persist," not a rewrite;
+panels are already independent, explicitly-sized flex children. Not built now (per
+"hardcode for the time being").
+
+## Component inventory
+
+- **shadcn primitives** (copy from Carlo's `src/components/ui/` as needed): Button,
+  Card, Dialog, Popover, Sheet, Select, Tooltip, ScrollArea, plus `cn()` (done).
+- **Ported carlo components:** `Eyebrow` (done), the dense-row pattern,
+  `Inspectable` (touch-safe hover reveal), the motion keyframes.
+- **vean shell (`shell/`):** `AppShell` (top band + full-width timeline), `TopBar`,
+  `Drawer` (icon-tab header + body), `RightPanel` (Inspector/Format/Consequences),
+  `layout.ts` (tab registry + `LayoutConfig`). *(The Phase-2 `IconRail` /
+  `ContentRail` / `Inspector` / `destinations` are removed — superseded by the
+  drawer model.)*
+- **Panels (`panels/`):** `MediaPanel`, `ChecksPanel` (new), `SessionsPanel`,
+  `RenderPanel`, `SetupPanel`, `ChatPanel` (new).
+- **Restyled existing (Phase 5):** `TimelineStrip`, `ClipBlock`, `Transport`,
+  `PreviewPane`, all panel bodies — off inline hex onto tokens.
 
 ## Phased plan (gated, additive-first — never regress the working editor)
 
-**Phase 1 — Foundation (additive, zero UI change).** Add Tailwind v4 + the
-shadcn scaffold to `viewer/`; add `tokens.css` (neutralized palette, radius,
-motion) + font loading; add `cn()` + `Eyebrow` + a couple primitives. Existing
-inline-styled UI keeps rendering untouched. *Gate:* `viewer` builds; `bun run
-doctor` green; a `drive` screenshot is pixel-identical to today (nothing adopted
-the tokens yet).
+**Phase 1 — Foundation (DONE, drive-verified).** Tailwind v4 + shadcn scaffold +
+`tokens.css` (neutralized palette, radius, motion) + Hanken/JetBrains fonts +
+`cn()`/`Eyebrow`. Additive; the app rendered pixel-identical (theme+utilities
+only, no preflight). *Commit `b77f509`.*
 
-**Phase 2 — Shell skeleton.** Build `AppShell` (icon rail + content rail + stage +
-inspector slot) as the new layout wrapping the *existing* PreviewPane / Transport
-/ TimelineStrip. Wire the destinations; re-home the six tabs into rail fills;
-delete the Jobs/Project stubs. *Gate:* `drive` screenshot matches the mockup
-zones; diagnostics still push to the Checks badge; timeline gestures unaffected.
+**Phase 2 / 2R — The shell (DONE, drive-verified).** `AppShell` = full-width top
+bar over a top band (left drawer with **icon-only tabs** · preview · right panel)
+and a **full-width timeline** beneath. Re-home the old six tabs; delete the
+Jobs/Project stubs; new `ChecksPanel` + `ChatPanel`; global neutral+Hanken flip
+(preflight). `layout.ts` scaffolds future relocatable/resizable panels. *(Phase 2
+first built a vertical-rail version; **2R** pivoted to the drawer +
+full-width-timeline model after the Palmier-Pro reference.)* *Gate met:* drawer
+tabs switch; timeline full width; Checks lists diagnostics; zero console errors;
+timeline gestures intact.
 
-**Phase 3 — Inspector + Consequences + Chat (net new).** Selected-clip inspector
-rows; `preview-op` → Consequences panel; the chat pill wired to the edit bridge.
+**Phase 3 — Timeline richness (next).** Taller/cleaner tracks + richer headers;
+voice tracks = **waveform + transcript peek**; an A/V clip's embedded audio as a
+**linked companion lane**; **drag-into-the-gutter → new track** above/below.
+Absorbs the old timeline restyle + adds capability. **Fork to decide here:** the
+linked audio is *display-only* (a companion lane that trims/moves with its video)
+vs. *modeled* as a real A/V pair in the IR (touches the document model + ops,
+since MLT carries A/V as one producer) — default is display-first.
+
+**Phase 4 — Inspector / Consequences / Chat live.** Selected-clip inspector rows;
+`preview-op` → live Consequences before commit; chat wired to the edit bridge.
 *Gate:* select a clip → inspector populates; `preview-op` → consequences render
 before commit.
 
-**Phase 4 — Restyle surfaces onto tokens.** Move TimelineStrip / ClipBlock /
-Transport / PreviewPane / Header / all rail fills off inline hex onto the token
-layer + shadcn primitives. *Gate:* `grep -r '#[0-9a-fA-F]\{6\}' viewer/src` returns
-(near) nothing; `drive` parity; corpus/render gates untouched (UI-only change).
+**Phase 5 — Restyle remaining internals + motion/polish.** TimelineStrip /
+ClipBlock / Transport / PreviewPane / panel bodies off inline hex onto tokens;
+tick-curve transitions; light-up hover everywhere; eyebrows on every surface;
+`formatValue` for timecode; keyboard-focus rings. *Gate:* `grep -r
+'#[0-9a-fA-F]\{6\}' viewer/src` returns (near) nothing; a driven before/after clip
+shows the calm, data-forward feel.
 
-**Phase 5 — Polish & motion.** Tick-curve transitions on rail/panel/collapse;
-the light-up hover language everywhere; eyebrows on every surface; `formatValue`
-for timecode; keyboard-focus rings (an accessibility gap today). *Gate:* a driven
-before/after clip demonstrates the calm, data-forward feel.
+**Later — configurable panels.** Relocatable + resizable + persisted layout
+(structured-for now via `layout.ts`; built when we want it).
 
 ## Invariants (don't regress)
 
@@ -208,8 +232,11 @@ before/after clip demonstrates the calm, data-forward feel.
   reskin** — Phases only re-dress them. A UI change that alters edit behavior is
   out of scope for this doc (that's `DESIGN-MOVE*`/`src/ops`).
 - **Neutral around footage.** No hue in the monitor surround band, ever.
-- **Destinations fill the content rail; they never swap the monitor/timeline.** The
-  moment a rail click rearranges the whole screen, we've rebuilt Resolve.
+- **Drawer tabs swap only the drawer body; they never rearrange the
+  monitor/timeline.** The moment a tab click reshuffles the whole screen, we've
+  rebuilt Resolve's page-rail.
+- **The timeline owns the full width.** Horizontal space is the scarce resource;
+  the drawer + right panel live in the top band only, never beside the timeline.
 - **One accent.** Gold is the only chromatic accent; status colors (amber/red) are
   signal, not decoration. Track hues are meaning-bearing and stay.
 - **Additive-first.** Each phase leaves the app shippable; the reskin never lands

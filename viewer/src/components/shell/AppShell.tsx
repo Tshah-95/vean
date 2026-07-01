@@ -1,20 +1,15 @@
-// The editor shell: full-width top bar over a four-zone row —
-//   icon rail · contextual content rail · stage (children) · inspector.
-// Owns the active-destination + collapse state. Destinations FILL the content
-// rail; the stage (monitor + timeline, passed as children) never moves. "edit"
-// is the focus destination that collapses the content rail. See DESIGN-UI.md.
+// The editor shell (Palmier-shaped): a full-width top bar; a TOP BAND that splits
+// left drawer · preview · right panel; and a FULL-WIDTH TIMELINE band beneath them.
+// The drawer + right panel share vertical space with the preview only — the
+// timeline gets the whole width (horizontal space is the scarce resource). The
+// preview and timeline arrive as slots so the editor owner (Stage) can keep one
+// `editor`/`clock` feeding both. See DESIGN-UI.md.
 import { type ReactNode, useState } from "react";
 import type { ProjectEntry } from "../../api";
 import type { Fps } from "../../types";
-import { ChecksPanel } from "../panels/ChecksPanel";
-import { MediaPanel } from "../panels/MediaPanel";
-import { RenderPanel } from "../panels/RenderPanel";
-import { SessionsPanel } from "../panels/SessionsPanel";
-import { SetupPanel } from "../panels/SetupPanel";
-import { ContentRail } from "./ContentRail";
-import type { DestId } from "./destinations";
-import { IconRail } from "./IconRail";
-import { Inspector } from "./Inspector";
+import { Drawer } from "./Drawer";
+import { DEFAULT_LAYOUT, type DrawerView } from "./layout";
+import { RightPanel } from "./RightPanel";
 import { TopBar } from "./TopBar";
 
 export interface AppShellProps {
@@ -31,28 +26,16 @@ export interface AppShellProps {
   diagnostics?: { errors: number; warnings: number } | null;
   projects?: ProjectEntry[];
   currentResolvedPath?: string;
-  /** The stage: monitor + transport + timeline. */
-  children: ReactNode;
+  /** Center of the top band: monitor + transport. */
+  preview: ReactNode;
+  /** Full-width bottom band: the timeline. */
+  timeline: ReactNode;
 }
 
 export function AppShell(props: AppShellProps) {
-  const [active, setActive] = useState<DestId>("media");
-  const [collapsed, setCollapsed] = useState(false);
-
-  const railOpen = !collapsed && active !== "edit";
-  const railActive: DestId = railOpen ? active : "edit";
+  const [view, setView] = useState<DrawerView>("media");
+  const layout = DEFAULT_LAYOUT;
   const checksCount = props.diagnostics ? props.diagnostics.errors + props.diagnostics.warnings : 0;
-
-  const onSelect = (id: DestId) => {
-    // "edit" is focus mode; re-clicking the open destination also collapses.
-    if (id === "edit" || (id === active && railOpen)) {
-      setCollapsed(true);
-      if (id !== "edit") setActive(id);
-      return;
-    }
-    setActive(id);
-    setCollapsed(false);
-  };
 
   return (
     <div className="flex h-full flex-col bg-background font-sans text-foreground">
@@ -65,28 +48,27 @@ export function AppShell(props: AppShellProps) {
         diagnostics={props.diagnostics}
         projects={props.projects}
         currentResolvedPath={props.currentResolvedPath}
+        onSettings={() => setView("settings")}
+        onExport={() => setView("jobs")}
       />
+
+      {/* TOP BAND: drawer · preview · right panel */}
       <div className="flex min-h-0 flex-1">
-        <IconRail
-          active={railActive}
+        <Drawer
+          view={view}
+          onSelect={setView}
+          width={layout.drawer.size}
           checksCount={checksCount}
-          onSelect={onSelect}
-          projectInitial={(props.baseTitle[0] ?? "•").toUpperCase()}
+          project={props.project}
+          route={props.route}
+          baseTitle={props.baseTitle}
         />
-        {railOpen ? (
-          <ContentRail>
-            {active === "media" ? <MediaPanel project={props.project} /> : null}
-            {active === "checks" ? <ChecksPanel route={props.route} /> : null}
-            {active === "branch" ? (
-              <SessionsPanel project={props.project} route={props.route} baseTitle={props.baseTitle} />
-            ) : null}
-            {active === "jobs" ? <RenderPanel route={props.route} /> : null}
-            {active === "settings" ? <SetupPanel project={props.project} /> : null}
-          </ContentRail>
-        ) : null}
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-inset">{props.children}</main>
-        <Inspector />
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-inset">{props.preview}</main>
+        <RightPanel size={layout.right.size} fps={props.fps} videoWidth={props.width} videoHeight={props.height} />
       </div>
+
+      {/* FULL-WIDTH TIMELINE BAND */}
+      <div className="min-h-0 flex-shrink-0 border-t border-sidebar-border">{props.timeline}</div>
     </div>
   );
 }

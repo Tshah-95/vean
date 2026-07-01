@@ -116,29 +116,18 @@ function Viewer({ route }: { route: string | undefined }) {
   }
 
   return (
-    <AppShell
-      title={data.timeline.title}
+    <Stage
+      data={data}
       route={route}
-      displayRoute={data.route}
-      baseTitle={data.timeline.title}
-      fps={data.fps}
-      width={data.profile.width}
-      height={data.profile.height}
-      diagnostics={diag}
+      volume={volume}
+      muted={muted}
+      sinkId={sinkId}
+      onVolumeChange={setVolume}
+      onMutedChange={setMuted}
+      onSinkChange={setSinkId}
       projects={projects}
-      currentResolvedPath={data.resolvedPath}
-    >
-      <Stage
-        data={data}
-        route={route}
-        volume={volume}
-        muted={muted}
-        sinkId={sinkId}
-        onVolumeChange={setVolume}
-        onMutedChange={setMuted}
-        onSinkChange={setSinkId}
-      />
-    </AppShell>
+      diagnostics={diag}
+    />
   );
 }
 
@@ -160,6 +149,8 @@ function Stage({
   onVolumeChange,
   onMutedChange,
   onSinkChange,
+  projects,
+  diagnostics,
 }: {
   data: TimelineResponse;
   route: string | undefined;
@@ -169,6 +160,8 @@ function Stage({
   onVolumeChange: (v: number) => void;
   onMutedChange: (m: boolean) => void;
   onSinkChange: (id: string) => void;
+  projects: ProjectEntry[];
+  diagnostics: { errors: number; warnings: number } | null;
 }) {
   const clock = useClockInstance();
   const editor = useTimelineEditor(data.timeline, data.totalFrames, route);
@@ -232,28 +225,42 @@ function Stage({
   }, [editor, clock]);
 
   return (
-    <>
-      <PreviewPane
-        width={data.profile.width}
-        height={data.profile.height}
-        fps={data.fps}
-        timeline={editor.timeline}
-        revision={editor.revision}
-        route={route}
-        volume={volume}
-        muted={muted}
-        sinkId={sinkId}
-      />
-      <Transport
-        volume={volume}
-        muted={muted}
-        onVolumeChange={onVolumeChange}
-        onMutedChange={onMutedChange}
-        sinkId={sinkId}
-        onSinkChange={onSinkChange}
-      />
-      <TimelineStrip editor={editor} />
-    </>
+    <AppShell
+      title={data.timeline.title}
+      route={route}
+      displayRoute={data.route}
+      baseTitle={data.timeline.title}
+      fps={data.fps}
+      width={data.profile.width}
+      height={data.profile.height}
+      diagnostics={diagnostics}
+      projects={projects}
+      currentResolvedPath={data.resolvedPath}
+      preview={
+        <>
+          <PreviewPane
+            width={data.profile.width}
+            height={data.profile.height}
+            fps={data.fps}
+            timeline={editor.timeline}
+            revision={editor.revision}
+            route={route}
+            volume={volume}
+            muted={muted}
+            sinkId={sinkId}
+          />
+          <Transport
+            volume={volume}
+            muted={muted}
+            onVolumeChange={onVolumeChange}
+            onMutedChange={onMutedChange}
+            sinkId={sinkId}
+            onSinkChange={onSinkChange}
+          />
+        </>
+      }
+      timeline={<TimelineStrip editor={editor} />}
+    />
   );
 }
 
