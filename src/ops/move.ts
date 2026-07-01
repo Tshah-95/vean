@@ -23,38 +23,35 @@
 // DESIGN-MOVE1.md §1); a same-uuid clip is never duplicated because the source
 // entry is gone before the destination entry is placed.
 //
-// Inverse: `move` BACK to the captured origin (same `ripple`/`rippleAllTracks`).
-// move is its own inverse under the symmetry the contract needs:
-//   • non-ripple: lift+overwrite back is the exact undo WHEN the destination region
-//     the forward move stamped over was empty (blank/trailing) — the regime where
-//     overwrite destroys nothing. (Overwriting REAL content is lossy in Shotcut too;
-//     the design's `_restoreRegion` captured-region inverse is the Move-1b upgrade,
-//     and the consequence report flags any `clipsRemoved` so a lossy move is
-//     visible. The samples below stay in the lossless regime, exactly as the
-//     remove/insert ripple samples do.)
-//   • ripple: ripple-remove then ripple-insert back is the exact undo when the
-//     cross-track ripple acted only over trailing emptiness (same lossless regime
-//     the remove/insert samples are scoped to).
-// So `move(origin) ∘ move(dest)` is the identity over those regimes (contract
-// law #2), with the inverse a single registry `move` invocation — no captured-data
-// restore op needed for Move 1a.
-import type { Clip, Item, Timeline, Track } from "../ir/types";
+// Inverse:
+//   • NON-RIPPLE is built by DELEGATING to `lift` (source) then `overwrite` (dest),
+//     so its inverse is their inverses composed: `_compound([_restoreRegion(dest),
+//     _unlift(source)])`. `overwrite` captures the destination content it stamps
+//     over (verbatim, straddle-safe), so the undo RESTORES that content exactly AND
+//     puts the clip back at the source — even when the drop landed on real clips
+//     (the "overwrite-on-collide" a user drag expects). This is EXACT, not
+//     lossless-regime-only: no captured data is thrown away. The consequence report
+//     still lists any `clipsRemoved` so a destructive drop is visible before render.
+//   • RIPPLE inverts by `move` BACK to the captured origin; that stays exact over
+//     the regime the ripple acted on trailing emptiness (the same lossless caveat
+//     the remove/insert ripple samples are scoped to — a cross-track ripple that
+//     cut real content out of another track is intentionally lossy, as in Shotcut).
+// So `move(origin) ∘ move(dest)` is the identity (contract law #2): a `_compound`
+// invocation for non-ripple, a single `move` for ripple.
+import { z } from "zod";
+import type { Clip, Timeline, Track } from "../ir/types";
+import { lift } from "./lift";
+import { overwrite } from "./overwrite";
 import {
-  blankItem,
   clipTouchesDissolve,
   cloneTimeline,
   consolidateBlanks,
   findClip,
   findTrack,
   insertEntryAt,
-  itemIndexAt,
   playtime,
-  regionIsBlank,
   regionTouchesDissolve,
-  removeRange,
   rippleOtherTracks,
-  startOf,
-  trackLength,
 } from "./primitives";
 import {
   type Consequences,
@@ -63,6 +60,7 @@ import {
   type Op,
   type OpResult,
   editError,
+  isEditError,
   moveArgs,
   noConsequences,
 } from "./types";
@@ -126,41 +124,20 @@ export const move: Op<MoveArgs> = (state, args): OpResult | EditError => {
     };
   }
 
+  // ── NON-RIPPLE (the default drag): lift the source + overwrite the dest. ──
+  if (!args.ripple) {
+    return moveOverwrite(state, src, dstTrack, moved, len, args);
+  }
+
+  // ── RIPPLE: ripple-remove the source, ripple-insert at the destination. ──
   const next = cloneTimeline(state);
   const c = noConsequences();
-
-  if (args.ripple) {
-    moveRipple(next, src, dstTrack, moved, len, args, c);
-  } else {
-    const err = moveOverwrite(next, src, dstTrack, moved, len, args, c);
-    if (err) return err;
-  }
-
-  // Keep an over-composite field transition IN SYNC with the overlay clip it
-  // brackets. A graphic/overlay clip (e.g. a Remotion-baked alpha .mov on an upper
-  // track) is composited over the footage by a `qtblend` `Transition` scoped to the
-  // clip's [in,out] span. When you drag that clip ALONG its track, the transition
-  // must FOLLOW it — otherwise the overlay keeps compositing at its old span and the
-  // clip appears un-movable (the "can't move the Remotion thing" gap). Shift any
-  // transition whose bTrack is this clip's track and whose span matches the clip's
-  // OLD placement to its NEW placement. Scoped to a same-track, non-ripple move (the
-  // body-drag gesture) where the shift is a clean translation; the inverse (move
-  // back) shifts it back symmetrically, so `move` stays its own inverse. A
-  // cross-track or ripple move leaves transitions untouched (rarer; the b_track /
-  // ripple math is not threaded through here).
-  if (!args.ripple && sameTrack && src.trackKind === "video") {
-    syncBracketingTransition(next, 1 + src.trackIndex, srcPosition, len, args.toPosition);
-  }
-
-  // The clip ended up at (toTrack, toPosition); report the relocation.
+  moveRipple(next, src, dstTrack, moved, len, args, c);
   c.clipsMoved.push({
     uuid: moved.id,
     from: { track: srcTrackId, position: srcPosition },
     to: { track: dstTrack.track.id, position: args.toPosition },
   });
-
-  // Inverse: move BACK to the captured origin, same regime. (See header: exact
-  // over the lossless regimes the samples are scoped to.)
   return {
     state: next,
     consequences: c,
@@ -202,112 +179,126 @@ function syncBracketingTransition(
   }
 }
 
+// ─── _spanTransition — the invertible form of syncBracketingTransition ─────────
+/** Re-span a bracketing over-composite transition: match by `bTrack` + its current
+ *  span `[fromIn,fromOut]` and move it to `[toIn,toOut]`. A no-op when nothing
+ *  matches (a plain move with no overlay transition), so it is always safe to
+ *  include in move's undo compound. Its inverse swaps from⇄to, so it round-trips
+ *  (and redo re-applies the forward shift). Internal — only `move`'s inverse names
+ *  it; it never appears in the agent-facing vocabulary. */
+export const spanTransitionArgs = z.object({
+  bTrack: z.number().int().nonnegative(),
+  fromIn: z.number().int(),
+  fromOut: z.number().int(),
+  toIn: z.number().int(),
+  toOut: z.number().int(),
+});
+export type SpanTransitionArgs = z.infer<typeof spanTransitionArgs>;
+
+export const spanTransition: Op<SpanTransitionArgs> = (state, args): OpResult => {
+  const next = cloneTimeline(state);
+  for (const t of next.transitions) {
+    if (t.bTrack === args.bTrack && t.in === args.fromIn && t.out === args.fromOut) {
+      t.in = args.toIn;
+      t.out = args.toOut;
+    }
+  }
+  return {
+    state: next,
+    consequences: noConsequences(),
+    inverse: {
+      op: "_spanTransition",
+      args: {
+        bTrack: args.bTrack,
+        fromIn: args.toIn,
+        fromOut: args.toOut,
+        toIn: args.fromIn,
+        toOut: args.fromOut,
+      },
+    },
+  };
+};
+
 // ─── Non-ripple: lift the source, overwrite the destination ───────────────────
-/** LIFT the clip at the source (swap for a same-length blank, leave a gap) then
- *  OVERWRITE it onto `[toPosition, toPosition+len)` at the destination. Mutates
- *  the (cloned) `next` in place; fills `c`. Returns an EditError only on a real
- *  precondition failure (none in the non-ripple path today). */
+/** A non-ripple move = LIFT the clip at the source (leave a same-length gap so
+ *  nothing downstream shifts) + OVERWRITE it onto `[toPosition, toPosition+len)` at
+ *  the destination (stamp over whatever sits there). Both delegated ops are already
+ *  inverse-exact — lift⇄`_unlift`, overwrite⇄`_restoreRegion` (the latter CAPTURES
+ *  the overwritten content verbatim, straddle-safe) — so move composes them and
+ *  inherits a correct capturing undo for free: `_compound([_restoreRegion(dest),
+ *  _unlift(source)])` restores the destination content AND puts the clip back at the
+ *  source. This is the "overwrite-on-collide" the old `regionIsBlank` reject
+ *  refused; the capture is what makes stamping over real clips safely undoable. */
 function moveOverwrite(
-  next: Timeline,
+  state: Timeline,
   src: NonNullable<ReturnType<typeof findClip>>,
   dst: NonNullable<ReturnType<typeof findTrack>>,
   moved: Clip,
   len: number,
   args: MoveArgs,
-  c: Consequences,
-): EditError | undefined {
+): OpResult | EditError {
+  const srcTrackId = src.trackId;
+  const srcPosition = src.position;
   const sameTrack = dst.kind === src.trackKind && dst.index === src.trackIndex;
 
-  // ── Vacate the source: replace the clip entry with a blank of equal length ──
-  const srcTrack = next.tracks[src.trackKind][src.trackIndex] as Track;
-  const lifted = [...srcTrack.items];
-  lifted.splice(src.itemIndex, 1, blankItem(len));
-  srcTrack.items = consolidateBlanks(lifted);
-  c.blanksCreated.push({ track: src.trackId, position: src.position, length: len });
+  const liftRes = lift(state, { uuid: args.uuid });
+  if (isEditError(liftRes)) return liftRes;
+  const owRes = overwrite(liftRes.state, {
+    track: args.toTrack,
+    clip: moved,
+    position: args.toPosition,
+  });
+  if (isEditError(owRes)) return owRes;
 
-  // ── Stamp the clip onto the destination region, capturing what it covers ──
-  // After the lift, the source-track items changed; re-grab the destination items
-  // (which is the SAME array when same-track, now carrying the lift's blank).
-  const dstTrack = next.tracks[dst.kind][dst.index] as Track;
-  // A non-ripple (overwrite) move is reversible only when it stamps over EMPTY
-  // space — overwriting real content destroys it with no capture, and the inverse
-  // (move back) cannot reconstruct it. Reject that case with a typed precondition
-  // so move's "its own inverse" contract holds (the agent should ripple-move, or
-  // explicitly overwrite, to intentionally destroy content).
-  if (!regionIsBlank(dstTrack.items, args.toPosition, len)) {
-    return editError({
-      kind: "precondition",
-      detail: `move: non-ripple move would overwrite content at [${args.toPosition},${args.toPosition + len}) on track "${dstTrack.id}" (use ripple, or remove the content first)`,
+  const next = owRes.state;
+
+  // Undo = restore the destination (drop the moved clip, splice the captured span
+  // back) THEN put the clip back at the source — the two delegated inverses in
+  // last-applied-first order.
+  const steps: { op: string; args: unknown }[] = [owRes.inverse, liftRes.inverse];
+
+  // Keep an over-composite field transition IN SYNC with the overlay clip it
+  // brackets on a SAME-TRACK move. A graphic/overlay clip (e.g. a Remotion-baked
+  // alpha .mov on an upper track) is composited over the footage by a `qtblend`
+  // `Transition` scoped to the clip's [in,out] span; dragging the clip along its
+  // track must move that transition with it, or the overlay keeps compositing at the
+  // old span (the "can't move the Remotion thing" gap). We shift it forward here and
+  // PREPEND its own inverse (`_spanTransition`, new→old) to the undo compound so the
+  // move round-trips with the transition in tow — the delegated `_restoreRegion` /
+  // `_unlift` know nothing about transitions.
+  if (sameTrack && src.trackKind === "video") {
+    const bTrackIndex = 1 + src.trackIndex;
+    syncBracketingTransition(next, bTrackIndex, srcPosition, len, args.toPosition);
+    steps.unshift({
+      op: "_spanTransition",
+      args: {
+        bTrack: bTrackIndex,
+        fromIn: args.toPosition,
+        fromOut: args.toPosition + len - 1,
+        toIn: srcPosition,
+        toOut: srcPosition + len - 1,
+      },
     });
   }
-  const { items: cleared, removed } = overwriteRegion(dstTrack.items, args.toPosition, len, moved);
-  dstTrack.items = consolidateBlanks(cleared);
 
-  // Report any NON-blank content the overwrite destroyed (a lossy move — the
-  // inverse can't reconstruct it; the consequence makes that visible).
-  let removedAcc = args.toPosition;
-  for (const it of removed) {
-    if (it.kind === "clip") {
-      c.clipsRemoved.push({
-        uuid: it.id,
-        track: dstTrack.id,
-        position: removedAcc,
-        playtime: playtime(it),
-      });
-    } else if (it.kind === "blank") {
-      c.blanksRemoved.push({ track: dstTrack.id, position: removedAcc, length: it.length });
-    }
-    removedAcc += it.kind === "clip" ? playtime(it) : it.kind === "blank" ? it.length : it.frames;
-  }
-  c.clipsAdded.push({
+  // Reframe the delegated consequences as a MOVE, surfacing any real content the
+  // destination overwrite destroyed (so a destructive drop is visible before render
+  // — the lift's own source gap + shuffled dest blanks are mechanics, not losses).
+  const c = noConsequences();
+  c.clipsMoved.push({
     uuid: moved.id,
-    track: dstTrack.id,
-    position: args.toPosition,
-    playtime: len,
+    from: { track: srcTrackId, position: srcPosition },
+    to: { track: dst.track.id, position: args.toPosition },
   });
-  // A non-ripple move keeps total timeline duration the same UNLESS the clip
-  // landed past the old track end (padded), which extends that track.
-  void sameTrack;
-  return undefined;
-}
+  for (const r of owRes.consequences.clipsRemoved) c.clipsRemoved.push(r);
+  c.warnings.push(...liftRes.consequences.warnings, ...owRes.consequences.warnings);
+  c.durationDelta = owRes.consequences.durationDelta; // lift is duration-neutral
 
-/** Overwrite `[position, position+len)` on `items` with `entry`: pad-then-place
- *  past the end, else carve the region (splitting straddled edges) and splice the
- *  entry into the hole. Returns the new items + the removed region (for reporting).
- *  Pure (operates on a copy). Mirrors the `overwrite` primitive Shotcut shares
- *  between overwrite/move. */
-function overwriteRegion(
-  items: Item[],
-  position: number,
-  len: number,
-  entry: Item,
-): { items: Item[]; removed: Item[] } {
-  const end = trackLength(items);
-  if (position >= end) {
-    // Past the track end: pad with a blank to reach `position`, then append.
-    const work = [...items];
-    if (position > end) work.push(blankItem(position - end));
-    work.push(entry);
-    return { items: work, removed: [] };
-  }
-  // Carve out the covered region, then drop the entry into the hole.
-  const { items: carved, removed } = removeRange(items, position, len);
-  const idx = holeIndex(carved, position);
-  const work = [...carved];
-  work.splice(idx, 0, entry);
-  return { items: work, removed };
-}
-
-/** The items index where the hole at timeline `position` begins (after a
- *  removeRange carved it). `position` lands on an item boundary; this returns the
- *  index of the item STARTING at `position`, or `items.length` when the hole is at
- *  the track tail. */
-function holeIndex(items: Item[], position: number): number {
-  if (position >= trackLength(items)) return items.length;
-  const idx = itemIndexAt(items, position);
-  const boundary = startOf(items, idx);
-  // removeRange guarantees `position` is on a boundary; `idx` is the item there.
-  return position > boundary ? idx + 1 : idx;
+  return {
+    state: next,
+    consequences: c,
+    inverse: { op: "_compound", args: { steps } },
+  };
 }
 
 // ─── Ripple: ripple-remove the source, ripple-insert the destination ──────────
@@ -489,6 +480,66 @@ export const samples: OpSample<MoveArgs>[] = [
       toPosition: 50,
       ripple: true,
       rippleAllTracks: true,
+    },
+  },
+  {
+    // NON-RIPPLE move that OVERWRITES real content (the everyday drag onto an
+    // occupied region — the case the old `regionIsBlank` reject refused). "mv" lifts
+    // off the head, then stamps at frame 30, straddling the "victim" clip's start:
+    // the destination [30,70) covers the lift blank AND the head 30f of "victim".
+    // overwrite CAPTURES the whole covered span, so the `_compound` inverse restores
+    // "victim" whole (uuid + fade) and puts "mv" back at frame 0 — an exact undo of a
+    // DESTRUCTIVE move. This is what makes overwrite-on-collide safely reversible.
+    name: "non-ripple move that overwrites content (captured-span inverse restores it)",
+    state: (): Timeline => {
+      resetIds();
+      return timeline(VERTICAL, {
+        video: [
+          videoTrack(
+            clip("/abs/mv.mp4", { id: "mv", dur: 40 }),
+            clip("/abs/victim.mp4", { id: "victim", dur: 40, fadeIn: 8 }),
+          ),
+        ],
+      });
+    },
+    // "mv" [0,40), "victim" [40,80). Lift "mv" → [blank(40), victim]; overwrite "mv"
+    // at 30 → [blank(30), mv(40), victim'(10)] (victim's head 30f is stamped over).
+    // Undo restores victim whole + mv at 0.
+    args: {
+      uuid: "mv",
+      toTrack: { kind: "video", index: 0 },
+      toPosition: 30,
+      ripple: false,
+      rippleAllTracks: false,
+    },
+  },
+  {
+    // NON-RIPPLE cross-track move whose clip is LONGER than the space to the dest
+    // track's end, so the delegated overwrite EXTENDS V2 past its old end. Exercises
+    // the `footprint` inverse THROUGH move's `_compound` (regression: this used to
+    // leave the moved clip's tail stranded on undo). "mv"(100) lifts off V1 and stamps
+    // over "b" on V2 at frame 20, overhanging b's end.
+    name: "non-ripple move onto content that EXTENDS the dest track (footprint inverse via compound)",
+    state: (): Timeline => {
+      resetIds();
+      return timeline(VERTICAL, {
+        video: [
+          videoTrack(
+            clip("/abs/h.mp4", { id: "h", dur: 40 }),
+            clip("/abs/mv.mp4", { id: "mv", dur: 100 }),
+          ),
+          videoTrack(clip("/abs/b.mp4", { id: "b", dur: 100, fadeOut: 6 })),
+        ],
+      });
+    },
+    // "mv"(100) → V2 at frame 20 over "b"(100): removes b's 80f tail, appends the
+    // overhang. Undo restores b whole (with fade) and mv back on V1.
+    args: {
+      uuid: "mv",
+      toTrack: { kind: "video", index: 1 },
+      toPosition: 20,
+      ripple: false,
+      rippleAllTracks: false,
     },
   },
 ];

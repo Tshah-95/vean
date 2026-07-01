@@ -141,8 +141,17 @@ export const overwrite: Op<OverwriteArgs> = (state, args): OpResult | EditError 
   }
   // overwrite replaces in place; the region removed (`removedLen`) equals what was
   // inserted (`len`) when fully within the run, so the track length is unchanged.
+  // But a clip stamped at a within-run position can be LONGER than the space to the
+  // old track end (removeRange only removes up to the end, then insertEntryAt pads +
+  // appends), which EXTENDS the track by `len - removedLen`. The touched region then
+  // occupies `capturedLen + (len - removedLen)` frames — the inverse must clear
+  // exactly that many, or it under-removes and strands the inserted clip's tail (the
+  // extend-past-end inverse bug). Pass that `footprint` so `_restoreRegion` clears
+  // the real span, not just the captured length.
   const removedLen = removed.reduce((n, it) => n + itemLength(it), 0);
   c.durationDelta = len - removedLen;
+  const capturedLen = span.captured.reduce((n, it) => n + itemLength(it), 0);
+  const footprint = capturedLen + (len - removedLen);
 
   return {
     state: next,
@@ -155,6 +164,7 @@ export const overwrite: Op<OverwriteArgs> = (state, args): OpResult | EditError 
         removed,
         captured: span.captured,
         spanStart: span.spanStart,
+        footprint,
         insertedUuid: clipUuid(clip),
         padded: 0,
       },
@@ -196,6 +206,10 @@ export const restoreRegionArgs = z.object({
   captured: z.array(itemSchema).default([]),
   /** Rendered frame where the captured span begins. */
   spanStart: z.number().int().nonnegative().default(0),
+  /** Frames the touched region occupies AFTER the forward overwrite (`capturedLen +
+   *  durationDelta`). Differs from `captured`'s length when the stamped clip extended
+   *  the track past its old end. 0 → fall back to the captured length (in-place). */
+  footprint: z.number().int().nonnegative().default(0),
   /** The uuid of the clip overwrite inserted (the thing to pull back out). */
   insertedUuid: z.string().min(1),
   /** Frames of leading blank the forward op padded (past-end overwrite); dropped on restore. */
@@ -235,7 +249,11 @@ export const restoreRegion: Op<RestoreRegionArgs> = (state, args): OpResult | Ed
         n + (it.kind === "clip" ? playtime(it) : it.kind === "blank" ? it.length : it.frames),
       0,
     );
-    const { items: cleared } = removeRange(work, args.spanStart, capturedLen);
+    // Clear the WHOLE touched region — the captured span PLUS any track extension the
+    // stamped clip added past the old end (`footprint`). Falling back to `capturedLen`
+    // when unset keeps the in-place case (footprint === capturedLen) exact.
+    const clearLen = args.footprint > 0 ? args.footprint : capturedLen;
+    const { items: cleared } = removeRange(work, args.spanStart, clearLen);
     work = cleared;
     let at = args.spanStart;
     for (const it of args.captured) {
@@ -372,6 +390,27 @@ export const samples: OpSample<OverwriteArgs>[] = [
       track: { kind: "video", index: 0 },
       clip: clip("/abs/s.mp4", { id: "S", dur: 30 }),
       position: 25,
+    },
+  },
+  {
+    // WITHIN-RUN overwrite whose stamped clip is LONGER than the space to the old
+    // track end, so it EXTENDS the track. removeRange can only carve to the end (80f),
+    // then insertEntryAt appends the rest — the touched region grows from 100f to
+    // 120f. The `footprint` inverse clears the full 120f and re-merges the captured
+    // clip; without it, `_restoreRegion` under-removed and stranded the stamp's tail.
+    name: "overwrite a clip LONGER than the remaining track (extends past end; footprint inverse)",
+    state: (): Timeline => {
+      resetIds();
+      return timeline(VERTICAL, {
+        video: [videoTrack(clip("/abs/b.mp4", { id: "b", dur: 100, fadeOut: 6 }))],
+      });
+    },
+    // b plays [0,100). Stamp a 100f clip at position 20 → region [20,120) removes the
+    // 80f tail of b and appends the overhang; b's head [0,20) survives.
+    args: {
+      track: { kind: "video", index: 0 },
+      clip: clip("/abs/stampL.mp4", { id: "stampL", dur: 100 }),
+      position: 20,
     },
   },
 ];

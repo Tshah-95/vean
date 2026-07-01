@@ -293,24 +293,34 @@ describe("slide — guards return typed EditErrors (never throw)", () => {
     expect(e).toMatchObject({ kind: "clip-not-found", uuid: "nope" });
   });
 
-  it("no LEFT neighbour (clip at the track start) is a precondition error", () => {
+  it("a clip at the track START slides LATER (leading blank) but NOT earlier (rejected)", () => {
     resetIds();
     const start = timeline(VERTICAL, {
       video: [videoTrack(clip("/abs/a.mp4", { id: "c", dur: 30 }), blank(20))],
     });
-    const e = err(slide(start, { uuid: "c", delta: 5 }));
+    // Slide LATER: a leading blank is materialised to push the clip right; the right
+    // blank absorbs it. (Used to hard-reject with "no left neighbour".)
+    const r = ok(slide(start, { uuid: "c", delta: 5 }));
+    expect(r.state.tracks.video[0]?.items[0]).toMatchObject({ kind: "blank", length: 5 });
+    const back = ok(slide(r.state, r.inverse.args)); // inverse is a slide
+    expect(back.state).toEqual(start);
+    // Slide EARLIER from frame 0: impossible (no space before 0) → typed precondition.
+    const e = err(slide(start, { uuid: "c", delta: -5 }));
     expect(e.kind).toBe("precondition");
-    expect(JSON.stringify(e)).toMatch(/no left neighbour/i);
+    expect(JSON.stringify(e)).toMatch(/track start/i);
   });
 
-  it("no RIGHT neighbour (clip at the track end) is a precondition error", () => {
+  it("a clip at the track END slides in either direction (open trailing space)", () => {
     resetIds();
     const start = timeline(VERTICAL, {
       video: [videoTrack(blank(20), clip("/abs/a.mp4", { id: "c", dur: 30 }))],
     });
-    const e = err(slide(start, { uuid: "c", delta: 5 }));
-    expect(e.kind).toBe("precondition");
-    expect(JSON.stringify(e)).toMatch(/no right neighbour/i);
+    // The last clip has no right neighbour; trailing space absorbs the slide and the
+    // left blank repositions it. (Used to hard-reject with "no right neighbour".)
+    const later = ok(slide(start, { uuid: "c", delta: 5 }));
+    expect(ok(slide(later.state, later.inverse.args)).state).toEqual(start);
+    const earlier = ok(slide(start, { uuid: "c", delta: -5 }));
+    expect(ok(slide(earlier.state, earlier.inverse.args)).state).toEqual(start);
   });
 
   it("a clip-neighbour extending PAST its source length is a frame-out-of-range error", () => {

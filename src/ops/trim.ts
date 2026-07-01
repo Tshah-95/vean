@@ -346,24 +346,43 @@ function neighbourBlankTrim(
     return undefined;
   }
 
-  // No neighbour blank.
+  // No neighbour blank on the trim side. Either the side-adjacent item is real
+  // CONTENT (a clip/dissolve butted against this one), or there is NO neighbour at
+  // all — this clip sits at that track EDGE.
+
+  // TRACK TAIL (trimOut with nothing to the right): trailing emptiness is IMPLICIT
+  // — it is not a `blank` item (consolidateBlanks drops a trailing blank), so there
+  // is nothing to hold or consume. The clip just resizes into/out of open trailing
+  // space, in BOTH directions:
+  //   • extend (δ<0): grow into the open space — the everyday "drag the last clip's
+  //     right edge outward" gesture, which MUST work (the source-length guard above
+  //     already caps it at the media end);
+  //   • shorten (δ>0): the track simply gets shorter — there is nothing downstream
+  //     to keep in place, so NO holding blank is inserted. (Inserting one would
+  //     desync the scalar inverse: the symmetric extend wouldn't recreate it, so
+  //     `back.state` would carry a phantom trailing blank and the undo round-trip
+  //     would fail. Doing nothing keeps trimOut(−δ)∘trimOut(δ) exactly the identity.)
+  if (side === "out" && neighbour === undefined) {
+    return undefined;
+  }
+
   if (delta > 0) {
-    // Insert a blank to hold the clip's position (trimIn: before the clip;
-    // trimOut: after it). Trailing blanks are dropped by consolidateBlanks on
-    // serialize, which is exactly right for a trimOut at the track tail (nothing
-    // after it to hold) — and the scalar inverse re-grows the clip without needing
-    // the blank back, so the round-trip is still exact.
+    // SHORTEN against real content (or the track head): insert a holding blank so
+    // the rest of the track stays put — trimIn opens a gap before the clip (keeping
+    // its start fixed); trimOut opens one before the butted right clip.
     const insertAt = side === "in" ? clipIndex : clipIndex + 1;
     items.splice(insertAt, 0, blankItem(delta));
     c.blanksCreated.push({ track: trackId, position: 0, length: delta });
     return undefined;
   }
-  // delta < 0, no blank to give back: can't extend into adjacent content.
+  // EXTEND with no blank to consume and real content (or the track/source head) on
+  // that side — can't extend non-ripple without overwriting it.
+  const verb = side === "in" ? "trimIn" : "trimOut";
+  const wall =
+    side === "in" ? "it is at the track/source head" : "it is butted against the next clip";
   return editError({
     kind: "precondition",
-    detail:
-      `${side === "in" ? "trimIn" : "trimOut"}: cannot extend clip by ${-delta} frames — no ` +
-      `neighbouring blank on the ${side === "in" ? "left" : "right"} (use ripple)`,
+    detail: `${verb}: cannot extend clip by ${-delta} frames — ${wall} (use ripple, or move the neighbour)`,
   });
 }
 
@@ -557,6 +576,24 @@ export const samplesTrimOut: OpSample<TrimArgs>[] = [
     },
     // delta +30: out 99→69; the right blank (40) grows to 70.
     args: { uuid: "toutF", delta: 30, rippleAllTracks: false },
+  },
+  {
+    // EXTEND the tail of the LAST clip on a track into OPEN trailing space (the
+    // screenshot bug: dragging the last clip's right edge outward). There is no
+    // right-neighbour blank — trailing emptiness is implicit — so the clip simply
+    // grows within its source window. The source-length guard caps it at the media
+    // end; here out 49→69 stays well under length 200. The scalar inverse (trimOut
+    // +20) shrinks it back with NO holding blank (nothing downstream), so the tail
+    // is symmetric and the round-trip is exact — no phantom trailing blank.
+    name: "trimOut EXTEND the last clip into open trailing space (no right blank)",
+    state: (): Timeline => {
+      resetIds();
+      return timeline(VERTICAL, {
+        video: [videoTrack(clip("/abs/a.mp4", { id: "toutE", in: 0, out: 49, length: 200 }))],
+      });
+    },
+    // delta -20: out 49→69 (extend into open space), playtime 50→70.
+    args: { uuid: "toutE", delta: -20, rippleAllTracks: false },
   },
   {
     // The trimOut twin of the color trimIn sample: a positionless color clip's

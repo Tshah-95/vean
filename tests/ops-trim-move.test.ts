@@ -258,6 +258,40 @@ describe("trimOut — tail resize + right-neighbour blank", () => {
       playtimeDelta: -15,
     });
   });
+
+  it("EXTENDS the last clip's tail into open trailing space (the drag-right-edge-out bug)", () => {
+    resetIds();
+    const start = timeline(VERTICAL, {
+      video: [videoTrack(clip("/abs/a.mp4", { id: "c", in: 0, out: 273, length: 600 }))],
+    });
+    // Drag the last clip's right edge OUTWARD by 26f. There is no right-neighbour
+    // blank (trailing space is implicit), and the source has the frames (out 273 <
+    // length 600) — so it MUST extend, not error. Regression guard: this used to fail
+    // with "no neighbouring blank on the right (use ripple)" (the screenshot bug).
+    const r = ok(trimOut(start, { uuid: "c", delta: -26, rippleAllTracks: false }));
+    expect(asClip(vItems(r.state)[0]).out).toBe(299); // 273 → 299
+    expect(vItems(r.state)).toHaveLength(1); // no phantom trailing blank inserted
+    const back = ok(apply(r.inverse, r.state));
+    expect(back.state).toEqual(start);
+  });
+
+  it("rejects extending a tail BUTTED against a following clip (that would need ripple)", () => {
+    resetIds();
+    const start = timeline(VERTICAL, {
+      video: [
+        videoTrack(
+          clip("/abs/a.mp4", { id: "c", in: 0, out: 49, length: 600 }),
+          clip("/abs/b.mp4", { id: "next", dur: 40 }),
+        ),
+      ],
+    });
+    // Extending into real content non-ripple would overwrite the next clip — reject
+    // with a typed precondition (the honest boundary: open space extends, content
+    // does not). The clip HAS the source frames; the block is the neighbour, not media.
+    const e = err(trimOut(start, { uuid: "c", delta: -10, rippleAllTracks: false }));
+    expect(e.kind).toBe("precondition");
+    expect(JSON.stringify(e)).toMatch(/butted against the next clip/i);
+  });
 });
 
 describe("trim — fade interaction (sentinels, not keyframe strings)", () => {
@@ -588,7 +622,7 @@ describe("move — non-ripple (lift + overwrite)", () => {
     expect(after).toEqual(before); // same id, window, filters (fadeIn), gain
   });
 
-  it("reports clipsMoved from→to and the inverse is `move` back to the origin", () => {
+  it("reports clipsMoved from→to and the inverse (`_compound`) undoes the move exactly", () => {
     const r = ok(
       move(tl(), {
         uuid: "mv",
@@ -602,38 +636,46 @@ describe("move — non-ripple (lift + overwrite)", () => {
     expect(m?.uuid).toBe("mv");
     expect(m?.from.position).toBe(30); // it sat after black(30)
     expect(m?.to.position).toBe(60);
-    expect(r.inverse.op).toBe("move");
-    expect(r.inverse.args).toMatchObject({ uuid: "mv", toPosition: 30, ripple: false });
-    // Round-trip (move back) is exact (dest was empty → lossless).
-    const back = ok(move(r.state, r.inverse.args));
+    // A non-ripple move is lift(source)+overwrite(dest), so its inverse is a
+    // `_compound` of their capturing inverses (not a single `move` back).
+    expect(r.inverse.op).toBe("_compound");
+    // Round-trip through the real dispatcher (undo) is exact.
+    const back = ok(apply(r.inverse, r.state));
     expect(back.state).toEqual(tl());
   });
 
-  it("a non-ripple move over REAL content is rejected (not silently lossy + non-invertible)", () => {
+  it("a non-ripple move OVER real content overwrites it, and the inverse restores it", () => {
     resetIds();
     const start = timeline(VERTICAL, {
       video: [
-        videoTrack(clip("/abs/a.mp4", { id: "mv", dur: 30 }), blank(100)),
-        videoTrack(clip("/abs/victim.mp4", { id: "victim", dur: 50 })),
+        videoTrack(
+          clip("/abs/head.mp4", { id: "head", dur: 40 }),
+          clip("/abs/a.mp4", { id: "mv", dur: 30 }),
+        ),
+        videoTrack(clip("/abs/victim.mp4", { id: "victim", dur: 50, fadeIn: 8 })),
       ],
     });
-    // Drop "mv"(30) at frame 0 on V2, where it would stamp over the first 30f of
-    // "victim". A non-ripple (overwrite) move destroys that content with no capture,
-    // so its `move`-back inverse can't reconstruct it — the op rejects it with a
-    // typed precondition rather than producing a non-invertible state (use ripple,
-    // or remove the content first). This is the fix for the straddle/overwrite-
-    // content inverse bug.
-    const e = err(
+    // Drag "mv"(30) onto V2 at frame 10, landing INSIDE "victim" — the everyday
+    // "drop a clip onto occupied space" gesture. The overwrite CAPTURES the covered
+    // span (victim, whole, WITH its fade), so the move SUCCEEDS (no more spurious
+    // reject) AND the `_compound` inverse restores victim intact. The destroyed
+    // content is surfaced in `clipsRemoved` so a destructive drop is visible up front.
+    const r = ok(
       move(start, {
         uuid: "mv",
         toTrack: { kind: "video", index: 1 },
-        toPosition: 0,
+        toPosition: 10,
         ripple: false,
         rippleAllTracks: false,
       }),
     );
-    expect(e.kind).toBe("precondition");
-    expect(JSON.stringify(e)).toMatch(/overwrite content/i);
+    // mv now sits at V2 frame 10; victim's middle was stamped over (head + tail remain).
+    expect(findClipIn(r.state, "mv")).toBeTruthy();
+    const removed = r.consequences.clipsRemoved.find((c) => c.uuid === "victim");
+    expect(removed, "the overwritten victim is reported in clipsRemoved").toBeTruthy();
+    // Undo restores the exact pre-move state (victim whole + fade, mv back on V1).
+    const back = ok(apply(r.inverse, r.state));
+    expect(back.state).toEqual(start);
   });
 
   it("a same-track / same-position move is a valid no-op (identity inverse)", () => {

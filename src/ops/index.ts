@@ -8,7 +8,7 @@
 // registry invocation, so the dispatcher handles it uniformly. Internal restore
 // ops (`_dropAppended`, `_unsplit`, …) are registered too (prefixed `_`) so an
 // inverse that carries captured content dispatches like any other op.
-import type { z } from "zod";
+import { z } from "zod";
 import type { Timeline } from "../ir/types";
 // Op functions + their samples come from the per-op files; the args SCHEMAS are
 // the canonical ones in `./types` (imported below), so an op file never has to
@@ -25,7 +25,7 @@ import { addFilter, removeFilter, samplesAddFilter, samplesRemoveFilter } from "
 import { gain, samples as gainSamples, setGain, setGainArgs } from "./gain";
 import { insert, samples as insertSamples, uninsert, uninsertArgs } from "./insert";
 import { lift, samples as liftSamples, unlift, unliftArgs } from "./lift";
-import { move, samples as moveSamples } from "./move";
+import { move, samples as moveSamples, spanTransition, spanTransitionArgs } from "./move";
 import {
   overwrite,
   samples as overwriteSamples,
@@ -65,6 +65,7 @@ import {
 } from "./transition";
 import { samplesTrimIn, samplesTrimOut, trimIn, trimOut } from "./trim";
 import {
+  type Consequences,
   type EditError,
   type Op,
   type OpEntry,
@@ -81,6 +82,7 @@ import {
   isEditError,
   liftArgs,
   moveArgs,
+  noConsequences,
   overwriteArgs,
   removeArgs,
   removeFilterArgs,
@@ -107,6 +109,54 @@ const reg = <S extends z.ZodTypeAny>(fn: Op<z.output<S>>, args: S): OpEntry<any>
   // biome-ignore lint/suspicious/noExplicitAny: erased alongside fn; safeParse re-establishes the concrete type.
   args: args as any,
 });
+
+// ─── _compound — one reversible edit built from a sequence of invocations ──────
+// A macro op: thread `state` through each step (via `apply`), collect every step's
+// inverse, and return ONE result whose own inverse re-applies those inverses in
+// REVERSE order. This lets a higher-level op reuse already-verified ops AND their
+// capturing inverses instead of hand-rolling a bespoke restore. `move` (non-ripple)
+// is the first user: it is lift(source)+overwrite(dest), so its undo is
+// _restoreRegion(dest)∘_unlift(source) — the destination content overwrite captured
+// is restored, and the clip is put back at the source. Pure (every sub-op clones);
+// self-inverse (undo of a compound is a compound of the reversed inverses, which
+// redoes the original). It lives HERE beside the registry so op files only NAME it
+// in an inverse invocation — no import cycle. `apply` is a hoisted function, so the
+// runtime call below resolves even though `apply` is declared later in the module.
+// Internal (`_`-prefixed): never agent-facing.
+export const compoundArgs = z.object({
+  steps: z.array(z.object({ op: z.string().min(1), args: z.any() })).default([]),
+});
+export type CompoundArgs = z.infer<typeof compoundArgs>;
+
+function mergeConsequences(into: Consequences, add: Consequences): void {
+  into.clipsAdded.push(...add.clipsAdded);
+  into.clipsRemoved.push(...add.clipsRemoved);
+  into.clipsMoved.push(...add.clipsMoved);
+  into.clipsTrimmed.push(...add.clipsTrimmed);
+  into.blanksCreated.push(...add.blanksCreated);
+  into.blanksRemoved.push(...add.blanksRemoved);
+  into.ripple.push(...add.ripple);
+  into.durationDelta += add.durationDelta;
+  into.warnings.push(...add.warnings);
+}
+
+export const compound: Op<CompoundArgs> = (state, args): OpResult | EditError => {
+  let cur = state;
+  const inverses: OpInvocation[] = [];
+  const merged = noConsequences();
+  for (const step of args.steps) {
+    const r = apply({ op: step.op, args: step.args }, cur);
+    if (isEditError(r)) return r;
+    cur = r.state;
+    inverses.push(r.inverse);
+    mergeConsequences(merged, r.consequences);
+  }
+  return {
+    state: cur,
+    consequences: merged,
+    inverse: { op: "_compound", args: { steps: [...inverses].reverse() } },
+  };
+};
 
 export const REGISTRY: Record<string, OpEntry<unknown>> = {
   // Reference ops (implemented).
@@ -144,6 +194,8 @@ export const REGISTRY: Record<string, OpEntry<unknown>> = {
   _unlift: reg(unlift, unliftArgs),
   _reinsert: reg(reinsert, reinsertArgs),
   _restoreRegion: reg(restoreRegion, restoreRegionArgs),
+  _compound: reg(compound, compoundArgs),
+  _spanTransition: reg(spanTransition, spanTransitionArgs),
   _removeDissolve: reg(removeDissolve, removeDissolveArgs),
   _setGain: reg(setGain, setGainArgs),
   _restoreTrack: reg(restoreTrack, restoreTrackArgs),

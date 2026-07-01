@@ -104,26 +104,21 @@ export const slide: Op<SlideArgs> = (state, args): OpResult | EditError => {
     });
   }
 
-  // ── Both neighbours must exist (frames must come from / go to a real left AND a
-  // real right neighbour). A clip at a track edge has nothing on one side. ──
-  if (!leftItem) {
-    return editError({
-      kind: "precondition",
-      detail: `slide: clip "${args.uuid}" has no left neighbour to absorb the slide (it is at the track start)`,
-    });
-  }
-  if (!rightItem) {
-    return editError({
-      kind: "precondition",
-      detail: `slide: clip "${args.uuid}" has no right neighbour to absorb the slide (it is at the track end)`,
-    });
-  }
-
-  // ── Validate both neighbours BEFORE mutating (so a rejection leaves state pure).
-  // LEFT changes by +delta, RIGHT by -delta. ──
-  const leftErr = validateNeighbour(leftItem, "left", delta, args.uuid);
+  // ── A MISSING neighbour is OPEN TRACK-EDGE space, not a hard stop (the old
+  // "no left/right neighbour" reject made a clip at either edge un-slideable — the
+  // everyday case of sliding the first or last clip). The two edges are asymmetric,
+  // exactly like trim's tail/head:
+  //   • MISSING RIGHT (last clip): trailing emptiness is implicit and infinite, so
+  //     the right side is a NO-OP — the LEFT side's change alone repositions the clip
+  //     (grow-left pushes it right, shrink-left pulls it left);
+  //   • MISSING LEFT (clip at frame 0): leading space is NOT implicit, so to move the
+  //     clip LATER we MATERIALISE a leading blank; moving it EARLIER is impossible
+  //     (nothing before frame 0) and is rejected.
+  // Validate both sides BEFORE mutating so a rejection leaves state pure. LEFT
+  // changes by +delta, RIGHT by -delta. ──
+  const leftErr = validateSide(leftItem, "left", delta, args.uuid);
   if (leftErr) return leftErr;
-  const rightErr = validateNeighbour(rightItem, "right", -delta, args.uuid);
+  const rightErr = validateSide(rightItem, "right", -delta, args.uuid);
   if (rightErr) return rightErr;
 
   // ── Apply on a clone. ──
@@ -134,8 +129,8 @@ export const slide: Op<SlideArgs> = (state, args): OpResult | EditError => {
   // RIGHT first so the LEFT splice/index math (which may insert/remove an item to
   // the clip's left, shifting the right neighbour's index) is computed last and
   // the right index is still `i + 1` when we touch it.
-  applyNeighbour(nItems, i + 1, "right", -delta, loc.trackId, c);
-  applyNeighbour(nItems, i - 1, "left", delta, loc.trackId, c);
+  applySide(nItems, i, "right", -delta, loc.trackId, c);
+  applySide(nItems, i, "left", delta, loc.trackId, c);
 
   // The clip's own window is UNCHANGED — only its timeline position moved by delta.
   c.clipsMoved.push({
@@ -143,7 +138,6 @@ export const slide: Op<SlideArgs> = (state, args): OpResult | EditError => {
     from: { track: loc.trackId, position: loc.position },
     to: { track: loc.trackId, position: loc.position + delta },
   });
-  c.durationDelta = 0;
 
   return {
     state: next,
@@ -155,16 +149,28 @@ export const slide: Op<SlideArgs> = (state, args): OpResult | EditError => {
 // ─── Neighbour math ───────────────────────────────────────────────────────────
 type Side = "left" | "right";
 
-/** Validate that the neighbour can change by `change` frames (signed: + grows the
- *  neighbour's span, − shrinks it). A clip-neighbour is bounded by its media
- *  window; a blank-neighbour by staying non-negative. Returns an EditError or
- *  undefined. `change` is `+delta` for the left neighbour, `-delta` for the right. */
-function validateNeighbour(
-  item: Item,
+/** Validate that a side can absorb `change` frames (signed: + grows that side's
+ *  span, − shrinks it). `item` is the neighbour (or `undefined` at an open track
+ *  edge). A present clip-neighbour is bounded by its media window; a present
+ *  blank-neighbour by staying non-negative. A MISSING neighbour is open edge space:
+ *  a missing RIGHT absorbs any change (implicit trailing space); a missing LEFT
+ *  can only GROW (materialise a leading blank) — a shrink there means sliding a
+ *  frame-0 clip earlier, which is impossible. `change` is `+delta` for left, `-delta`
+ *  for right. */
+function validateSide(
+  item: Item | undefined,
   side: Side,
   change: number,
   uuid: string,
 ): EditError | undefined {
+  if (item === undefined) {
+    if (side === "right") return undefined; // trailing space absorbs any change
+    if (change > 0) return undefined; // missing left, growing → insert a leading blank
+    return editError({
+      kind: "precondition",
+      detail: `slide: clip "${uuid}" is at the track start — cannot slide it earlier (no space before frame 0)`,
+    });
+  }
   if (item.kind === "clip") {
     // The LEFT neighbour grows/shrinks its TAIL (`out += change`); the RIGHT
     // neighbour grows/shrinks its HEAD by moving its start the OPPOSITE way
@@ -225,18 +231,34 @@ function validateNeighbour(
   });
 }
 
-/** Apply the validated change to the neighbour at `index` (signed: + grows the
- *  neighbour's span). A clip resizes its window; a blank resizes its length and is
- *  removed when it reaches 0. Mutates `items` in place and fills `c`. */
-function applyNeighbour(
+/** Apply the validated change to one side of the slid clip at `clipIndex` (signed:
+ *  + grows that side's span). A present clip resizes its window; a present blank
+ *  resizes its length (removed at 0). At an OPEN edge: a missing RIGHT is a no-op
+ *  (trailing space absorbs it; the LEFT change repositions the clip), and a missing
+ *  LEFT that must grow inserts a leading blank to push the clip later. Mutates
+ *  `items` in place and fills `c`. */
+function applySide(
   items: Item[],
-  index: number,
+  clipIndex: number,
   side: Side,
   change: number,
   trackId: string,
   c: Consequences,
 ): void {
-  const item = items[index] as Item;
+  const index = side === "left" ? clipIndex - 1 : clipIndex + 1;
+  const item = items[index] as Item | undefined;
+  if (item === undefined) {
+    // Open track edge. A missing RIGHT is absorbed by implicit trailing space —
+    // nothing to do (the LEFT side's change already repositioned the clip). A missing
+    // LEFT that grows (change > 0, validated) materialises a leading blank BEFORE the
+    // clip so it shifts later; the scalar inverse (slide −delta) then finds that blank
+    // as its left neighbour and shrinks it back to 0, so the round-trip stays exact.
+    if (side === "left" && change > 0) {
+      items.splice(clipIndex, 0, blankItem(change));
+      c.blanksCreated.push({ track: trackId, position: 0, length: change });
+    }
+    return;
+  }
   if (item.kind === "clip") {
     const trimmed: ClipTrim =
       side === "left"
@@ -332,5 +354,45 @@ export const samples: OpSample<SlideArgs>[] = [
     },
     // delta +12: left blank 20→32, R in 0→12 (head retracts). mid moves 20→32.
     args: { uuid: "mid", delta: 12 },
+  },
+  {
+    // TRACK-EDGE slide: the LAST clip on the track (no right neighbour). Sliding it
+    // LATER used to hard-reject ("no right neighbour"); now the open trailing space
+    // absorbs the change and the left clip extends to reposition it. Inverse re-grows
+    // the left clip and pulls it back — exact.
+    name: "slide the LAST clip later (missing right neighbour → open trailing space)",
+    state: (): Timeline => {
+      resetIds();
+      return timeline(VERTICAL, {
+        video: [
+          videoTrack(
+            clip("/abs/head.mp4", { id: "head", in: 0, out: 39, length: 200 }),
+            clip("/abs/mv.mp4", { id: "mv", dur: 30 }),
+          ),
+        ],
+      });
+    },
+    // delta +10: head out 39→49 (extends), mv moves 40→50; right is open (no-op).
+    args: { uuid: "mv", delta: 10 },
+  },
+  {
+    // TRACK-EDGE slide: the FIRST clip (at frame 0, no left neighbour). Sliding it
+    // LATER used to hard-reject ("no left neighbour"); now a leading blank is
+    // materialised to push it right while the right clip's head retracts. Inverse
+    // shrinks that blank back to 0 (removed) and re-extends the right clip — exact.
+    name: "slide the FIRST clip later (missing left neighbour → leading blank inserted)",
+    state: (): Timeline => {
+      resetIds();
+      return timeline(VERTICAL, {
+        video: [
+          videoTrack(
+            clip("/abs/mv.mp4", { id: "mv", dur: 30 }),
+            clip("/abs/right.mp4", { id: "R", in: 20, out: 99, length: 200 }),
+          ),
+        ],
+      });
+    },
+    // delta +10: insert a leading blank(10), R in 20→30 (head retracts). mv moves 0→10.
+    args: { uuid: "mv", delta: 10 },
   },
 ];
