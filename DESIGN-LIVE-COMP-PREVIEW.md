@@ -190,13 +190,17 @@ matching the repo's verification philosophy.
 - **Gate:** switching between two comps mid-timeline loads + renders each correctly; missing/broken
   comp degrades to a typed error overlay, not a crash.
 
-### P2 — The live-edit (HMR) loop — the payoff  ·  small-medium
-- Wire Vite Fast Refresh so **editing a comp's TSX updates the live preview while the Player stays
-  mounted** (this is mostly free once P0/P1 land; the work is keeping the Player mounted across HMR +
-  preserving the playhead). This is the "Remotion Studio in our playback" deliverable: scrub + edit
-  the comp without a pre-bake.
-- **Gate:** edit a comp's text/color in `remotion/src/compositions/*.tsx`; the viewer overlay updates
-  within the HMR window with the playhead preserved (drive proof).
+### P2 — The live-edit (HMR) loop — the payoff  ·  ✅ SHIPPED (2026-06-30, gated; no code change needed)
+- The "Remotion Studio in our playback" deliverable: edit a comp's TSX → the live overlay updates,
+  Player mounted, playhead preserved. It works **out of the box** on the eager-glob + Vite Fast Refresh
+  dev viewer (the drive default) — no implementation was required; the phase is the empirical proof +
+  a regression gate so it can't silently break.
+- **✅ SHIPPED + GATED.** `bun run verify:live-hmr` boots the DEV viewer (HMR), seeks the clock to
+  frame 20, edits `Title.tsx` (kicker → a probe token), and asserts: (1) the edit reflects live within
+  the HMR window, (2) the master playhead is **unchanged** (Fast Refresh, not a page reload that resets
+  the clock), (3) the OverlayPlayer stays mounted — then restores the source (try/finally, tree stays
+  clean). All three green on first run: mixed exports (component + schema + defaults) did **not** force
+  a full reload here, so no comp-restructuring was needed.
 
 ### P3 — Parity hardening  ·  medium
 - Generalize the per-frame `exact|approximate` flag; the `melt`-still oracle on scrub-stop/pin.
