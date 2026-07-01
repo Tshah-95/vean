@@ -1,0 +1,148 @@
+/*
+ * vean design tokens — ported from Carlo (carlo-finance/src/app/globals.css),
+ * hue-NEUTRALIZED for a video surface (Carlo's deep-green field flattened to
+ * neutral dark; everything else — gold accent, mono eyebrows, radius, spacing,
+ * motion — kept). See DESIGN-UI.md for the decision record.
+ *
+ * PHASE 1 is additive/non-regressing: we import Tailwind's THEME + UTILITIES
+ * layers only, NOT preflight — so no CSS reset touches the existing
+ * inline-styled tree, and nothing changes visually until a surface opts in.
+ * (Preflight + a base body layer land in Phase 2 with the shell, scoped/fixed.)
+ */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "tw-animate-css";
+
+:root {
+  color-scheme: dark;
+
+  /* Raw palette — NEUTRAL field (Carlo greens → neutral dark) */
+  --vean-bg: #0c0d0f; /* base field */
+  --vean-bg-raised: #131519; /* cards, panels, rails */
+  --vean-bg-inset: #08090a; /* icon rail + MONITOR SURROUND (darkest, neutral) */
+  --vean-bg-hover: #1b1e23; /* item hover */
+  --vean-fg-1: #e6e3da; /* ink (kept from Carlo) */
+  --vean-fg-2: #9ba39b; /* muted */
+  --vean-fg-3: #6b716a; /* faint */
+  --vean-gold: #c7ae7a; /* the one accent (= --carlo-gold) */
+  --vean-gold-bright: #d8c290;
+  --vean-border: #262a2e; /* hairline (neutralized) */
+  --vean-border-bright: #30353a;
+  --vean-amber: #d9a050; /* warnings / soft status */
+  --vean-amber-hot: #e8702e; /* destructive / error */
+  --vean-red: #e0574f; /* playhead / hard signal */
+
+  /* Track hues — meaning-bearing (kept from the current viewer) */
+  --vean-track-video: #6f86a8;
+  --vean-track-audio: #57b98a;
+  --vean-track-graphic: #a98fd6;
+
+  /* Type */
+  --vean-font-sans: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --vean-font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Radius — crisp, instrument-like (Carlo 8px base) */
+  --radius: 0.5rem;
+
+  /* Motion — the tick curve; NO springs, ever */
+  --ease-tick: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Shadows (Carlo scale) */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 28px -16px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 1px 2px rgba(0, 0, 0, 0.5), 0 28px 60px -28px rgba(0, 0, 0, 0.7);
+
+  /* --- shadcn semantic bridge (dark-only) --- */
+  --background: var(--vean-bg);
+  --foreground: var(--vean-fg-1);
+  --card: var(--vean-bg-raised);
+  --card-foreground: var(--vean-fg-1);
+  --popover: var(--vean-bg-raised);
+  --popover-foreground: var(--vean-fg-1);
+  --primary: var(--vean-gold);
+  --primary-foreground: var(--vean-bg);
+  --secondary: var(--vean-bg-inset);
+  --secondary-foreground: var(--vean-fg-1);
+  --muted: var(--vean-bg-raised);
+  --muted-foreground: var(--vean-fg-2);
+  --accent: var(--vean-bg-hover);
+  --accent-foreground: var(--vean-fg-1);
+  --destructive: var(--vean-amber-hot);
+  --destructive-foreground: var(--vean-fg-1);
+  --border: var(--vean-border);
+  --input: var(--vean-border);
+  --ring: var(--vean-gold);
+
+  /* Sidebar/rail palette */
+  --sidebar: var(--vean-bg-inset);
+  --sidebar-foreground: var(--vean-fg-1);
+  --sidebar-primary: var(--vean-gold);
+  --sidebar-primary-foreground: var(--vean-bg);
+  --sidebar-accent: var(--vean-bg-raised);
+  --sidebar-accent-foreground: var(--vean-fg-1);
+  --sidebar-border: var(--vean-border);
+  --sidebar-ring: var(--vean-gold);
+}
+
+/*
+ * Map the semantic + vean-native tokens into Tailwind's theme so utilities
+ * (bg-background, text-muted-foreground, border-border, rounded-lg, font-mono,
+ * bg-track-video, …) exist for the shell. `inline` = reference the :root vars
+ * directly (no re-declaration), the shadcn v4 pattern.
+ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+
+  /* vean-native utilities */
+  --color-panel: var(--vean-bg-raised);
+  --color-inset: var(--vean-bg-inset);
+  --color-hover: var(--vean-bg-hover);
+  --color-gold: var(--vean-gold);
+  --color-gold-bright: var(--vean-gold-bright);
+  --color-amber: var(--vean-amber);
+  --color-red: var(--vean-red);
+  --color-fg-1: var(--vean-fg-1);
+  --color-fg-2: var(--vean-fg-2);
+  --color-fg-3: var(--vean-fg-3);
+  --color-track-video: var(--vean-track-video);
+  --color-track-audio: var(--vean-track-audio);
+  --color-track-graphic: var(--vean-track-graphic);
+
+  --font-sans: var(--vean-font-sans);
+  --font-mono: var(--vean-font-mono);
+
+  /* Radius ramp (Carlo proportions off the 8px base) */
+  --radius-sm: calc(var(--radius) * 0.5);
+  --radius-md: calc(var(--radius) * 0.75);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.5);
+
+  --ease-tick: var(--ease-tick);
+}

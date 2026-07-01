@@ -16,6 +16,7 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "paths": {
+      "@/*": ["./src/*"],
       "@remotion-comp/*": ["../remotion/src/compositions/*"]
     }
   },
