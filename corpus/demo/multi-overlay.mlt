@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- HAND-AUTHORED live-comp-preview fixture (NOT a serializer emission — it does NOT
+     round-trip byte-identically; nothing gates on its round-trip). Drives the P1
+     PLAYHEAD-AWARE overlay path: TWO graphic clips on V2 naming DIFFERENT comps —
+     Title over frames 0–44, LowerThird over frames 45–89 — so verify:live-multi can
+     assert the live Player switches comps with the playhead AND offsets each comp's
+     frame by its clip start (LowerThird's comp frame = masterFrame − 45). The
+     .vean/cache/remotion/*.mov resources are never read on the live path (the
+     @remotion/player renders each comp from the Vite alias); they only mark the clips
+     as graphic overlays (isGraphicClip). -->
+<mlt LC_NUMERIC="C" version="7.38.0" root="" title="vean — multi-overlay (playhead-aware live comps)">
+  <profile description="vertical-1080x1920-30" width="1080" height="1920" progressive="1" sample_aspect_num="1" sample_aspect_den="1" display_aspect_num="9" display_aspect_den="16" frame_rate_num="30" frame_rate_den="1" colorspace="709"/>
+  <producer id="producerbg" in="0" out="89">
+    <property name="length">90</property>
+    <property name="mlt_service">color</property>
+    <property name="resource">0</property>
+    <property name="shotcut:uuid">{vean-producerbg}</property>
+  </producer>
+  <producer id="producer0" in="0" out="89">
+    <property name="length">90</property>
+    <property name="mlt_service">color</property>
+    <property name="resource">#FF0E5C63</property>
+    <property name="shotcut:uuid">base</property>
+  </producer>
+  <producer id="producertitle" in="0" out="44">
+    <property name="length">45</property>
+    <property name="resource">.vean/cache/remotion/title.mov</property>
+    <property name="shotcut:uuid">gfx-title</property>
+    <property name="vean:composition">Title</property>
+  </producer>
+  <producer id="producerlt" in="0" out="44">
+    <property name="length">45</property>
+    <property name="resource">.vean/cache/remotion/lower-third.mov</property>
+    <property name="shotcut:uuid">gfx-lt</property>
+    <property name="vean:composition">LowerThird</property>
+  </producer>
+  <playlist id="playlist0">
+    <property name="shotcut:video">1</property>
+    <property name="shotcut:audio">0</property>
+    <property name="shotcut:name">V1</property>
+    <entry producer="producer0" in="0" out="89"/>
+  </playlist>
+  <playlist id="playlist1">
+    <property name="shotcut:video">1</property>
+    <property name="shotcut:audio">0</property>
+    <property name="shotcut:name">V2</property>
+    <entry producer="producertitle" in="0" out="44"/>
+    <entry producer="producerlt" in="0" out="44"/>
+  </playlist>
+  <tractor id="tractor1" shotcut="1" title="vean — multi-overlay (playhead-aware live comps)">
+    <track producer="producerbg"/>
+    <track producer="playlist0"/>
+    <track producer="playlist1"/>
+    <transition id="transition0" mlt_service="qtblend" in="0" out="89">
+      <property name="a_track">1</property>
+      <property name="b_track">2</property>
+    </transition>
+  </tractor>
+</mlt>

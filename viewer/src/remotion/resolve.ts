@@ -39,9 +39,14 @@ export function pickComposition(
   mod: CompModule,
 ): { component: unknown; defaults: Record<string, unknown> } | null {
   const component = mod.default ?? mod[id];
-  if (component == null || (typeof component !== "function" && typeof component !== "object")) {
-    return null;
-  }
+  // A React component is a function (FC) or an EXOTIC object carrying a React marker
+  // (`$$typeof` — memo / forwardRef / lazy). A plain object (`export default { … }`, or
+  // a helper `.tsx` mistakenly in the dir) is NOT a component — reject it rather than
+  // register a bogus entry that only fails later at Player mount.
+  const isComponent =
+    typeof component === "function" ||
+    (typeof component === "object" && component !== null && "$$typeof" in component);
+  if (!isComponent) return null;
   const defaults =
     (mod.defaults as Record<string, unknown> | undefined) ??
     (mod[legacyDefaultsName(id)] as Record<string, unknown> | undefined) ??

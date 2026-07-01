@@ -60,6 +60,7 @@
     "verify:live-overlay": "bun scripts/verify-live-overlay.ts",
     "verify:live-comp": "bun scripts/verify-live-comp.ts",
     "verify:live-hmr": "bun scripts/verify-live-hmr.ts",
+    "verify:live-multi": "bun scripts/verify-live-multi.ts",
     "lsp": "bun src/bridge/lsp/server.ts",
     "mcp": "bun src/bridge/mcp/server.ts",
     "move2:e2e": "bun scripts/move2-e2e.ts",

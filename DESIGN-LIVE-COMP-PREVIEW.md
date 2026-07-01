@@ -181,14 +181,31 @@ matching the repo's verification philosophy.
   rendered it over footage, and stayed slaved to the master clock (frame 30 = 30). A new
   `corpus/demo/title-overlay.mlt` fixture + the `__veanCompositions()` bridge back the gate.
 
-### P1 — Async load lifecycle  ·  medium
-- `resolveComposition` async + `OverlayPlayer` Suspense/loading state; `deriveOverlay` kicks the load
-  on comp-clip discovery; define the loading visual (placeholder vs last-good frame).
-- Handle the **comp-swap remount** (§2.1) cleanly — no flash of default.
-- Per-project comp-root resolution for the dev viewer (§2.3): Vite resolves the *current repo's*
-  comp dir via the preview server's `repo`.
-- **Gate:** switching between two comps mid-timeline loads + renders each correctly; missing/broken
-  comp degrades to a typed error overlay, not a crash.
+### P1a — Playhead-aware overlay resolution  ·  ✅ SHIPPED (2026-06-30, gated)
+- The live overlay now resolves the graphic clip **active at the playhead** from the WORKING IR (was:
+  the first graphic clip, always shown, comp-frame == master-frame). Multi-overlay, the comp-frame start
+  offset (comp frame = masterFrame − clip start), and per-span visibility all fall out.
+- New pure `viewer/src/resolveOverlay.ts` (`resolveOverlayAt` / `hasGraphicOverlay`); `PreviewPane`
+  resolves per frame; `OverlayPlayer` gains `startFrame` + `present` (hidden but MOUNTED across a gap so
+  re-entry doesn't remount — only a comp change does); `App`/`Stage`'s static `deriveOverlay` threading
+  removed. Folded in the P0+P2 adversarial-review fixes: `pickComposition` rejects a plain-object default
+  (needs a function or a React `$$typeof`), `resolveComposition` falls back to any registered comp
+  (LowerThird isn't an invariant), and the hand-authored fixture's false "round-trips" comment corrected.
+- **✅ SHIPPED + GATED.** `bun run verify:live-multi` (new fixture `corpus/demo/multi-overlay.mlt`: Title
+  over frames 0–44, LowerThird over 45–89) asserts the live comp SWITCHES with the playhead and offsets
+  each to its own 0: at frame 20 → Title, playerFrame 20; at frame 60 → LowerThird, playerFrame 15
+  (= 60 − 45); DOM text switches accordingly. Regressions green: verify:live-comp / -overlay / -hmr all
+  still pass through the refactored per-frame path. 1367 unit tests, viewer typecheck + build clean.
+
+### P1b — Fault isolation + async / per-project comp roots (from the P0+P2 review)  ·  medium  ·  NEXT
+- **Eager glob → total blast radius** (review finding #1): one syntax-error comp blanks the WHOLE viewer
+  (build fails / Vite error overlay), not just that comp. For an agent-native editor where agents author
+  comps, isolate the fault — move to `import.meta.glob(..., { eager: false })` + `lazyComponent` /
+  Suspense + a per-comp **error boundary** so a broken comp degrades to a typed error overlay, not a
+  crash (the design's original "async load lifecycle" + the P1 gate's second half).
+- **Per-project comp roots** (§2.3): the dev viewer's `@remotion-comp` alias resolves the *current*
+  repo's comp dir (works today for a vean-repo project — the dogfood; needed when previewing an external
+  project). Deferred, documented.
 
 ### P2 — The live-edit (HMR) loop — the payoff  ·  ✅ SHIPPED (2026-06-30, gated; no code change needed)
 - The "Remotion Studio in our playback" deliverable: edit a comp's TSX → the live overlay updates,

@@ -61,7 +61,11 @@ function abEval(js: string): unknown {
   const b64 = Buffer.from(js, "utf8").toString("base64");
   const out = ab(["eval", "-b", b64, "--json"]);
   const line = out.trim().split("\n").filter(Boolean).pop() ?? "{}";
-  const env = JSON.parse(line) as { success?: boolean; data?: { result?: unknown }; error?: unknown };
+  const env = JSON.parse(line) as {
+    success?: boolean;
+    data?: { result?: unknown };
+    error?: unknown;
+  };
   if (!env.success) throw new Error(`eval failed: ${JSON.stringify(env.error)}`);
   return env.data?.result;
 }
@@ -105,15 +109,21 @@ async function main(): Promise<void> {
     } else {
       const ids = abEval("window.__veanCompositions()") as string[];
       if (Array.isArray(ids) && ids.includes("LowerThird") && ids.includes("Title")) {
-        pass(`(b) dynamic registry discovered comps from the glob: [${ids.join(", ")}] — no registry edit`);
+        pass(
+          `(b) dynamic registry discovered comps from the glob: [${ids.join(", ")}] — no registry edit`,
+        );
       } else {
-        fail(`(b) glob did not discover both comps (got ${JSON.stringify(ids)}, expected LowerThird + Title)`);
+        fail(
+          `(b) glob did not discover both comps (got ${JSON.stringify(ids)}, expected LowerThird + Title)`,
+        );
       }
     }
 
     // ── (a) the OverlayPlayer mounted for the graphic clip ──────────────────────
     if (!abWaitFn("window.__veanOverlay !== undefined", 8000)) {
-      fail("(a) OverlayPlayer did NOT mount — deriveOverlay returned present:false for the graphic-clip fixture");
+      fail(
+        "(a) OverlayPlayer did NOT mount — deriveOverlay returned present:false for the graphic-clip fixture",
+      );
     } else {
       const ov = abEval("window.__veanOverlay()") as {
         present: boolean;
@@ -128,9 +138,13 @@ async function main(): Promise<void> {
 
       // ── (c) the live Player resolved + rendered the NON-default "Title" comp ───
       if (ov.compositionId === "Title") {
-        pass('(c) live Player resolved the dynamic comp — __veanOverlay().compositionId === "Title"');
+        pass(
+          '(c) live Player resolved the dynamic comp — __veanOverlay().compositionId === "Title"',
+        );
       } else {
-        fail(`(c) Player resolved the WRONG comp: compositionId=${JSON.stringify(ov.compositionId)} (expected "Title")`);
+        fail(
+          `(c) Player resolved the WRONG comp: compositionId=${JSON.stringify(ov.compositionId)} (expected "Title")`,
+        );
       }
       const titleText = abEval(
         `document.body.innerText.toLowerCase().includes("agent-native title card")`,
@@ -138,7 +152,9 @@ async function main(): Promise<void> {
       if (titleText === true) {
         pass("(c) Title composition rendered by the Player (its kicker text present in the DOM)");
       } else {
-        fail("(c) Title composition did NOT render its text — the Player did not draw the Title comp");
+        fail(
+          "(c) Title composition did NOT render its text — the Player did not draw the Title comp",
+        );
       }
 
       // ── (d) the Player is SLAVED to the master clock ──────────────────────────
@@ -148,9 +164,14 @@ async function main(): Promise<void> {
       const tracked = abWaitFn(
         "window.__veanOverlay().playerFrame === window.__veanOverlay().masterFrame && window.__veanOverlay().masterFrame > 0",
       );
-      const after = abEval("window.__veanOverlay()") as { playerFrame: number | null; masterFrame: number };
+      const after = abEval("window.__veanOverlay()") as {
+        playerFrame: number | null;
+        masterFrame: number;
+      };
       if (tracked && after.masterFrame > 0 && after.playerFrame === after.masterFrame) {
-        pass(`(d) @remotion/player slaved to the master clock (seek → playerFrame=${after.playerFrame} === masterFrame=${after.masterFrame})`);
+        pass(
+          `(d) @remotion/player slaved to the master clock (seek → playerFrame=${after.playerFrame} === masterFrame=${after.masterFrame})`,
+        );
       } else {
         fail(`(d) Player did NOT follow the master clock after seek: ${JSON.stringify(after)}`);
       }
