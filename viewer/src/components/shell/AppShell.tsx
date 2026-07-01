@@ -9,7 +9,6 @@ import type { ProjectEntry } from "../../api";
 import type { Fps } from "../../types";
 import { Drawer } from "./Drawer";
 import { DEFAULT_LAYOUT, type DrawerView } from "./layout";
-import { RightPanel } from "./RightPanel";
 import { TopBar } from "./TopBar";
 
 export interface AppShellProps {
@@ -28,6 +27,8 @@ export interface AppShellProps {
   currentResolvedPath?: string;
   /** Center of the top band: monitor + transport. */
   preview: ReactNode;
+  /** Right of the top band: the selection-driven inspector (editor-fed by Stage). */
+  inspector: ReactNode;
   /** Full-width bottom band: the timeline. */
   timeline: ReactNode;
 }
@@ -64,7 +65,12 @@ export function AppShell(props: AppShellProps) {
           baseTitle={props.baseTitle}
         />
         <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-inset">{props.preview}</main>
-        <RightPanel size={layout.right.size} fps={props.fps} videoWidth={props.width} videoHeight={props.height} />
+        <aside
+          style={{ width: layout.right.size }}
+          className="flex flex-shrink-0 flex-col overflow-auto border-l border-sidebar-border bg-panel px-3 py-3"
+        >
+          {props.inspector}
+        </aside>
       </div>
 
       {/* FULL-WIDTH TIMELINE BAND */}

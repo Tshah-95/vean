@@ -11,6 +11,7 @@ import { ClockProvider, useClockInstance } from "./ClockProvider";
 import { installDecodeBridge } from "./decode/debugBridge";
 import { PreviewPane } from "./components/PreviewPane";
 import { AppShell } from "./components/shell/AppShell";
+import { RightPanel } from "./components/shell/RightPanel";
 import { TimelineStrip } from "./components/TimelineStrip";
 import { Transport } from "./components/Transport";
 import { PreviewProvider } from "./PreviewProvider";
@@ -258,6 +259,14 @@ function Stage({
             onSinkChange={onSinkChange}
           />
         </>
+      }
+      inspector={
+        <RightPanel
+          editor={editor}
+          fps={data.fps}
+          videoWidth={data.profile.width}
+          videoHeight={data.profile.height}
+        />
       }
       timeline={<TimelineStrip editor={editor} />}
     />
