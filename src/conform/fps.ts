@@ -51,7 +51,9 @@ export function proposeFpsConform(
 function retagDescription(description: string, fps: Fps): string {
   const ratio = fps[0] / fps[1];
   const tag = Number.isInteger(ratio) ? String(ratio) : ratio.toFixed(2).replace(".", "");
-  return /-\d+$/.test(description) ? description.replace(/-\d+$/, `-${tag}`) : `${description}-${tag}`;
+  return /-\d+$/.test(description)
+    ? description.replace(/-\d+$/, `-${tag}`)
+    : `${description}-${tag}`;
 }
 
 /**

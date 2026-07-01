@@ -11,12 +11,12 @@ import { openStateDb, stateDbPath } from "./db";
 import { initializeState } from "./migrate";
 import { appMeta } from "./schema";
 import {
+  SETTINGS,
   type SettingDetail,
   type SettingValue,
-  SETTINGS,
+  coerceSettingValue,
   parseStoredSetting,
   settingDef,
-  coerceSettingValue,
   settingStorageKey,
 } from "./settings";
 
@@ -96,7 +96,10 @@ export function unsetSetting(repo: string, key: string): SettingDetail {
   if (existsSync(stateDbPath(repo))) {
     const handle = openStateDb(repo);
     try {
-      handle.db.delete(appMeta).where(eq(appMeta.key, settingStorageKey(key))).run();
+      handle.db
+        .delete(appMeta)
+        .where(eq(appMeta.key, settingStorageKey(key)))
+        .run();
     } catch {
       /* table absent → nothing to clear */
     } finally {

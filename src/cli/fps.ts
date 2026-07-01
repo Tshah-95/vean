@@ -33,9 +33,14 @@ function loadTimeline(repo: string, target?: string): { path: string; timeline: 
   };
   const resolved = resolveTimelineTarget(repo, project, target);
   if ("ok" in resolved) {
-    throw new Error(`no timeline for "${target ?? "timeline:main"}" — set one with \`vean timeline use\``);
+    throw new Error(
+      `no timeline for "${target ?? "timeline:main"}" — set one with \`vean timeline use\``,
+    );
   }
-  return { path: resolved.resolvedPath, timeline: fromMlt(readFileSync(resolved.resolvedPath, "utf8")) };
+  return {
+    path: resolved.resolvedPath,
+    timeline: fromMlt(readFileSync(resolved.resolvedPath, "utf8")),
+  };
 }
 
 const abs = (baseDir: string, resource: string): string =>
@@ -65,76 +70,95 @@ export function buildFpsCommand(): Command {
     .option("--repo <path>", "project repo path")
     .option("--apply", "apply the change even if fps.autodetect is 'confirm'")
     .option("--json", "emit JSON")
-    .action(async (target: string | undefined, opts: { repo?: string; apply?: boolean; json?: boolean }) => {
-      const repo = repoOf(opts);
-      const { path: mltPath, timeline } = loadTimeline(repo, target);
-      const clip = firstVideoClip(timeline);
-      if (!clip) throw new Error("the timeline has no video clip to detect a frame rate from");
-      const probe = await probeSource(abs(dirname(mltPath), clip.resource));
-      if (!probe) throw new Error(`could not probe ${clip.resource}`);
+    .action(
+      async (
+        target: string | undefined,
+        opts: { repo?: string; apply?: boolean; json?: boolean },
+      ) => {
+        const repo = repoOf(opts);
+        const { path: mltPath, timeline } = loadTimeline(repo, target);
+        const clip = firstVideoClip(timeline);
+        if (!clip) throw new Error("the timeline has no video clip to detect a frame rate from");
+        const probe = await probeSource(abs(dirname(mltPath), clip.resource));
+        if (!probe) throw new Error(`could not probe ${clip.resource}`);
 
-      const mode: FpsConformMode = opts.apply
-        ? "auto"
-        : (getSettingValue(repo, "fps.autodetect") as FpsConformMode);
-      const decision = autodetectDecision(mode, timeline.profile, probe);
+        const mode: FpsConformMode = opts.apply
+          ? "auto"
+          : (getSettingValue(repo, "fps.autodetect") as FpsConformMode);
+        const decision = autodetectDecision(mode, timeline.profile, probe);
 
-      let applied = false;
-      if (decision.decision === "apply") {
-        writeFileSync(mltPath, toMlt(applyFpsConform(timeline, decision.proposal.toFps)), "utf8");
-        applied = true;
-      }
+        let applied = false;
+        if (decision.decision === "apply") {
+          writeFileSync(mltPath, toMlt(applyFpsConform(timeline, decision.proposal.toFps)), "utf8");
+          applied = true;
+        }
 
-      if (opts.json) {
-        console.log(JSON.stringify({ ok: true, mode, ...decision, applied, timeline: mltPath }, null, 2));
-        return;
-      }
-      switch (decision.decision) {
-        case "off":
-          console.log("fps.autodetect is 'off' — no change (set it with `vean config set fps.autodetect auto`)");
-          break;
-        case "match":
-          console.log("timeline already matches the source frame rate — nothing to do");
-          break;
-        case "propose": {
-          const { fromFps, toFps } = decision.proposal;
+        if (opts.json) {
           console.log(
-            `source is ${fmt(toFps)} fps, timeline is ${fmt(fromFps)} fps. Re-run with --apply (or set fps.autodetect=auto) to conform.`,
+            JSON.stringify({ ok: true, mode, ...decision, applied, timeline: mltPath }, null, 2),
           );
-          break;
+          return;
         }
-        case "apply": {
-          const { fromFps, toFps } = decision.proposal;
-          console.log(`Set timeline fps to ${fmt(toFps)} (was ${fmt(fromFps)}) — saved ${mltPath}`);
-          break;
+        switch (decision.decision) {
+          case "off":
+            console.log(
+              "fps.autodetect is 'off' — no change (set it with `vean config set fps.autodetect auto`)",
+            );
+            break;
+          case "match":
+            console.log("timeline already matches the source frame rate — nothing to do");
+            break;
+          case "propose": {
+            const { fromFps, toFps } = decision.proposal;
+            console.log(
+              `source is ${fmt(toFps)} fps, timeline is ${fmt(fromFps)} fps. Re-run with --apply (or set fps.autodetect=auto) to conform.`,
+            );
+            break;
+          }
+          case "apply": {
+            const { fromFps, toFps } = decision.proposal;
+            console.log(
+              `Set timeline fps to ${fmt(toFps)} (was ${fmt(fromFps)}) — saved ${mltPath}`,
+            );
+            break;
+          }
         }
-      }
-      void applied;
-    });
+        void applied;
+      },
+    );
 
   fps
     .command("transcode <clipId> [timeline]")
     .description("Transcode a clip's variable-rate source to a constant-rate intermediate + relink")
     .option("--repo <path>", "project repo path")
     .option("--json", "emit JSON")
-    .action(async (clipId: string, target: string | undefined, opts: { repo?: string; json?: boolean }) => {
-      const repo = repoOf(opts);
-      const { path: mltPath, timeline } = loadTimeline(repo, target);
-      const clip = findClipById(timeline, clipId);
-      if (!clip) throw new Error(`clip not found: ${clipId}`);
-      const src = abs(dirname(mltPath), clip.resource);
-      const codec = getSettingValue(repo, "media.transcodeCodec") as TranscodeCodec;
-      // Conform the intermediate to the TIMELINE rate so it lands frame-exact.
-      const result = await transcodeToCfr(src, timeline.profile.fps, { codec });
-      clip.resource = result.outPath; // relink (additive: the original is untouched)
-      writeFileSync(mltPath, toMlt(timeline), "utf8");
-      if (opts.json) {
-        console.log(JSON.stringify({ ok: true, clip: clipId, ...result, timeline: mltPath }, null, 2));
-        return;
-      }
-      console.log(
-        `${result.cached ? "Reused" : "Transcoded"} CFR intermediate ${result.outPath} (${fmt(result.fps)} fps) and relinked clip ${clipId} — saved ${mltPath}`,
-      );
-    });
+    .action(
+      async (
+        clipId: string,
+        target: string | undefined,
+        opts: { repo?: string; json?: boolean },
+      ) => {
+        const repo = repoOf(opts);
+        const { path: mltPath, timeline } = loadTimeline(repo, target);
+        const clip = findClipById(timeline, clipId);
+        if (!clip) throw new Error(`clip not found: ${clipId}`);
+        const src = abs(dirname(mltPath), clip.resource);
+        const codec = getSettingValue(repo, "media.transcodeCodec") as TranscodeCodec;
+        // Conform the intermediate to the TIMELINE rate so it lands frame-exact.
+        const result = await transcodeToCfr(src, timeline.profile.fps, { codec });
+        clip.resource = result.outPath; // relink (additive: the original is untouched)
+        writeFileSync(mltPath, toMlt(timeline), "utf8");
+        if (opts.json) {
+          console.log(
+            JSON.stringify({ ok: true, clip: clipId, ...result, timeline: mltPath }, null, 2),
+          );
+          return;
+        }
+        console.log(
+          `${result.cached ? "Reused" : "Transcoded"} CFR intermediate ${result.outPath} (${fmt(result.fps)} fps) and relinked clip ${clipId} — saved ${mltPath}`,
+        );
+      },
+    );
 
   return fps;
 }

@@ -9,12 +9,7 @@
 import { resolve } from "node:path";
 import { Command } from "commander";
 import { type SettingDetail, settingDef } from "../state/settings";
-import {
-  getSettingDetail,
-  listSettings,
-  setSetting,
-  unsetSetting,
-} from "../state/settingsStore";
+import { getSettingDetail, listSettings, setSetting, unsetSetting } from "../state/settingsStore";
 
 const repoOf = (opts: { repo?: string }): string => resolve(opts.repo ?? process.cwd());
 

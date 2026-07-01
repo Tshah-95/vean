@@ -22,7 +22,9 @@ export class TranscodeError extends Error {
     readonly code: number,
     readonly stderr: string,
   ) {
-    super(`ffmpeg exited ${code}\n  command: ffmpeg ${args.join(" ")}\n  stderr:\n${stderr.trim()}`);
+    super(
+      `ffmpeg exited ${code}\n  command: ffmpeg ${args.join(" ")}\n  stderr:\n${stderr.trim()}`,
+    );
     this.name = "TranscodeError";
   }
 }

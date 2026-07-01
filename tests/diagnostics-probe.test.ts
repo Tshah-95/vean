@@ -8,7 +8,7 @@
 //     rate aligned, so a pass proves the rule discriminates, not abstains.
 import { describe, expect, it } from "vitest";
 import { probeDiagnostics } from "../src/diagnostics/probe";
-import { parseRational, type SourceProbe } from "../src/driver/probe";
+import { type SourceProbe, parseRational } from "../src/driver/probe";
 import { LANDSCAPE, LANDSCAPE_2997 } from "../src/ir/profile";
 
 const loc = { clip: "c0", track: "V1" };

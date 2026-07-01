@@ -2,9 +2,9 @@
 // propose/apply/decision logic both features share.
 import { describe, expect, it } from "vitest";
 import { applyFpsConform, autodetectDecision, proposeFpsConform } from "../src/conform/fps";
-import { parseRational, type SourceProbe } from "../src/driver/probe";
-import { LANDSCAPE } from "../src/ir/profile";
+import { type SourceProbe, parseRational } from "../src/driver/probe";
 import { timeline } from "../src/ir/builder";
+import { LANDSCAPE } from "../src/ir/profile";
 
 function probe(r: string | null, avg: string | null): SourceProbe {
   return {

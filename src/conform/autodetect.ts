@@ -13,7 +13,12 @@ import { isAbsolute, resolve } from "node:path";
 import { probeSource } from "../driver/probe";
 import type { Clip, Timeline } from "../ir/types";
 import { getSettingValue } from "../state/settingsStore";
-import { type AutodetectDecision, type FpsConformMode, applyFpsConform, autodetectDecision } from "./fps";
+import {
+  type AutodetectDecision,
+  type FpsConformMode,
+  applyFpsConform,
+  autodetectDecision,
+} from "./fps";
 
 function videoClipCount(tl: Timeline): number {
   let n = 0;
@@ -22,7 +27,8 @@ function videoClipCount(tl: Timeline): number {
 }
 
 function firstVideoClip(tl: Timeline): Clip | null {
-  for (const track of tl.tracks.video) for (const it of track.items) if (it.kind === "clip") return it;
+  for (const track of tl.tracks.video)
+    for (const it of track.items) if (it.kind === "clip") return it;
   return null;
 }
 
