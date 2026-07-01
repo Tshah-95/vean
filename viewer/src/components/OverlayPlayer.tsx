@@ -24,13 +24,20 @@ export interface OverlayPlayerProps {
   width: number;
   height: number;
   fps: Fps;
-  /** Overlay duration in frames (the composition's durationInFrames). */
+  /** Overlay duration in frames (the ACTIVE clip's placed length). */
   durationInFrames: number;
-  /** The composition id the graphic clip names (IR `composition.id`). Resolved to
-   *  a registered component; falls back to the default when absent/unknown. */
+  /** The composition id the ACTIVE graphic clip names (IR `composition.id`). Resolved
+   *  to a registered component; falls back to the default when absent/unknown. */
   compositionId?: string;
-  /** Props for the resolved composition (from the timeline's graphic clip). */
+  /** Props for the resolved composition (from the active graphic clip). */
   inputProps?: Record<string, unknown>;
+  /** The active clip's timeline start — the comp-frame offset, so the comp plays from
+   *  its own 0 when the clip enters (comp frame = masterFrame − startFrame). Default 0. */
+  startFrame?: number;
+  /** Whether a graphic clip covers the CURRENT frame. When false the overlay is hidden
+   *  (the Player stays MOUNTED across a gap to avoid a remount; only a comp change
+   *  remounts it). Default true. */
+  present?: boolean;
 }
 
 export function OverlayPlayer({
@@ -40,6 +47,8 @@ export function OverlayPlayer({
   durationInFrames,
   compositionId,
   inputProps,
+  startFrame = 0,
+  present = true,
 }: OverlayPlayerProps) {
   const playerRef = useRef<PlayerRef>(null);
   const clock = useClock();
@@ -60,20 +69,24 @@ export function OverlayPlayer({
   // Integer composition fps (the profile is integer-fps in Move 5).
   const compFps = Math.round(fps[0] / fps[1]);
 
-  // Slave the Player to the master clock: on every frame change, seek the Player.
-  // The Player frame is the composition frame == the master frame (same fps).
+  // Slave the Player to the master clock: on every frame change, seek the Player to
+  // the composition-LOCAL frame == masterFrame − startFrame (so the comp animates from
+  // its own 0 when the clip enters), clamped into [0, duration).
   useEffect(() => {
     const player = playerRef.current;
     if (!player) return;
-    const frame = Math.max(0, Math.min(clock.currentFrame, Math.max(0, durationInFrames - 1)));
+    const local = Math.max(
+      0,
+      Math.min(clock.currentFrame - startFrame, Math.max(0, durationInFrames - 1)),
+    );
     // Only seek when the Player drifts from the master (avoids redundant seeks).
     try {
       const current = player.getCurrentFrame();
-      if (current !== frame) player.seekTo(frame);
+      if (current !== local) player.seekTo(local);
     } catch {
-      player.seekTo(frame);
+      player.seekTo(local);
     }
-  }, [clock.currentFrame, durationInFrames]);
+  }, [clock.currentFrame, durationInFrames, startFrame]);
 
   // Keep the Player paused — the master RAF loop owns playback; the Player is a
   // pure render target driven by seekTo. (If it were play()ing it would advance
@@ -88,20 +101,19 @@ export function OverlayPlayer({
     }
   }, [clock.playing, clockInstance]);
 
-  // Headless OVERLAY bridge (`window.__veanOverlay`) — the no-UI handle the
-  // §9-step-4 live-overlay gate uses to prove the Remotion seam end-to-end:
-  // (a) the bridge EXISTS only because this component mounted, which happens only
-  // when App `deriveOverlay` returned present:true (a real GRAPHIC clip), and
-  // (b) it reports the live `(playerFrame, masterFrame)` so the gate can assert the
-  // `<Player>` is SLAVED to the master clock — seek the clock, the Player follows.
-  // Side-effect only; mirrors the decode/edit/perf/audio/approx bridges. `present`
-  // is always true here (the component is conditionally rendered on overlayPresent).
+  // Headless OVERLAY bridge (`window.__veanOverlay`) — the no-UI handle the live-overlay
+  // gates use to prove the Remotion seam end-to-end: it reports the ACTIVE overlay's
+  // `present` (does a graphic clip cover this frame), its resolved `compositionId`, the
+  // clip `startFrame`, and the live `(playerFrame, masterFrame)` so a gate can assert the
+  // `<Player>` is SLAVED (seek the clock → the Player follows the LOCAL frame = master −
+  // startFrame) and that the RIGHT comp shows at each span. Side-effect only.
   useEffect(() => {
     (
       window as unknown as {
         __veanOverlay?: () => {
           present: boolean;
           durationInFrames: number;
+          startFrame: number;
           playerFrame: number | null;
           masterFrame: number;
           /** The composition id the live Player actually resolved + rendered — the
@@ -118,8 +130,9 @@ export function OverlayPlayer({
         playerFrame = null;
       }
       return {
-        present: true,
+        present,
         durationInFrames,
+        startFrame,
         playerFrame,
         masterFrame: clockInstance.getSnapshot().currentFrame,
         compositionId: resolved.id,
@@ -128,10 +141,20 @@ export function OverlayPlayer({
     return () => {
       (window as unknown as { __veanOverlay?: unknown }).__veanOverlay = undefined;
     };
-  }, [durationInFrames, clockInstance, resolved.id]);
+  }, [durationInFrames, startFrame, present, clockInstance, resolved.id]);
 
   return (
-    <div data-testid="overlay-player" style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+    <div
+      data-testid="overlay-player"
+      style={{
+        position: "absolute",
+        inset: 0,
+        pointerEvents: "none",
+        // Hidden (but MOUNTED) when no graphic clip covers the current frame, so
+        // re-entry across a gap doesn't remount the Player.
+        opacity: present ? 1 : 0,
+      }}
+    >
       <Player
         ref={playerRef}
         component={resolved.component as never}

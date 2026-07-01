@@ -71,11 +71,16 @@ export function resolveComposition(id: string | undefined): {
   component: React.ComponentType<Record<string, unknown>>;
   defaults: Record<string, unknown>;
 } {
-  const resolvedId = id && COMPOSITIONS[id] ? id : DEFAULT_COMPOSITION_ID;
-  const entry = COMPOSITIONS[resolvedId] ?? COMPOSITIONS[DEFAULT_COMPOSITION_ID];
-  if (!entry) {
-    // Unreachable (LowerThird is always in the glob) — narrow for the type checker.
-    throw new Error(`no composition registered for "${resolvedId}" or the default`);
+  // Prefer the requested id, then the default, then ANY registered comp — so the live
+  // player never fails to mount even if `LowerThird` was renamed/removed (the default
+  // is an assumption, not an invariant). Only throw if the glob found NOTHING.
+  const resolvedId =
+    (id && COMPOSITIONS[id] && id) ||
+    (COMPOSITIONS[DEFAULT_COMPOSITION_ID] && DEFAULT_COMPOSITION_ID) ||
+    Object.keys(COMPOSITIONS)[0];
+  const entry = resolvedId ? COMPOSITIONS[resolvedId] : undefined;
+  if (!resolvedId || !entry) {
+    throw new Error(`no compositions registered — the glob found none (cannot resolve "${id ?? "?"}")`);
   }
   return { id: resolvedId, component: entry.component, defaults: entry.defaults };
 }

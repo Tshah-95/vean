@@ -54,6 +54,12 @@ describe("composition registry resolution", () => {
     expect(pickComposition("Empty", {})).toBeNull();
   });
 
+  it("rejects a plain-object default export (config, not a React component)", () => {
+    // `export default { fps: 30, … }` or a helper `.tsx` — no React `$$typeof` marker.
+    expect(pickComposition("Config", { default: { fps: 30, some: "config" } })).toBeNull();
+    expect(pickComposition("Arr", { default: [1, 2, 3] })).toBeNull();
+  });
+
   it("accepts an object component (memo/forwardRef), not only a function", () => {
     const memoish = { $$typeof: Symbol.for("react.memo"), type: Comp };
     const picked = pickComposition("Fancy", { default: memoish });

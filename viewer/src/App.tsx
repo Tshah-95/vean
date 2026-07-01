@@ -15,48 +15,12 @@ import { Sidebar } from "./components/Sidebar";
 import { TimelineStrip } from "./components/TimelineStrip";
 import { Transport } from "./components/Transport";
 import type { TimelineResponse } from "./types";
-import { isGraphicClip, placeItems } from "./types";
 import { useTimelineEditor } from "./useTimelineEditor";
 
-/** Find the first GRAPHIC overlay clip in the timeline and read its placement +
- *  composition identity, so the live `@remotion/player` renders the RIGHT
- *  composition (the clip's actual `composition.id`/`composition.props`) over the
- *  right span — not a hardcoded `LowerThird`. `present` is false when the timeline
- *  has NO graphic clip — in which case the Player must NOT mount (it would otherwise
- *  draw a graphic over a timeline that never asked for it; the bug seen on
- *  `projects/retire`, whose `chat.mov` overlay is a plain video file the FOOTAGE
- *  compositor composites, not a Remotion graphic).
- *
- *  The live-overlay signal is `isGraphicClip` (the label-/cache-path convention — a
- *  clip the `@remotion/player` owns). When that clip ALSO carries `composition`
- *  metadata (the IR field that round-trips through `vean:composition` /
- *  `vean:compositionProps`), its id + props drive the player so the LIVE preview is
- *  the SAME composition the producer renders to ProRes. When the metadata is absent
- *  (legacy label-/cache-path overlays), the player falls back to the default
- *  composition — the historical behaviour, just no longer the only behaviour. */
-function deriveOverlay(data: TimelineResponse): {
-  present: boolean;
-  duration: number;
-  compositionId: string | undefined;
-  props: Record<string, unknown> | undefined;
-} {
-  for (const track of data.timeline.tracks.video) {
-    for (const placed of placeItems(track)) {
-      const item = placed.item;
-      if (item.kind !== "clip" || !isGraphicClip(item)) continue;
-      // Read the composition identity off the clip when present (the IR field).
-      return {
-        present: true,
-        duration: placed.length,
-        compositionId: item.composition?.id,
-        props: item.composition?.props,
-      };
-    }
-  }
-  // No graphic clip → no Remotion overlay layer at all (footage-only / video-file
-  // overlays composite on the footage canvas).
-  return { present: false, duration: data.totalFrames, compositionId: undefined, props: undefined };
-}
+// The graphic overlay is resolved PER-FRAME from the working IR (the graphic clip
+// active at the playhead) inside `PreviewPane` — see `resolveOverlayAt`. Multi-overlay,
+// the comp-frame start offset, and per-span visibility all fall out of that, so there is
+// no static, whole-timeline overlay derivation here anymore.
 
 function Viewer({ route }: { route: string | undefined }) {
   const clock = useClockInstance();
@@ -135,8 +99,6 @@ function Viewer({ route }: { route: string | undefined }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [clock]);
 
-  const overlay = useMemo(() => (data ? deriveOverlay(data) : null), [data]);
-
   if (error) {
     return (
       <div style={{ padding: 24, color: "#e08585", fontFamily: "ui-monospace, monospace" }}>
@@ -149,7 +111,7 @@ function Viewer({ route }: { route: string | undefined }) {
     );
   }
 
-  if (!data || !overlay) {
+  if (!data) {
     return <div style={{ padding: 24, color: "#6b7280" }}>Loading timeline…</div>;
   }
 
@@ -169,7 +131,6 @@ function Viewer({ route }: { route: string | undefined }) {
         <Stage
           data={data}
           route={route}
-          overlay={overlay}
           volume={volume}
           muted={muted}
           sinkId={sinkId}
@@ -195,7 +156,6 @@ function Viewer({ route }: { route: string | undefined }) {
 function Stage({
   data,
   route,
-  overlay,
   volume,
   muted,
   sinkId,
@@ -205,12 +165,6 @@ function Stage({
 }: {
   data: TimelineResponse;
   route: string | undefined;
-  overlay: {
-    present: boolean;
-    duration: number;
-    compositionId: string | undefined;
-    props: Record<string, unknown> | undefined;
-  };
   volume: number;
   muted: boolean;
   sinkId: string;
@@ -288,13 +242,9 @@ function Stage({
         timeline={editor.timeline}
         revision={editor.revision}
         route={route}
-        overlayPresent={overlay.present}
-        overlayDuration={overlay.duration}
         volume={volume}
         muted={muted}
         sinkId={sinkId}
-        {...(overlay.compositionId ? { overlayCompositionId: overlay.compositionId } : {})}
-        {...(overlay.props ? { overlayProps: overlay.props } : {})}
       />
       <Transport
         volume={volume}

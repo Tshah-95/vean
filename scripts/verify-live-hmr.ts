@@ -56,7 +56,11 @@ function abEval(js: string): unknown {
   const b64 = Buffer.from(js, "utf8").toString("base64");
   const out = ab(["eval", "-b", b64, "--json"]);
   const line = out.trim().split("\n").filter(Boolean).pop() ?? "{}";
-  const env = JSON.parse(line) as { success?: boolean; data?: { result?: unknown }; error?: unknown };
+  const env = JSON.parse(line) as {
+    success?: boolean;
+    data?: { result?: unknown };
+    error?: unknown;
+  };
   if (!env.success) throw new Error(`eval failed: ${JSON.stringify(env.error)}`);
   return env.data?.result;
 }
@@ -76,7 +80,9 @@ async function main(): Promise<void> {
   }
   const originalSource = readFileSync(TITLE_TSX, "utf8");
   if (!originalSource.includes(ORIGINAL_KICKER)) {
-    console.error(`FAIL  Title.tsx no longer contains the expected kicker "${ORIGINAL_KICKER}" — update the probe.`);
+    console.error(
+      `FAIL  Title.tsx no longer contains the expected kicker "${ORIGINAL_KICKER}" — update the probe.`,
+    );
     process.exit(1);
   }
 
@@ -92,12 +98,17 @@ async function main(): Promise<void> {
 
     ab(["open", url]);
     if (!abWaitFn("window.__veanOverlay !== undefined", 30000)) {
-      fail("viewer never mounted the overlay (dev Vite cold start may have failed) — cannot test HMR");
+      fail(
+        "viewer never mounted the overlay (dev Vite cold start may have failed) — cannot test HMR",
+      );
       return;
     }
     // Baseline: the Title comp is live with its ORIGINAL kicker, clock seeked to SEEK_TO.
-    const baselineText = abEval(`document.body.innerText.toLowerCase().includes("${ORIGINAL_KICKER}")`);
-    if (baselineText !== true) fail(`baseline: original kicker "${ORIGINAL_KICKER}" not in the live overlay before edit`);
+    const baselineText = abEval(
+      `document.body.innerText.toLowerCase().includes("${ORIGINAL_KICKER}")`,
+    );
+    if (baselineText !== true)
+      fail(`baseline: original kicker "${ORIGINAL_KICKER}" not in the live overlay before edit`);
     abEval(
       `for (let i = 0; i < ${SEEK_TO}; i++) { window.dispatchEvent(new KeyboardEvent("keydown", { code: "ArrowRight" })); } window.__veanOverlay().masterFrame`,
     );
@@ -113,7 +124,9 @@ async function main(): Promise<void> {
     if (reflected) {
       pass("(1) comp edit reflected live in the overlay (HMR applied — no manual rebuild)");
     } else {
-      fail("(1) comp edit did NOT reflect live — the registry/Player did not pick up the new comp code");
+      fail(
+        "(1) comp edit did NOT reflect live — the registry/Player did not pick up the new comp code",
+      );
     }
 
     // (2) the master playhead is preserved (Fast Refresh, not a full reload).
@@ -124,9 +137,13 @@ async function main(): Promise<void> {
       // __veanOverlay gone ⇒ the app fully reloaded and re-init'd — the failure case.
     }
     if (after.masterFrame === before.masterFrame && before.masterFrame === SEEK_TO) {
-      pass(`(2) master playhead preserved across HMR (frame ${after.masterFrame} held — Fast Refresh, not a reload)`);
+      pass(
+        `(2) master playhead preserved across HMR (frame ${after.masterFrame} held — Fast Refresh, not a reload)`,
+      );
     } else {
-      fail(`(2) playhead NOT preserved: was ${before.masterFrame}, now ${after.masterFrame} (a full reload reset the clock — comps need Fast-Refresh-clean exports)`);
+      fail(
+        `(2) playhead NOT preserved: was ${before.masterFrame}, now ${after.masterFrame} (a full reload reset the clock — comps need Fast-Refresh-clean exports)`,
+      );
     }
 
     // (3) the OverlayPlayer stayed mounted.
@@ -146,7 +163,9 @@ async function main(): Promise<void> {
 
   console.log("");
   if (failures.length === 0) {
-    console.log("OVERALL: PASS — editing a composition's TSX updates the live preview with the playhead preserved (the Studio live-edit loop).");
+    console.log(
+      "OVERALL: PASS — editing a composition's TSX updates the live preview with the playhead preserved (the Studio live-edit loop).",
+    );
     process.exit(0);
   }
   console.log(`OVERALL: FAIL — ${failures.length} defect(s).`);

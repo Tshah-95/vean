@@ -11,7 +11,9 @@
 // overlay draws ON TOP; its transparent regions reveal the composited footage
 // (two compositors, one editor track — the Remotion seam). `melt` re-enters ONLY
 // as the opt-in per-frame exact-still fallback for `approximate` services (§6.3).
+import { useMemo } from "react";
 import { useClock } from "../ClockProvider";
+import { hasGraphicOverlay, resolveOverlayAt } from "../resolveOverlay";
 import type { Fps, Timeline } from "../types";
 import { FootageStage } from "./FootageStage";
 import { OverlayPlayer } from "./OverlayPlayer";
@@ -27,17 +29,9 @@ export interface PreviewPaneProps {
   revision: number;
   /** The active route, scoping the `/api/media` source-serve allowlist. */
   route: string | undefined;
-  /** Whether the timeline has a GRAPHIC (Remotion) overlay clip the `<Player>`
-   *  should render on top. False → no Player mounts (a plain video-file overlay
-   *  composites on the footage canvas instead; see App `deriveOverlay`). */
-  overlayPresent: boolean;
-  /** Overlay duration in frames. */
-  overlayDuration: number;
-  /** The composition id the graphic clip names (forwarded to the `<Player>` so it
-   *  renders the clip's ACTUAL composition, not a hardcoded one). */
-  overlayCompositionId?: string;
-  /** Props for the overlay composition. */
-  overlayProps?: Record<string, unknown>;
+  /** (The graphic overlay is resolved PER-FRAME from `timeline` — the graphic clip
+   *  active at the playhead — inside this pane via `resolveOverlayAt`. No static overlay
+   *  props are threaded in; multi-overlay + start-offset + span visibility fall out.) */
   /** Playback volume 0–1 (applied to the live footage <video>, the audio source). */
   volume: number;
   /** Mute the footage audio. */
@@ -53,19 +47,22 @@ export function PreviewPane({
   timeline,
   revision,
   route,
-  overlayPresent,
-  overlayDuration,
-  overlayCompositionId,
-  overlayProps,
   volume,
   muted,
   sinkId,
 }: PreviewPaneProps) {
-  // Subscribe so the pane re-renders on a frame change (the stage itself repaints
-  // imperatively, but the box must stay mounted for the whole session).
-  useClock();
+  // Subscribe to the clock so the pane re-renders on a frame change — needed to resolve
+  // the PLAYHEAD-ACTIVE overlay (the footage stage repaints imperatively, but the overlay
+  // layer is React and must track the frame).
+  const clock = useClock();
 
   const aspect = `${width} / ${height}`;
+
+  // Mount the overlay layer iff the timeline has ANY graphic clip (kept mounted across
+  // spans so a gap doesn't remount the Player); resolve the graphic clip ACTIVE at the
+  // current frame — its comp, start offset, and span visibility — per frame.
+  const anyGraphic = useMemo(() => hasGraphicOverlay(timeline), [timeline]);
+  const active = resolveOverlayAt(timeline, clock.currentFrame);
 
   return (
     <div
@@ -103,14 +100,16 @@ export function PreviewPane({
           muted={muted}
           sinkId={sinkId}
         />
-        {overlayPresent && (
+        {anyGraphic && (
           <OverlayPlayer
             width={width}
             height={height}
             fps={fps}
-            durationInFrames={overlayDuration}
-            {...(overlayCompositionId ? { compositionId: overlayCompositionId } : {})}
-            {...(overlayProps ? { inputProps: overlayProps } : {})}
+            present={active.present}
+            startFrame={active.startFrame}
+            durationInFrames={active.duration}
+            {...(active.compositionId ? { compositionId: active.compositionId } : {})}
+            {...(active.props ? { inputProps: active.props } : {})}
           />
         )}
       </div>
