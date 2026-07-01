@@ -42,6 +42,7 @@
 // sample-accurate through one element.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useClock, useClockInstance } from "../ClockProvider";
+import { usePreview } from "../PreviewProvider";
 import { renderStill } from "../api";
 import { AudioGraph } from "../audio/audioGraph";
 import { type FootageProvider, type FrameImage, GlCompositor } from "../compositor/glCompositor";
@@ -125,6 +126,23 @@ export function FootageStage({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const clock = useClock();
   const clockInstance = useClockInstance();
+  // The live drag-preview override (null unless a gesture is in flight). When set,
+  // the compositor draws `preview.timeline` at `preview.frame` instead of the
+  // committed IR at the playhead — so a trim/move reacts in the monitor before it
+  // commits. Read imperatively through `activeTimelineRef` in the composite path.
+  const preview = usePreview();
+
+  // Refs the imperative composite/decode callbacks read so they DON'T need to be in
+  // any dep array (and so a decode landing repaints the frame currently on screen —
+  // the preview frame mid-drag, the playhead otherwise, never a stale one):
+  //   • activeTimelineRef — the IR to resolve (preview override or committed),
+  //   • shownFrame        — the last frame actually composited,
+  //   • revisionRef       — the live edit revision.
+  const activeTimelineRef = useRef<Timeline>(timeline);
+  activeTimelineRef.current = preview?.timeline ?? timeline;
+  const revisionRef = useRef(revision);
+  revisionRef.current = revision;
+  const shownFrame = useRef(clock.currentFrame);
 
   // The decode box — the profile size clamped to MAX_EDGE (keeps aspect).
   const boxW = useRef(0);
@@ -230,16 +248,18 @@ export function FootageStage({
           if (!decoded) return; // null = no frame / failed / canceled by a newer seek
           // The cache TAKES OWNERSHIP and close()s on evict/replace (§8.3).
           cache.current.set(uuid, sourceFrame, decoded.bitmap);
-          // A frame landed — recomposite the CURRENT playhead so it appears.
-          scheduleComposite(clockInstance.getSnapshot().currentFrame, revision, true);
+          // A frame landed — recomposite the frame CURRENTLY ON SCREEN so it
+          // appears: the preview frame while a drag is live, else the playhead.
+          scheduleComposite(shownFrame.current, revisionRef.current, true);
         })
         .catch(() => {
           decoding.current.delete(key);
         });
     },
-    // scheduleComposite is stable (defined below via ref); revision captured live.
+    // scheduleComposite is stable (defined below via ref); the shown frame + live
+    // revision are read through refs so a decode repaints what's actually visible.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [secondsForFrame, route, revision, clockInstance],
+    [secondsForFrame, route],
   );
 
   // The synchronous provider the compositor pulls each footage layer through: a
@@ -280,7 +300,7 @@ export function FootageStage({
       // exact frame never catches up and the held frame stays stale. Skipping warm
       // until the queue drains keeps the CURRENT frame first in line.
       if (dec.getStats().queued > MAX_QUEUE_DEPTH) return;
-      const resolved = resolveLayers(timeline, frame);
+      const resolved = resolveLayers(activeTimelineRef.current, frame);
       let dispatched = 0;
       const footage: FootageLayer[] = [];
       for (const l of resolved.layers) {
@@ -302,7 +322,7 @@ export function FootageStage({
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
     },
-    [timeline, requestDecode],
+    [requestDecode],
   );
 
   // The composite core: resolve the z-stack off the LIVE IR at `frame`, draw it,
@@ -312,8 +332,12 @@ export function FootageStage({
       const comp = compositor.current;
       if (!comp) return;
       const t0 = performance.now();
-      const resolved = resolveLayers(timeline, frame);
+      // Resolve the ACTIVE IR (the drag-preview override when one is live, else the
+      // committed working IR) — read through the ref so this callback stays stable
+      // across edits/preview churn; the HMR + preview effects drive the repaints.
+      const resolved = resolveLayers(activeTimelineRef.current, frame);
       const layers: Layer[] = resolved.layers;
+      shownFrame.current = frame; // the frame now on screen (a decode landing repaints THIS)
       setHasContent(layers.length > 0);
       setApproximate(resolved.hasApproximate);
       comp.resize(boxW.current, boxH.current);
@@ -321,9 +345,10 @@ export function FootageStage({
       recordComposite(performance.now() - t0);
       warmAhead(frame);
     },
-    // recordComposite is stable (ref-backed); warmAhead/provideFootage tracked.
+    // recordComposite is stable (ref-backed); warmAhead/provideFootage tracked. The
+    // IR is read live via activeTimelineRef, so `timeline` is intentionally not a dep.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [timeline, provideFootage, warmAhead],
+    [provideFootage, warmAhead],
   );
 
   // Single-in-flight composite with latest-wins coalescing. `force` bypasses the
@@ -441,6 +466,20 @@ export function FootageStage({
       }, EDIT_DEBOUNCE_MS);
     }
   }, [clock.currentFrame, clock.playing, revision, scheduleComposite]);
+
+  // ── The DRAG-PREVIEW effect: recomposite when a gesture sets/updates/clears the
+  // override. While a drag is live, `preview` is a fresh object each move → this
+  // fires and draws `preview.timeline` at `preview.frame` (the trimmed edge / drop
+  // frame). When it clears (commit or abort), we recomposite the live PLAYHEAD off
+  // the committed IR — so an aborted drag with no revision bump still restores the
+  // real frame. Keyed on `preview` identity only (not revision), so a commit's
+  // repaint stays owned by the HMR effect above (no double-composite per edit).
+  useEffect(() => {
+    const frame = preview ? preview.frame : clockInstance.getSnapshot().currentFrame;
+    scheduleComposite(frame, revisionRef.current, true);
+    // revisionRef/clockInstance are refs/stable; the reactive trigger is `preview`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preview, scheduleComposite]);
 
   // ── audio: the Tier-2b WEB AUDIO GRAPH slaved to the master clock (§6, §8.6) ──
   // One `AudioGraph` mixes every audio track — per-clip `AudioBufferSourceNode`s

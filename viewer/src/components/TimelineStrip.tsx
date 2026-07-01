@@ -20,6 +20,8 @@
 // format from the current scale.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useClockInstance } from "../ClockProvider";
+import { usePreviewInstance } from "../PreviewProvider";
+import { buildDragPreview } from "../dragPreview";
 import {
   type Gesture,
   type Tool,
@@ -94,6 +96,10 @@ interface DragState {
 export function TimelineStrip({ editor }: TimelineStripProps) {
   const { timeline, totalFrames, selectedId, diagnosticsByClip } = editor;
   const clock = useClockInstance();
+  // The drag-preview channel to the footage stage: push a compositor override on
+  // each drag move so the monitor shows the trimmed edge / drop frame; clear it once
+  // the gesture commits (kept until the commit lands, to avoid a snap-back flash).
+  const previewStore = usePreviewInstance();
   const laneRef = useRef<HTMLDivElement>(null);
   // The ABSOLUTE scale in pixels-per-frame. `null` means "not yet fitted" (on mount
   // or after a document change) — the fit effect below sets it once. After that it is
@@ -410,10 +416,33 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
     setDrag((d) => {
       if (!d) return null;
       const inv = buildInvocation(d.gesture, d.dxFrames, d.ripple, d.toTrackId);
-      if (inv) void editor.commit(inv);
+      if (inv) {
+        // Keep the previewed frame on screen until the commit lands, THEN clear —
+        // the monitor returns to the playhead over the newly-committed IR with no
+        // snap-back flash (the preview ≈ the commit result, so the transition is
+        // continuous). Clears on rejection too (finally), restoring the live frame.
+        void editor.commit(inv).finally(() => previewStore.clear());
+      } else {
+        previewStore.clear();
+      }
       return null;
     });
-  }, [editor]);
+  }, [editor, previewStore]);
+
+  // Push the live drag as a compositor override so the preview monitor reacts to the
+  // in-flight gesture — the frame at the new in/out point on a trim, the clip landed
+  // at the drop position on a move. Only SET here; the CLEAR is deferred to pointerup
+  // (so the preview doesn't snap back before the commit lands). `buildDragPreview`
+  // returns null for a zero-frame / non-clip / graphic drag → the monitor holds the
+  // live playhead frame until the drag actually bites.
+  useEffect(() => {
+    if (!drag) return;
+    previewStore.set(buildDragPreview(timeline, drag.gesture, drag.dxFrames));
+  }, [drag, timeline, previewStore]);
+
+  // Belt-and-suspenders: never leave a stale override behind if the strip unmounts
+  // (route change / teardown) while a drag is in flight.
+  useEffect(() => () => previewStore.clear(), [previewStore]);
 
   // Deselect on a pointerdown in empty lane area (not on a clip).
   const onLaneBackgroundPointerDown = useCallback(() => {

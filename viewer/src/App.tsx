@@ -14,6 +14,7 @@ import { PreviewPane } from "./components/PreviewPane";
 import { Sidebar } from "./components/Sidebar";
 import { TimelineStrip } from "./components/TimelineStrip";
 import { Transport } from "./components/Transport";
+import { PreviewProvider } from "./PreviewProvider";
 import type { TimelineResponse } from "./types";
 import { useTimelineEditor } from "./useTimelineEditor";
 
@@ -270,7 +271,9 @@ export function App() {
   }, []);
   return (
     <ClockProvider>
-      <Viewer route={route} />
+      <PreviewProvider>
+        <Viewer route={route} />
+      </PreviewProvider>
     </ClockProvider>
   );
 }
