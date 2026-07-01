@@ -8,6 +8,7 @@
 // stay inert (no selection, no gesture).
 import type { Diagnostic, PlacedItem } from "../types";
 import { isGraphicClip, isRemotionOverlay } from "../types";
+import { TranscriptPeek } from "./TranscriptPeek";
 import { Waveform } from "./Waveform";
 
 export interface ClipBlockProps {
@@ -151,6 +152,19 @@ export function ClipBlock({
       title={`${item.label ?? basename(item.resource)} · ${length}f · src[${item.in}-${item.out}]`}
     >
       {kind === "audio" && !ghost ? <Waveform clipId={item.id} route={route} /> : null}
+      {/* Embedded (linked) audio on a video clip: a thin waveform strip at the clip's
+          foot so you can SEE the mp4 carries audio (Detach promotes it to its own track). */}
+      {!ghost && kind === "video" && item.hasAudio ? (
+        <div
+          title="this clip carries embedded audio — Detach audio to edit it on its own track"
+          style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 12, opacity: 0.55, pointerEvents: "none" }}
+        >
+          <Waveform clipId={item.id} route={route} color="#57b98a" />
+        </div>
+      ) : null}
+      {!ghost && (kind === "audio" || item.hasAudio) ? (
+        <TranscriptPeek clipId={item.id} route={route} />
+      ) : null}
       <span
         style={{
           position: "relative",
