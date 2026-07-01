@@ -122,6 +122,8 @@ export const mediaAssets = sqliteTable(
     contentHash: text("content_hash"),
     /** ISO timestamp of the last successful probe (null = never probed). */
     probedAt: text("probed_at"),
+    /** @deprecated Superseded by the `media_ranges` table (a whole-asset tag is a
+     *  null-bounds range there). Retained for back-compat; no code reads or writes it. */
     labelsJson: text("labels_json").notNull().default("[]"),
     probeJson: text("probe_json").notNull().default("{}"),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -152,6 +154,75 @@ export const routeAliases = sqliteTable(
     projectAliasUnique: uniqueIndex("route_aliases_project_alias_unique").on(
       table.projectId,
       table.alias,
+    ),
+  }),
+);
+
+// ─── Logged ranges (the subclip / keyword / rating / marker primitive) ──────────
+// The missing layer between a cataloged file and a clip on the timeline. One flat,
+// kind-discriminated table — the FCPXML shape, where a keyword, a rating, and a
+// marker are all sibling range-children of an asset. A subclip is a NAMED span; a
+// keyword/rating/role/marker/note is a span carrying `value`; a whole-asset tag is a
+// null-bounds range. Overlap is expected (one asset → many rows). See DESIGN-MEDIA.md.
+export const mediaRanges = sqliteTable(
+  "media_ranges",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    assetId: text("asset_id")
+      .notNull()
+      .references(() => mediaAssets.id, { onDelete: "cascade" }),
+    /** 'subclip' | 'keyword' | 'rating' | 'marker' | 'role' | 'note' | 'custom'. */
+    kind: text("kind").notNull(),
+    /** subclip name · keyword text · 'favorite'|'reject' · role · marker/note comment. */
+    value: text("value"),
+    // INCLUSIVE 0-based frames in the ASSET's OWN rational fps (`fps_num`/`fps_den`),
+    // never seconds — honors the frame-exact invariant. NULL/NULL = whole-asset
+    // (untimed) tag. A marker is a zero-length range (`in_frame === out_frame`).
+    inFrame: integer("in_frame"),
+    outFrame: integer("out_frame"),
+    /** Optional label / marker / clip color (hex or named). */
+    color: text("color"),
+    /** Freeform log note. */
+    notes: text("notes"),
+    /** {source:'human'|'agent'|'auto', tool?, model?, at?} — who/what logged it. */
+    provenanceJson: text("provenance_json"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    assetIdx: index("media_ranges_project_asset_idx").on(table.projectId, table.assetId),
+    kindValueIdx: index("media_ranges_project_kind_value_idx").on(
+      table.projectId,
+      table.kind,
+      table.value,
+    ),
+  }),
+);
+
+// ─── Media collections (saved-query smart bins) ─────────────────────────────────
+// A view, not a location — the Search Bin / Smart Bin / Smart Collection pattern.
+// Evaluated live against `media_assets` + `media_ranges` (and, later, the moment index).
+export const mediaCollections = sqliteTable(
+  "media_collections",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    // Typed filter (see MediaCollectionQuery in media-ranges.ts): { assetKind?,
+    // rangeKind?, value?, ratingAtLeast?, textContains?, durationMinSec? }. Saved live query.
+    queryJson: text("query_json").notNull().default("{}"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    nameUnique: uniqueIndex("media_collections_project_name_unique").on(
+      table.projectId,
+      table.name,
     ),
   }),
 );

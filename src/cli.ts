@@ -993,6 +993,207 @@ media
     if (!opts.json) printJson(output);
   });
 
+media
+  .command("log-range <asset>")
+  .description("Log a named sub-range (subclip) over a cataloged asset")
+  .requiredOption("--in <frame>", "in-point (frame)", parseInteger)
+  .requiredOption("--out <frame>", "out-point (frame)", parseInteger)
+  .option("--name <name>", "subclip name")
+  .option("--notes <notes>", "log note")
+  .option("--color <color>", "label color")
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(
+    async (
+      asset: string,
+      opts: {
+        in: number;
+        out: number;
+        name?: string;
+        notes?: string;
+        color?: string;
+        repo?: string;
+        json?: boolean;
+      },
+    ) => {
+      const output = await printActionOutput(
+        "media.log-range",
+        {
+          asset,
+          in: opts.in,
+          out: opts.out,
+          name: opts.name,
+          notes: opts.notes,
+          color: opts.color,
+          repo: opts.repo,
+        },
+        opts.json,
+      );
+      if (!opts.json) printJson(output);
+    },
+  );
+
+media
+  .command("label <asset> <kind> <value>")
+  .description("Attach a keyword/rating/role/marker/note to an asset or a range of it")
+  .option("--in <frame>", "range in-point (omit both for a whole-asset tag)", parseInteger)
+  .option("--out <frame>", "range out-point", parseInteger)
+  .option("--color <color>", "label color")
+  .option("--notes <notes>", "log note")
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(
+    async (
+      asset: string,
+      kind: string,
+      value: string,
+      opts: {
+        in?: number;
+        out?: number;
+        color?: string;
+        notes?: string;
+        repo?: string;
+        json?: boolean;
+      },
+    ) => {
+      const output = await printActionOutput(
+        "media.label",
+        {
+          asset,
+          kind,
+          value,
+          in: opts.in,
+          out: opts.out,
+          color: opts.color,
+          notes: opts.notes,
+          repo: opts.repo,
+        },
+        opts.json,
+      );
+      if (!opts.json) printJson(output);
+    },
+  );
+
+media
+  .command("rate <asset> <rating>")
+  .description("Mark an asset or a range as favorite or reject")
+  .option("--in <frame>", "range in-point", parseInteger)
+  .option("--out <frame>", "range out-point", parseInteger)
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(
+    async (
+      asset: string,
+      rating: string,
+      opts: { in?: number; out?: number; repo?: string; json?: boolean },
+    ) => {
+      const output = await printActionOutput(
+        "media.rate",
+        { asset, rating, in: opts.in, out: opts.out, repo: opts.repo },
+        opts.json,
+      );
+      if (!opts.json) printJson(output);
+    },
+  );
+
+media
+  .command("marker <asset>")
+  .description("Drop a marker (zero-length range) at a frame of an asset")
+  .requiredOption("--at <frame>", "marker frame", parseInteger)
+  .option("--comment <text>", "marker comment")
+  .option("--color <color>", "marker color")
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(
+    async (
+      asset: string,
+      opts: { at: number; comment?: string; color?: string; repo?: string; json?: boolean },
+    ) => {
+      const output = await printActionOutput(
+        "media.marker",
+        { asset, at: opts.at, comment: opts.comment, color: opts.color, repo: opts.repo },
+        opts.json,
+      );
+      if (!opts.json) printJson(output);
+    },
+  );
+
+const mediaRange = media.command("range").description("Inspect logged ranges and labels");
+
+mediaRange
+  .command("list")
+  .description("List logged ranges and labels")
+  .option("--asset <ref>", "filter by asset (id, path, or route alias)")
+  .option("--kind <kind>", "filter by kind: subclip, keyword, rating, marker, role, note, custom")
+  .option("--value <value>", "filter by value")
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(
+    async (opts: {
+      asset?: string;
+      kind?: string;
+      value?: string;
+      repo?: string;
+      json?: boolean;
+    }) => {
+      const output = await printActionOutput("media.range.list", opts, opts.json);
+      if (!opts.json) printJson(output);
+    },
+  );
+
+mediaRange
+  .command("remove <id>")
+  .description("Delete one logged range or label by id")
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(async (id: string, opts: { repo?: string; json?: boolean }) => {
+    const output = await printActionOutput("media.range.remove", { ...opts, id }, opts.json);
+    if (!opts.json) printJson(output);
+  });
+
+const mediaCollection = media
+  .command("collection")
+  .description("Saved-query smart bins over the catalog");
+
+mediaCollection
+  .command("save <name>")
+  .description("Save a named live query (smart bin)")
+  .requiredOption("--query-json <json>", "collection query JSON", assertJson)
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(async (name: string, opts: { queryJson: string; repo?: string; json?: boolean }) => {
+    const output = await printActionOutput(
+      "media.collection.save",
+      { name, query: JSON.parse(opts.queryJson), repo: opts.repo },
+      opts.json,
+    );
+    if (!opts.json) printJson(output);
+  });
+
+mediaCollection
+  .command("list")
+  .description("List saved media collections")
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(async (opts: { repo?: string; json?: boolean }) => {
+    const output = await printActionOutput("media.collection.list", opts, opts.json);
+    if (!opts.json) printJson(output);
+  });
+
+mediaCollection
+  .command("resolve <name>")
+  .description("Evaluate a collection to its matching assets and ranges (the bin read)")
+  .option("--repo <path>", "project repo path")
+  .option("--json", "emit JSON")
+  .action(async (name: string, opts: { repo?: string; json?: boolean }) => {
+    const output = await printActionOutput(
+      "media.collection.resolve",
+      { ...opts, name },
+      opts.json,
+    );
+    if (!opts.json) printJson(output);
+  });
+
 const route = program.command("route").description("Manage project route aliases");
 
 route

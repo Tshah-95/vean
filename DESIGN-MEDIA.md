@@ -1,10 +1,14 @@
 # DESIGN-MEDIA — logged ranges, range-scoped labels, and the media catalog
 
-> Status: **proposal** (2026-07-01). Extends the **Media routing contract** in
-> [AGENTS.md](AGENTS.md) and the deferred-action families in
-> [DESIGN-MOVE3.md](DESIGN-MOVE3.md). Nothing here contradicts the local-state
-> contract: files stay on disk; only cache/coordination state lives in
-> `.vean/vean.db`.
+> Status: **Phase A + B landed** (2026-07-01) — the `media_ranges` /
+> `media_collections` schema, migration `0003_media_ranges`, the `src/state/media-ranges.ts`
+> layer, the `media.log-range` / `media.label` / `media.rate` / `media.marker` /
+> `media.range.*` / `media.collection.*` actions, their CLI + MCP projection, and
+> tests are on this branch. Phases C–E (copy/link verbs, content index, IR bridge)
+> remain. Extends the **Media routing contract** in [AGENTS.md](AGENTS.md) and the
+> deferred-action families in [DESIGN-MOVE3.md](DESIGN-MOVE3.md). Nothing here
+> contradicts the local-state contract: files stay on disk; only cache/coordination
+> state lives in `.vean/vean.db`.
 
 This doc closes the gap between a *cataloged file* and a *clip on the timeline*:
 the **logged range** — a labeled, rated, rational-frame sub-range over a source
@@ -178,9 +182,12 @@ action({
 })
 ```
 
-Diagnostic tie-in: a `media-range-out-of-bounds` check (in/out beyond the asset's
-probed frame count) fires like the existing media rules in
-[diagnostics/checks/media.ts](src/diagnostics/checks/media.ts).
+Bounds handling (as built): in/out are ordered and **clamped to the asset's probed
+frame count**, and a range starting entirely past the last frame is **rejected at
+action time** (`clampRange` in [media-range-math.ts](src/state/media-range-math.ts),
+a pure module unit-tested in `tests/media-range-math.test.ts`). Placement of a range
+onto a timeline is separately covered by the IR's own out-of-range clip diagnostics,
+so no standing catalog diagnostic is needed.
 
 ### `media.label` — attach a keyword / rating / role / marker to an asset or range
 
@@ -239,7 +246,7 @@ action({
 
 | Action | Purpose | Effect |
 |---|---|---|
-| `media.range.list` / `media.range.find` | Read ranges by asset / kind / value | stateRead |
+| `media.range.list` / `media.range.remove` | Read ranges by asset / kind / value; delete one by id | stateRead / stateWrite |
 | `media.collection.list` | List saved collections | stateRead |
 | `media.collection.resolve` | Evaluate a collection → matching assets/ranges (the **bin read**) | stateRead |
 | `media.add` | Catalog a single file by path (link + probe) — sugar over root+scan | update |
@@ -302,11 +309,13 @@ and auditable.
 
 ## Build plan (a Move, phased behind gates)
 
-- **A — schema:** `media_ranges` + `media_collections` Drizzle models + committed
-  migration; state fns in `src/state/media-ranges.ts`; deprecate `labels_json`.
-- **B — actions:** `log-range`, `label` (+`rate`/`marker` sugar), `collection.save/
-  list/resolve`, `range.list/find` + CLI + MCP + **stable JSON tests** (the
-  action-runtime contract's bar) + the `media-range-out-of-bounds` diagnostic.
+- **A — schema (done ✓):** `media_ranges` + `media_collections` Drizzle models +
+  committed migration `0003_media_ranges`; state fns in `src/state/media-ranges.ts`;
+  `labels_json` deprecated.
+- **B — actions (done ✓):** `log-range`, `label` (+`rate`/`marker` sugar),
+  `range.list`/`range.remove`, `collection.save`/`list`/`resolve` + CLI + MCP
+  projection + stable tests (`cli-media-ranges`, `media-range-math`); bounds
+  clamped/validated at action time.
 - **C — copy/link verbs:** `media.import --copy`, `media.consolidate`,
   `media.relink`.
 - **D — content index (deferred):** wire whisper transcript + embeddings →
@@ -314,9 +323,10 @@ and auditable.
 - **E — decisions:** asset↔clip IR bridge (if derive-by-path proves insufficient);
   the app's bin-read surface over `media.collection.resolve`.
 
-**Gates:** golden JSON for each action; range round-trip determinism; collection
-query eval determinism; the bounds diagnostic fires on a broken fixture and is
-silent on the corpus.
+**Gates (A + B, green):** stable JSON for every action via the CLI subprocess
+(`tests/cli-media-ranges.test.ts`); pure frame-math unit tests
+(`tests/media-range-math.test.ts`) pin the clamp/round-trip; collection query eval
+is deterministic; full suite + `typecheck` + `biome` pass.
 
 ## Open decisions (need a call)
 

@@ -1721,6 +1721,232 @@ const actions = [
       return resolveRouteAlias(input.repo ?? ctx.project?.rootPath ?? ctx.cwd, input.alias) ?? null;
     },
   }),
+  // ─── Logged ranges, range-scoped labels, and saved-query collections ──────────
+  //     The layer between a cataloged file and a clip on the timeline. See DESIGN-MEDIA.md.
+  action({
+    id: "media.log-range",
+    title: "Log a Media Range",
+    description:
+      "Create a named sub-range (subclip) over a cataloged asset — shared bytes, its own in/out.",
+    aliases: ["subclip"],
+    input: z.object({
+      repo: z.string().optional(),
+      asset: z.string(),
+      in: frame,
+      out: frame,
+      name: z.string().optional(),
+      notes: z.string().optional(),
+      color: z.string().optional(),
+    }),
+    output: z.unknown(),
+    scopes: ["media:write", "state:write"],
+    effect: baseEffects.stateWrite,
+    surfaces: { cli: { command: "media log-range" }, mcp: { name: "media-log-range" } },
+    async execute(ctx, input) {
+      const { createLoggedRange } = await import("../state/media-ranges");
+      return createLoggedRange(repoFor(ctx, input.repo), {
+        asset: input.asset,
+        in: input.in,
+        out: input.out,
+        name: input.name,
+        notes: input.notes,
+        color: input.color,
+        provenance: { source: ctx.surface === "mcp" ? "agent" : "human", tool: "media.log-range" },
+      });
+    },
+  }),
+  action({
+    id: "media.label",
+    title: "Label Media",
+    description:
+      "Attach a range-scoped (or whole-asset) keyword, rating, role, marker, or note to an asset.",
+    input: z.object({
+      repo: z.string().optional(),
+      asset: z.string(),
+      kind: z.enum(["keyword", "rating", "role", "marker", "note", "custom"]),
+      value: z.string(),
+      in: frame.optional(),
+      out: frame.optional(),
+      color: z.string().optional(),
+      notes: z.string().optional(),
+    }),
+    output: z.unknown(),
+    scopes: ["media:write", "state:write"],
+    effect: baseEffects.stateWrite,
+    surfaces: { cli: { command: "media label" }, mcp: { name: "media-label" } },
+    async execute(ctx, input) {
+      const { addMediaLabel } = await import("../state/media-ranges");
+      return addMediaLabel(repoFor(ctx, input.repo), {
+        asset: input.asset,
+        kind: input.kind,
+        value: input.value,
+        in: input.in,
+        out: input.out,
+        color: input.color,
+        notes: input.notes,
+        provenance: { source: ctx.surface === "mcp" ? "agent" : "human", tool: "media.label" },
+      });
+    },
+  }),
+  action({
+    id: "media.rate",
+    title: "Rate Media",
+    description: "Mark an asset or a range of it as favorite or reject (sugar over media.label).",
+    input: z.object({
+      repo: z.string().optional(),
+      asset: z.string(),
+      rating: z.enum(["favorite", "reject"]),
+      in: frame.optional(),
+      out: frame.optional(),
+    }),
+    output: z.unknown(),
+    scopes: ["media:write", "state:write"],
+    effect: baseEffects.stateWrite,
+    surfaces: { cli: { command: "media rate" }, mcp: { name: "media-rate" } },
+    async execute(ctx, input) {
+      const { addMediaLabel } = await import("../state/media-ranges");
+      return addMediaLabel(repoFor(ctx, input.repo), {
+        asset: input.asset,
+        kind: "rating",
+        value: input.rating,
+        in: input.in,
+        out: input.out,
+        provenance: { source: ctx.surface === "mcp" ? "agent" : "human", tool: "media.rate" },
+      });
+    },
+  }),
+  action({
+    id: "media.marker",
+    title: "Mark Media",
+    description:
+      "Drop a marker (a zero-length range) at a frame of an asset (sugar over media.label).",
+    input: z.object({
+      repo: z.string().optional(),
+      asset: z.string(),
+      at: frame,
+      comment: z.string().optional(),
+      color: z.string().optional(),
+    }),
+    output: z.unknown(),
+    scopes: ["media:write", "state:write"],
+    effect: baseEffects.stateWrite,
+    surfaces: { cli: { command: "media marker" }, mcp: { name: "media-marker" } },
+    async execute(ctx, input) {
+      const { addMediaLabel } = await import("../state/media-ranges");
+      return addMediaLabel(repoFor(ctx, input.repo), {
+        asset: input.asset,
+        kind: "marker",
+        value: input.comment ?? "",
+        in: input.at,
+        out: input.at,
+        color: input.color,
+        provenance: { source: ctx.surface === "mcp" ? "agent" : "human", tool: "media.marker" },
+      });
+    },
+  }),
+  action({
+    id: "media.range.list",
+    title: "List Media Ranges",
+    description: "List logged ranges and labels, optionally filtered by asset, kind, or value.",
+    input: z.object({
+      repo: z.string().optional(),
+      asset: z.string().optional(),
+      kind: z.enum(["subclip", "keyword", "rating", "marker", "role", "note", "custom"]).optional(),
+      value: z.string().optional(),
+    }),
+    output: z.unknown(),
+    scopes: ["media:read", "state:read"],
+    effect: baseEffects.stateRead,
+    surfaces: { cli: { command: "media range list" }, mcp: { name: "media-range-list" } },
+    async execute(ctx, input) {
+      const { listMediaRanges } = await import("../state/media-ranges");
+      return listMediaRanges(repoFor(ctx, input.repo), {
+        asset: input.asset,
+        kind: input.kind,
+        value: input.value,
+      });
+    },
+  }),
+  action({
+    id: "media.range.remove",
+    title: "Remove a Media Range",
+    description: "Delete one logged range or label by id.",
+    input: z.object({ repo: z.string().optional(), id: z.string() }),
+    output: z.unknown(),
+    scopes: ["media:write", "state:write"],
+    effect: baseEffects.stateWrite,
+    surfaces: { cli: { command: "media range remove" }, mcp: { name: "media-range-remove" } },
+    async execute(ctx, input) {
+      const { deleteMediaRange } = await import("../state/media-ranges");
+      return deleteMediaRange(repoFor(ctx, input.repo), input.id) ?? null;
+    },
+  }),
+  action({
+    id: "media.collection.save",
+    title: "Save a Media Collection",
+    description: "Save a named live query over the catalog (the Smart Bin / Search Bin pattern).",
+    input: z.object({
+      repo: z.string().optional(),
+      name: z.string(),
+      query: z
+        .object({
+          assetKind: z.enum(["video", "audio", "image", "timeline"]).optional(),
+          rangeKind: z
+            .enum(["subclip", "keyword", "rating", "marker", "role", "note", "custom"])
+            .optional(),
+          value: z.string().optional(),
+          ratingAtLeast: z.enum(["favorite"]).optional(),
+          textContains: z.string().optional(),
+          durationMinSec: z.number().optional(),
+        })
+        .passthrough(),
+    }),
+    output: z.unknown(),
+    scopes: ["state:write"],
+    effect: baseEffects.stateWrite,
+    surfaces: {
+      cli: { command: "media collection save" },
+      mcp: { name: "media-collection-save" },
+    },
+    async execute(ctx, input) {
+      const { saveMediaCollection } = await import("../state/media-ranges");
+      return saveMediaCollection(repoFor(ctx, input.repo), input.name, input.query);
+    },
+  }),
+  action({
+    id: "media.collection.list",
+    title: "List Media Collections",
+    description: "List saved media collections (smart bins) for the project.",
+    input: repoInput,
+    output: z.unknown(),
+    scopes: ["state:read"],
+    effect: baseEffects.stateRead,
+    surfaces: {
+      cli: { command: "media collection list" },
+      mcp: { name: "media-collection-list" },
+    },
+    async execute(ctx, input) {
+      const { listMediaCollections } = await import("../state/media-ranges");
+      return listMediaCollections(repoFor(ctx, input.repo));
+    },
+  }),
+  action({
+    id: "media.collection.resolve",
+    title: "Resolve a Media Collection",
+    description: "Evaluate a saved collection to its matching assets and ranges (the bin read).",
+    input: z.object({ repo: z.string().optional(), name: z.string() }),
+    output: z.unknown(),
+    scopes: ["media:read", "state:read"],
+    effect: baseEffects.stateRead,
+    surfaces: {
+      cli: { command: "media collection resolve" },
+      mcp: { name: "media-collection-resolve" },
+    },
+    async execute(ctx, input) {
+      const { resolveMediaCollection } = await import("../state/media-ranges");
+      return resolveMediaCollection(repoFor(ctx, input.repo), input.name);
+    },
+  }),
   action({
     id: "worktree.whereami",
     title: "Where Am I",
