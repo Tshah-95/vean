@@ -128,6 +128,30 @@ so "the diagnostics are clean" never gets mistaken for "the cut looks right."
    `split`'s left half — names that in-session uuid in its inverse, so undo it
    within the session, before a serialize→parse reload renames it.)
 
+## Iterating a Remotion comp overlay — LIVE, never bake
+
+Step 7's `render + still` loop is for **footage / op** edits (melt renders those).
+A **Remotion comp overlay is different: it is a first-class LIVE entity**, and
+baking it to a `.mov` to preview is the anti-pattern the composition work exists
+to kill. (This bit hard on 2026-07-01 — a whole bake→melt-still rebuild loop;
+`DESIGN-LIVE-COMP-PREVIEW.md` is the contract.)
+
+- A comp overlay clip carries `composition:{id,props}` and a `cache/remotion/`
+  resource (or a `graphic:` label) → `isGraphicClip` (`viewer/src/types.ts`) → the
+  viewer renders the comp **live** via `@remotion/player` + the dynamic
+  `@project-comp` glob, with **HMR**. The `.mov` is consumed **only by melt at
+  EXPORT** — the live preview ignores it and reads `composition.id` from the IR.
+- **To iterate a comp: edit its `.tsx` and preview in the running viewer** via the
+  `drive` skill (`.agents/skills/drive/SKILL.md`) — headless: `bun run drive up
+  --project <project>` → `agent-browser … open $URL` → seek the scrubber (the
+  `slider` ref; `key End` jumps to the last frame) → `screenshot`. The edit
+  hot-reloads live; the playhead is preserved. **Do NOT `vean remotion render` /
+  bake or `render + still` to SEE a comp change** — that's the slow, stale-artifact
+  loop (a full ProRes bake per edit).
+- **Bake only for export:** `vean remotion render <id> --out
+  <project>/.vean/cache/remotion/<id>.mov --force` per comp, then `vean render
+  video` — done ONCE for a final deliverable, never during authoring.
+
 ## How code actions fit (auto-fixing a diagnostic)
 
 A diagnostic that has a single deterministic repair exposes an **LSP code action**
