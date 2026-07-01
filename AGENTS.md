@@ -293,6 +293,7 @@ parallel session safety rules above, never reverts unrelated work, and never use
 | improve project/media ergonomics | _(none yet — see DESIGN-MOVE3)_ | `src/actions/`, `src/state/`, Commander CLI, media catalog migrations |
 | build the local Mac app | _(none yet — Move 4)_ | `app/` (Tauri), action IPC, bundled renderer sidecars |
 | prove a material UI change works — drive the running app, screenshot/record a clip, verify the effect visually + structurally | `drive` (`.agents/skills/drive/SKILL.md`) | `bun run drive up` + `agent-browser` against the loopback viewer (live HMR by default — your current `viewer/` code; `--prod` serves the dist snapshot the shipped app renders); clips to `$TMPDIR`, referenced back in chat |
+| bring up the app so the HUMAN can click around this worktree's latest code (the sanctioned foreground-window path) | `view` (`.agents/skills/view/SKILL.md`) | `bun src/cli.ts open [project] --dev` (native Tauri dev window, live HMR of this checkout) or `--view browser` (instant, identical UI); launch backgrounded, report branch+project, step back — don't drive it (that's `drive`) |
 
 ### Keeping the resolver healthy
 
@@ -355,6 +356,7 @@ Mostly **planned** — implemented per Move. See [ROADMAP.md](ROADMAP.md).
 | Resolve a route alias | `vean route resolve media:raw` | Move 3 |
 | Verify local app scaffold | `bun run app:doctor` · `bun run app:doctor -- --native` | Move 4 seed |
 | Drive the app to prove a UI change (headless) | `bun run drive up` (live HMR; `--prod` for the dist snapshot) → `agent-browser --session "$(bun scripts/drive.ts name)" open "$(bun run drive url)"` → `bun run drive down` | now |
+| Bring up the app so the human can click around (`/view`) | `bun src/cli.ts open [project] --dev` (native dev window, this worktree's live viewer) · `bun src/cli.ts open [project] --view browser` (instant browser tab) | now |
 
 ## System deps (not bun packages)
 

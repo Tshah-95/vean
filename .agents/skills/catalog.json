@@ -28,6 +28,15 @@
       "path": ".agents/skills/setup/SKILL.md",
       "tags": ["setup", "install", "doctor"],
       "surfaces": ["cli", "lsp", "mcp"]
+    },
+    {
+      "id": "view",
+      "title": "Bring up the vean app so the human can click around",
+      "description": "Bring up the vean app on THIS worktree's latest code so the human can click around — launch the native Tauri dev window (or a browser tab) on the current project or one you name, live-reloading this checkout's viewer. Use when the user says /view, \"open the app\", \"let me see it\", \"bring up the editor\", or wants to poke at a change themselves. This is the sanctioned foreground-window path — the human-facing sibling of the headless `drive` skill (which proves a change with a clip). Takes an optional project path/name/title to open something specific.",
+      "version": "1.0.0",
+      "path": ".agents/skills/view/SKILL.md",
+      "tags": ["ui", "app", "tauri"],
+      "surfaces": ["tauri", "cli"]
     }
   ]
 }

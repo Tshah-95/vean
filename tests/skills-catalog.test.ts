@@ -137,7 +137,7 @@ describe("skills catalog", () => {
     expect(catalog.version).toMatch(/^\d+\.\d+\.\d+$/);
     expect(catalog.skills.length).toBeGreaterThanOrEqual(3);
     const ids = catalog.skills.map((s) => s.id);
-    expect(ids).toEqual(["drive", "editing", "setup"]); // stable id order
+    expect(ids).toEqual(["drive", "editing", "setup", "view"]); // stable id order
   });
 
   it("every catalog entry points at a real SKILL.md whose frontmatter matches", () => {
@@ -162,9 +162,9 @@ describe("skills catalog", () => {
 
   it("skills.list returns the catalog (and filters by tag)", async () => {
     const all = await run<{ count: number; skills: { id: string }[] }>("skills.list", repoRoot, {});
-    expect(all.count).toBe(3);
+    expect(all.count).toBe(4);
     const ui = await run<{ skills: { id: string }[] }>("skills.list", repoRoot, { tag: "ui" });
-    expect(ui.skills.map((s) => s.id)).toEqual(["drive"]);
+    expect(ui.skills.map((s) => s.id)).toEqual(["drive", "view"]);
   });
 
   it("skills.install dry-runs and then copies the SKILL.md into a host dir", async () => {
@@ -235,6 +235,6 @@ describe("skills catalog", () => {
     );
     expect(res.ok).toBe(false);
     expect(res.kind).toBe("unknown-skill");
-    expect(res.available).toEqual(["drive", "editing", "setup"]);
+    expect(res.available).toEqual(["drive", "editing", "setup", "view"]);
   });
 });
