@@ -4,6 +4,7 @@
 // returns the content.
 import { Scissors } from "lucide-react";
 import { Eyebrow } from "@/components/ui/eyebrow";
+import { useSource } from "../../SourceProvider";
 import type { Fps, Timeline } from "../../types";
 import type { TimelineEditor } from "../../useTimelineEditor";
 
@@ -57,9 +58,26 @@ export function RightPanel({
   const clip = selectedClip(editor.timeline, editor.selectedId);
   const audioStreams = clip?.audioStreams;
   const hasAudio = clip?.hasAudio ?? (audioStreams != null && audioStreams > 0);
+  const { source, range } = useSource();
 
   return (
     <>
+      {/* The MEDIA item loaded in the source monitor (when one is selected). */}
+      {source ? (
+        <>
+          <Eyebrow>Media</Eyebrow>
+          <div className="mt-2">
+            <div className="mb-2 truncate text-xs text-foreground" title={source.path}>
+              {source.name}
+            </div>
+            <Row label="kind" value={source.kind} />
+            {range ? <Row label="in → out" value={`${range.in} → ${range.out}`} /> : null}
+            {range ? <Row label="span" value={`${range.out - range.in + 1}f`} tone="gold" /> : null}
+          </div>
+          <div className="my-3 border-t border-sidebar-border" />
+        </>
+      ) : null}
+
       <Eyebrow>Inspector</Eyebrow>
       {clip ? (
         <div className="mt-2">

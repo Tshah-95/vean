@@ -1,7 +1,14 @@
-// Transport: play/pause, a frame scrubber, and the timecode readout. Every
-// control writes through the master clock (clock.play/pause/seekTo) — the clock
-// is the only writer of currentFrame; the <video> and <Player> follow.
-import { useEffect, useState } from "react";
+// Transport: play/pause + the timecode readout + one audio control. Every control
+// writes through the master clock (clock.play/pause) — the clock is the only
+// writer of currentFrame; the <video> and <Player> follow.
+//
+// Deliberately MINIMAL: there is no scrub slider here — the TIMELINE is the scrub
+// surface and the source of truth for position (the ruler seeks; this bar plays).
+// No frame counter either; the timecode carries it. Audio is ONE speaker button
+// whose popover holds the vertical volume slider, mute, and the output device —
+// zero standing horizontal footprint.
+import { Pause, Play, Volume2, VolumeX } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { useClock, useClockInstance } from "../ClockProvider";
 import type { Fps } from "../types";
 
@@ -42,11 +49,10 @@ export function Transport({
 }: TransportProps) {
   const clock = useClock();
   const instance = useClockInstance();
-  const lastFrame = Math.max(0, clock.totalFrames - 1);
+  const [audioOpen, setAudioOpen] = useState(false);
+  const popRef = useRef<HTMLDivElement>(null);
 
-  // Enumerate audio OUTPUT devices for the sink picker. Labels may be generic
-  // until the user grants media permission (browser privacy) — fall back to a
-  // numbered name so the picker is still usable.
+  // Enumerate audio OUTPUT devices for the sink picker (inside the popover).
   const [outputs, setOutputs] = useState<Array<{ id: string; label: string }>>([]);
   useEffect(() => {
     if (!SINK_SUPPORTED || !navigator.mediaDevices?.enumerateDevices) return;
@@ -70,13 +76,25 @@ export function Transport({
     };
   }, []);
 
+  // Dismiss the audio popover on an outside pointerdown.
+  useEffect(() => {
+    if (!audioOpen) return;
+    const onDown = (e: PointerEvent) => {
+      if (popRef.current && !popRef.current.contains(e.target as Node)) setAudioOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown);
+    return () => window.removeEventListener("pointerdown", onDown);
+  }, [audioOpen]);
+
+  const audioOff = muted || volume === 0;
+
   return (
     <div
       style={{
         display: "flex",
         alignItems: "center",
         gap: 12,
-        padding: "10px 16px",
+        padding: "8px 14px",
         borderTop: "1px solid #1b1e26",
         borderBottom: "1px solid #1b1e26",
         background: "#0d0f14",
@@ -85,115 +103,148 @@ export function Transport({
       <button
         type="button"
         onClick={() => instance.toggle()}
-        style={{
-          width: 38,
-          height: 32,
-          borderRadius: 6,
-          border: "1px solid #2a2e3a",
-          background: clock.playing ? "#c7ae7a" : "#161922",
-          color: clock.playing ? "#0b0c0f" : "#e6e8ee",
-          cursor: "pointer",
-          fontSize: 14,
-          fontWeight: 700,
-        }}
         aria-label={clock.playing ? "Pause" : "Play"}
+        title={`${clock.playing ? "Pause" : "Play"} ( space )`}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 30,
+          height: 26,
+          borderRadius: 5,
+          border: "none",
+          background: clock.playing ? "#c7ae7a" : "transparent",
+          color: clock.playing ? "#0b0c0f" : "#E6E3DA",
+          cursor: "pointer",
+        }}
       >
-        {clock.playing ? "❚❚" : "▶"}
+        {clock.playing ? <Pause size={15} strokeWidth={1.75} /> : <Play size={15} strokeWidth={1.75} />}
       </button>
 
-      <input
-        type="range"
-        min={0}
-        max={lastFrame}
-        step={1}
-        value={clock.currentFrame}
-        onMouseDown={() => instance.pause()}
-        onChange={(e) => instance.seekTo(Number(e.target.value))}
-        style={{ flex: 1, accentColor: "#c7ae7a", cursor: "pointer" }}
-      />
-
+      <span style={{ flex: 1 }} />
       <div
         style={{
           fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
           fontSize: 13,
-          color: "#c7c9d1",
-          minWidth: 96,
-          textAlign: "right",
+          color: "#E6E3DA",
         }}
       >
         {timecode(clock.currentFrame, clock.fps)}
       </div>
-      <div
-        style={{
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-          fontSize: 12,
-          color: "#6b7280",
-          minWidth: 84,
-        }}
-      >
-        f{clock.currentFrame} / {lastFrame}
-      </div>
+      <span style={{ flex: 1 }} />
 
-      <button
-        type="button"
-        onClick={() => onMutedChange(!muted)}
-        aria-label={muted ? "Unmute" : "Mute"}
-        title={muted ? "Unmute" : "Mute"}
-        style={{
-          width: 34,
-          height: 30,
-          borderRadius: 6,
-          border: "1px solid #2a2e3a",
-          background: "#161922",
-          color: muted ? "#6b7280" : "#e6e8ee",
-          cursor: "pointer",
-          fontSize: 14,
-        }}
-      >
-        {muted || volume === 0 ? "🔇" : "🔊"}
-      </button>
-      <input
-        type="range"
-        min={0}
-        max={1}
-        step={0.01}
-        value={muted ? 0 : volume}
-        onChange={(e) => {
-          const v = Number(e.target.value);
-          onVolumeChange(v);
-          if (v > 0 && muted) onMutedChange(false);
-        }}
-        aria-label="Volume"
-        title="Volume"
-        style={{ width: 88, accentColor: "#c7ae7a", cursor: "pointer" }}
-      />
-
-      {SINK_SUPPORTED && outputs.length > 0 && (
-        <select
-          value={sinkId}
-          onChange={(e) => onSinkChange(e.target.value)}
-          aria-label="Audio output device"
-          title="Audio output device"
+      {/* Audio — one icon; volume (vertical) + mute + output device live in the popover. */}
+      <div ref={popRef} style={{ position: "relative" }}>
+        <button
+          type="button"
+          onClick={() => setAudioOpen((o) => !o)}
+          aria-label="Audio"
+          aria-expanded={audioOpen}
+          title="Volume + audio output"
           style={{
-            height: 30,
-            maxWidth: 150,
-            borderRadius: 6,
-            border: "1px solid #2a2e3a",
-            background: "#161922",
-            color: "#c7c9d1",
-            fontSize: 12,
-            padding: "0 6px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 28,
+            height: 24,
+            borderRadius: 5,
+            border: "none",
+            background: audioOpen ? "#1b1e23" : "transparent",
+            color: audioOff ? "#6B716A" : "#9BA39B",
             cursor: "pointer",
           }}
         >
-          <option value="">System default</option>
-          {outputs.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      )}
+          {audioOff ? <VolumeX size={15} strokeWidth={1.75} /> : <Volume2 size={15} strokeWidth={1.75} />}
+        </button>
+        {audioOpen ? (
+          <div
+            style={{
+              position: "absolute",
+              bottom: 30,
+              right: 0,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 8,
+              padding: "10px 8px 8px",
+              borderRadius: 8,
+              border: "1px solid #262a2e",
+              background: "#131519",
+              boxShadow: "0 12px 28px -16px rgba(0,0,0,0.6)",
+              zIndex: 20,
+            }}
+          >
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={muted ? 0 : volume}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                onVolumeChange(v);
+                if (v > 0 && muted) onMutedChange(false);
+              }}
+              aria-label="Volume"
+              // Vertical slider — both the modern and the WebKit spelling.
+              style={{
+                writingMode: "vertical-lr",
+                direction: "rtl",
+                WebkitAppearance: "slider-vertical",
+                width: 18,
+                height: 84,
+                accentColor: "#c7ae7a",
+                cursor: "pointer",
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => onMutedChange(!muted)}
+              aria-label={muted ? "Unmute" : "Mute"}
+              title={muted ? "Unmute" : "Mute"}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 26,
+                height: 22,
+                borderRadius: 4,
+                border: "none",
+                background: "transparent",
+                color: muted ? "#c7ae7a" : "#9BA39B",
+                cursor: "pointer",
+              }}
+            >
+              {muted ? <VolumeX size={14} strokeWidth={1.75} /> : <Volume2 size={14} strokeWidth={1.75} />}
+            </button>
+            {SINK_SUPPORTED && outputs.length > 0 ? (
+              <select
+                value={sinkId}
+                onChange={(e) => onSinkChange(e.target.value)}
+                aria-label="Audio output device"
+                title="Audio output device"
+                style={{
+                  maxWidth: 130,
+                  borderRadius: 5,
+                  border: "1px solid #262a2e",
+                  background: "#0c0d0f",
+                  color: "#9BA39B",
+                  fontSize: 11,
+                  padding: "3px 4px",
+                  cursor: "pointer",
+                }}
+              >
+                <option value="">System default</option>
+                {outputs.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

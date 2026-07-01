@@ -5,16 +5,18 @@
 // working IR at the playhead and seeks per-source `<video>`s — NO `melt` proxy, no
 // save (DESIGN-LIVE-PREVIEW §6 Tier 0). All preview layers are slaved to the one
 // master clock (see ClockProvider + PreviewPane).
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchDiagnostics, fetchProjects, fetchTimeline, type ProjectEntry } from "./api";
 import { ClockProvider, useClockInstance } from "./ClockProvider";
 import { installDecodeBridge } from "./decode/debugBridge";
 import { PreviewPane } from "./components/PreviewPane";
 import { AppShell } from "./components/shell/AppShell";
 import { RightPanel } from "./components/shell/RightPanel";
+import { SourcePreview } from "./components/SourcePreview";
 import { TimelineStrip } from "./components/TimelineStrip";
 import { Transport } from "./components/Transport";
 import { PreviewProvider } from "./PreviewProvider";
+import { SourceProvider, useSource } from "./SourceProvider";
 import type { TimelineResponse } from "./types";
 import { useTimelineEditor } from "./useTimelineEditor";
 
@@ -166,6 +168,37 @@ function Stage({
 }) {
   const clock = useClockInstance();
   const editor = useTimelineEditor(data.timeline, data.totalFrames, route);
+  const { source, monitor, setMonitor } = useSource();
+  const showSource = monitor === "source" && source != null;
+
+  // MONITOR-side track mute/hide (view state, not the document): the eye/speaker
+  // toggles in the track headers. Muted tracks are handed to the compositor/mixer
+  // as EMPTY, so the monitor skips them while the timeline + document keep them.
+  const [previewMuted, setPreviewMuted] = useState<Set<string>>(new Set());
+  // The compositor repaints on `(currentFrame, revision)` — a mute toggle changes
+  // WHAT to draw without an edit, so it must bump the revision the monitor sees.
+  const [viewRev, setViewRev] = useState(0);
+  const onTogglePreviewMute = useCallback((trackId: string) => {
+    setPreviewMuted((prev) => {
+      const next = new Set(prev);
+      if (next.has(trackId)) next.delete(trackId);
+      else next.add(trackId);
+      return next;
+    });
+    setViewRev((r) => r + 1);
+  }, []);
+  const viewTimeline = useMemo(() => {
+    if (previewMuted.size === 0) return editor.timeline;
+    const blank = (t: (typeof editor.timeline.tracks.video)[number]) =>
+      previewMuted.has(t.id) ? { ...t, items: [] } : t;
+    return {
+      ...editor.timeline,
+      tracks: {
+        video: editor.timeline.tracks.video.map(blank),
+        audio: editor.timeline.tracks.audio.map(blank),
+      },
+    };
+  }, [editor.timeline, previewMuted]);
 
   // Keep the master clock's total-frame bound in step with the working IR: a
   // ripple/trim that changes the timeline length must move the playhead's clamp so
@@ -249,25 +282,64 @@ function Stage({
       currentResolvedPath={data.resolvedPath}
       preview={
         <>
-          <PreviewPane
-            width={data.profile.width}
-            height={data.profile.height}
-            fps={data.fps}
-            timeline={editor.timeline}
-            revision={editor.revision}
-            route={route}
-            volume={volume}
-            muted={muted}
-            sinkId={sinkId}
-          />
-          <Transport
-            volume={volume}
-            muted={muted}
-            onVolumeChange={onVolumeChange}
-            onMutedChange={onMutedChange}
-            sinkId={sinkId}
-            onSinkChange={onSinkChange}
-          />
+          {/* Monitor tabs — Program (the timeline) | Source (the selected media). */}
+          {source ? (
+            <div style={{ display: "flex", gap: 2, padding: "6px 12px 0", fontSize: 11 }}>
+              {(["program", "source"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMonitor(m)}
+                  aria-current={monitor === m ? "true" : undefined}
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    color: monitor === m ? "#E6E3DA" : "#6B716A",
+                    borderBottom: monitor === m ? "2px solid #c7ae7a" : "2px solid transparent",
+                    padding: "2px 8px 4px",
+                    cursor: "pointer",
+                    fontSize: 11,
+                  }}
+                >
+                  {m === "program" ? "Program" : source.name}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {/* The program monitor stays MOUNTED while Source shows (decode caches
+              stay warm) — it's just not displayed. */}
+          <div
+            style={{
+              display: showSource ? "none" : "flex",
+              flexDirection: "column",
+              flex: 1,
+              minHeight: 0,
+            }}
+          >
+            <PreviewPane
+              width={data.profile.width}
+              height={data.profile.height}
+              fps={data.fps}
+              timeline={viewTimeline}
+              // Edit revision ⊕ view revision: either an edit OR a monitor mute/hide
+              // toggle repaints. Edits are sparse ints, so a large stride keeps the
+              // combined value monotonic-unique for both.
+              revision={editor.revision + viewRev * 1_000_000}
+              route={route}
+              volume={volume}
+              muted={muted}
+              sinkId={sinkId}
+            />
+            <Transport
+              volume={volume}
+              muted={muted}
+              onVolumeChange={onVolumeChange}
+              onMutedChange={onMutedChange}
+              sinkId={sinkId}
+              onSinkChange={onSinkChange}
+            />
+          </div>
+          {showSource ? <SourcePreview route={route} /> : null}
         </>
       }
       inspector={
@@ -278,7 +350,13 @@ function Stage({
           videoHeight={data.profile.height}
         />
       }
-      timeline={<TimelineStrip editor={editor} />}
+      timeline={
+        <TimelineStrip
+          editor={editor}
+          previewMuted={previewMuted}
+          onTogglePreviewMute={onTogglePreviewMute}
+        />
+      }
     />
   );
 }
@@ -295,7 +373,9 @@ export function App() {
   return (
     <ClockProvider>
       <PreviewProvider>
-        <Viewer route={route} />
+        <SourceProvider>
+          <Viewer route={route} />
+        </SourceProvider>
       </PreviewProvider>
     </ClockProvider>
   );

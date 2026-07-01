@@ -6,6 +6,7 @@
 // Scan / add-root (catalog setup) stay tucked at the bottom.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchTimeline, mediaUrl, runAction } from "../../api";
+import { MEDIA_DRAG_MIME, type MediaDragPayload, useSource } from "../../SourceProvider";
 import { type Fps, isGraphicClip, type Timeline } from "../../types";
 import { Btn, C, Note, fieldStyle, mono, rowStyle } from "./ui";
 
@@ -89,10 +90,40 @@ function projectSources(timeline: Timeline): { sources: ProjectSource[]; fps: Fp
   return { sources, fps: timeline.profile.fps };
 }
 
-/** A hover-to-play tile for a visual source (streams the real file). */
-function SourceTile({ src, route, fps }: { src: ProjectSource; route?: string; fps: Fps }) {
+/** A hover-to-play tile for a visual source (streams the real file). Click loads it
+ *  into the SOURCE monitor (pick a span there); drag places the whole clip on a
+ *  timeline track directly. */
+function SourceTile({
+  src,
+  route,
+  fps,
+  onSelect,
+}: {
+  src: ProjectSource;
+  route?: string;
+  fps: Fps;
+  onSelect: () => void;
+}) {
+  const fpsWhole = Math.max(1, Math.round(fps[0] / fps[1]));
   return (
-    <div title={src.path} style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
+    // biome-ignore lint/a11y/useKeyWithClickEvents: tiles are pointer affordances; the panel stays keyboard-reachable via the list
+    <div
+      title={`${src.path}\nclick → source monitor · drag → timeline`}
+      onClick={onSelect}
+      draggable
+      onDragStart={(e) => {
+        const v = (e.currentTarget as HTMLElement).querySelector("video");
+        if (!v || !Number.isFinite(v.duration) || v.duration <= 0) {
+          e.preventDefault(); // metadata not in yet — click into the source monitor instead
+          return;
+        }
+        const durF = Math.max(1, Math.round(v.duration * fpsWhole));
+        const payload: MediaDragPayload = { path: src.path, name: src.name, kind: src.kind, in: 0, out: durF - 1 };
+        e.dataTransfer.setData(MEDIA_DRAG_MIME, JSON.stringify(payload));
+        e.dataTransfer.effectAllowed = "copy";
+      }}
+      style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0, cursor: "pointer" }}
+    >
       <div
         style={{
           position: "relative",
@@ -152,6 +183,7 @@ function SourceTile({ src, route, fps }: { src: ProjectSource; route?: string; f
 }
 
 export function MediaPanel({ project, route }: { project?: string; route?: string }) {
+  const { select } = useSource();
   const [timeline, setTimeline] = useState<Timeline | null>(null);
   const [results, setResults] = useState<MediaAsset[] | null>(null); // null = no search yet
   const [query, setQuery] = useState("");
@@ -291,13 +323,25 @@ export function MediaPanel({ project, route }: { project?: string; route?: strin
                 }}
               >
                 {tiles.map((s) => (
-                  <SourceTile key={s.path} src={s} route={route} fps={inProject.fps} />
+                  <SourceTile
+                    key={s.path}
+                    src={s}
+                    route={route}
+                    fps={inProject.fps}
+                    onSelect={() => select({ path: s.path, name: s.name, kind: s.kind })}
+                  />
                 ))}
               </div>
             ) : null}
             {audio.length > 0 && inProject
               ? audio.map((s, i) => (
-                  <div key={s.path} style={rowStyle(i)} title={s.path}>
+                  // biome-ignore lint/a11y/useKeyWithClickEvents: pointer affordance; source monitor reachable from tiles too
+                  <div
+                    key={s.path}
+                    style={{ ...rowStyle(i), cursor: "pointer" }}
+                    title={`${s.path}\nclick → source monitor (pick a span, then drag to the timeline)`}
+                    onClick={() => select({ path: s.path, name: s.name, kind: s.kind })}
+                  >
                     <span
                       style={{
                         width: 8,

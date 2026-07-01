@@ -18,10 +18,25 @@
 // solves scale = paneWidth/totalFrames ONCE, not a live binding. We fit on load and
 // on document change, then leave it alone. The ruler picks a "nice" interval + label
 // format from the current scale.
-import { AudioLines, Expand, Film, Magnet, Redo2, Slice, Undo2, ZoomIn, ZoomOut } from "lucide-react";
+import {
+  AudioLines,
+  Expand,
+  Eye,
+  EyeOff,
+  Film,
+  Magnet,
+  Redo2,
+  Slice,
+  Undo2,
+  Volume2,
+  VolumeX,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useClockInstance } from "../ClockProvider";
 import { usePreviewInstance } from "../PreviewProvider";
+import { MEDIA_DRAG_MIME, type MediaDragPayload } from "../SourceProvider";
 import { buildDragPreview } from "../dragPreview";
 import {
   type Gesture,
@@ -38,7 +53,7 @@ import type { TimelineEditor } from "../useTimelineEditor";
 import { ClipBlock } from "./ClipBlock";
 import { Playhead } from "./Playhead";
 
-const GUTTER = 76; // wider: room for a type icon + the track name in the header
+const GUTTER = 104; // header column: type icon + name + the eye/mute toggles
 // Per-kind track heights (variable — video taller for a thumbnail-ready lane, audio
 // medium for a waveform). The pointer→track math walks cumulative offsets (below),
 // NOT a single uniform row height, so the drag/trim/move gestures still hit the
@@ -60,9 +75,21 @@ const TRAIL_SLACK_PX = 320;
 
 export interface TimelineStripProps {
   editor: TimelineEditor;
+  /** Track ids muted/hidden in the MONITOR (view state, not the document): a video
+   *  track's eye hides its layers; an audio track's speaker silences it. */
+  previewMuted: Set<string>;
+  onTogglePreviewMute: (trackId: string) => void;
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+/** DISPLAY order of the tracks — the pro-NLE stack: video tracks TOP-of-compositing
+ *  first (V(n)…V1 downward, since the serializer emits `[...video, ...audio]` and
+ *  MLT composites LATER multitrack entries on top), then audio A1…A(n) downward.
+ *  Every pointer↔track mapping and the render itself use this one order. */
+function displayTracks(timeline: { tracks: { video: Track[]; audio: Track[] } }): Track[] {
+  return [...timeline.tracks.video].reverse().concat(timeline.tracks.audio);
+}
 
 /** Resolve which track lane a local Y (relative to the lanes' top — i.e. already
  *  past the ruler) falls in, by walking the ordered tracks' cumulative heights.
@@ -129,7 +156,7 @@ interface DragState {
 /** Pointer travel (px) before a pointerdown becomes a DRAG. Below this it's a click. */
 const DRAG_THRESHOLD_PX = 4;
 
-export function TimelineStrip({ editor }: TimelineStripProps) {
+export function TimelineStrip({ editor, previewMuted, onTogglePreviewMute }: TimelineStripProps) {
   const { timeline, totalFrames, selectedId, diagnosticsByClip } = editor;
   const clock = useClockInstance();
   // The drag-preview channel to the footage stage: push a compositor override on
@@ -386,7 +413,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
       // Which track lane is the pointer over? The rows follow the ruler, ROW_HEIGHT
       // each, video tracks then audio. Used ONLY by a MOVE to pick the target track.
       const laneEl = laneRef.current;
-      const orderedTracks: Track[] = [...timeline.tracks.video, ...timeline.tracks.audio];
+      const orderedTracks: Track[] = displayTracks(timeline);
       let pointerTrack: Track | null = null;
       let gutterZone: "top" | "bottom" | null = null;
       if (laneEl) {
@@ -472,7 +499,11 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
       // Gutter drop → create a new track of the clip's kind, then move onto it.
       if (d.gesture.tool === "move" && d.newTrack) {
         const kind = d.newTrack === "top" ? "video" : "audio";
-        const position = d.newTrack === "top" ? "top" : "bottom";
+        // The VISUAL top = the compositing top = the LAST entry of tracks.video (the
+        // serializer emits [...video, ...audio] and MLT stacks later entries on top),
+        // which is addTrack's `position: "bottom"` (append). The op's arg names the
+        // ARRAY end, not the visual stack. Audio always appends (= visual bottom).
+        const position = "bottom";
         const newId = crypto.randomUUID();
         const toPosition = Math.max(0, d.gesture.placed.start + d.dxFrames);
         void (async () => {
@@ -518,6 +549,42 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
     editor.select(null);
   }, [editor]);
 
+  // A media drag (from the Media panel or the source monitor) dropped on a lane →
+  // place exactly the carried span via the overwrite op at the drop frame.
+  const onMediaDrop = useCallback(
+    (track: Track, e: React.DragEvent, laneEl: HTMLElement) => {
+      const raw = e.dataTransfer.getData(MEDIA_DRAG_MIME);
+      if (!raw) return;
+      e.preventDefault();
+      let payload: MediaDragPayload;
+      try {
+        payload = JSON.parse(raw) as MediaDragPayload;
+      } catch {
+        return;
+      }
+      // Kind guard: audio sources land on audio lanes; video/graphic on video lanes.
+      if ((payload.kind === "audio") !== (track.kind === "audio")) return;
+      const rect = laneEl.getBoundingClientRect();
+      const position = Math.max(0, Math.round((e.clientX - rect.left) / pxPerFrame));
+      void editor.commit({
+        op: "overwrite",
+        args: {
+          track: { trackId: track.id },
+          clip: {
+            kind: "clip",
+            id: crypto.randomUUID(),
+            resource: payload.path,
+            in: payload.in,
+            out: payload.out,
+            filters: [],
+          },
+          position,
+        },
+      });
+    },
+    [editor, pxPerFrame],
+  );
+
   // Blade — split the selected clip at the current playhead frame (the button; the
   // B key wires the same op in App's edit keyboard).
   const onBlade = useCallback(() => {
@@ -533,10 +600,14 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
     [pxPerFrame, fpsWhole],
   );
   const ticks = useMemo(() => {
+    // Label the WHOLE visible timeline (content + the trailing open workspace), not
+    // just to the last clip — the timeline is a standing entity, its ruler doesn't
+    // stop where the video happens to end (Premiere behavior).
+    const extentFrames = totalFrames + Math.ceil(TRAIL_SLACK_PX / pxPerFrame);
     const out: Array<{ frame: number; text: string }> = [];
-    for (let f = 0; f <= totalFrames; f += framesPerTick) out.push({ frame: f, text: label(f) });
+    for (let f = 0; f <= extentFrames; f += framesPerTick) out.push({ frame: f, text: label(f) });
     return out;
-  }, [totalFrames, framesPerTick, label]);
+  }, [totalFrames, framesPerTick, label, pxPerFrame]);
 
   const cursor = drag ? cursorFor(drag.gesture.tool) : "default";
 
@@ -628,7 +699,18 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
             onPointerUp={onRulerPointerUp}
             onPointerLeave={onRulerPointerUp}
           >
-            <div style={{ width: GUTTER, flex: "0 0 auto", background: "#0d0f14", borderRight: "1px solid #1b1e26", cursor: "default" }} />
+            <div
+              style={{
+                width: GUTTER,
+                flex: "0 0 auto",
+                position: "sticky",
+                left: 0,
+                zIndex: 7,
+                background: "#0d0f14",
+                borderRight: "1px solid #1b1e26",
+                cursor: "default",
+              }}
+            />
             <div style={{ position: "relative", flex: 1 }}>
               {ticks.map((t) => (
                 <div
@@ -654,9 +736,10 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
             </div>
           </div>
 
-          {/* Tracks: video (top) then audio, bracketed by gutter drop-zones. */}
+          {/* Tracks in DISPLAY order — V(n)…V1 (compositing top first), then A1…A(n) —
+              bracketed by the new-track gutter drop-zones. */}
           <GutterDropZone side="top" active={drag?.newTrack === "top"} />
-          {timeline.tracks.video.map((track) => (
+          {displayTracks(timeline).map((track) => (
             <TrackLane
               key={track.id}
               track={track}
@@ -667,19 +750,9 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
               onClipPointerDown={onClipPointerDown}
               onBackgroundPointerDown={onLaneBackgroundPointerDown}
               route={editor.route}
-            />
-          ))}
-          {timeline.tracks.audio.map((track) => (
-            <TrackLane
-              key={track.id}
-              track={track}
-              pxPerFrame={pxPerFrame}
-              selectedId={selectedId}
-              diagnosticsByClip={diagnosticsByClip}
-              drag={drag}
-              onClipPointerDown={onClipPointerDown}
-              onBackgroundPointerDown={onLaneBackgroundPointerDown}
-              route={editor.route}
+              previewMuted={previewMuted.has(track.id)}
+              onToggleMute={() => onTogglePreviewMute(track.id)}
+              onMediaDrop={onMediaDrop}
             />
           ))}
           <GutterDropZone side="bottom" active={drag?.newTrack === "bottom"} />
@@ -740,19 +813,32 @@ function CtiHandle({ pxPerFrame }: { pxPerFrame: number }) {
 function GutterDropZone({ side, active }: { side: "top" | "bottom"; active: boolean }) {
   const edge = active ? "1px dashed #c7ae7a" : "1px dashed rgba(230,227,218,0.07)";
   return (
-    <div
-      title={
-        side === "top"
-          ? "drop a video clip here → new video track above"
-          : "drop an audio clip here → new audio track below"
-      }
-      style={{
-        height: GUTTER_H,
-        marginLeft: GUTTER,
-        background: active ? "rgba(199,174,122,0.15)" : "transparent",
-        ...(side === "top" ? { borderBottom: edge } : { borderTop: edge }),
-      }}
-    />
+    <div style={{ display: "flex", height: GUTTER_H }}>
+      {/* frozen spacer under the header column */}
+      <div
+        style={{
+          width: GUTTER,
+          flex: "0 0 auto",
+          position: "sticky",
+          left: 0,
+          zIndex: 7,
+          background: "#0d0f14",
+          borderRight: "1px solid #1b1e26",
+        }}
+      />
+      <div
+        title={
+          side === "top"
+            ? "drop a video clip here → new video track above"
+            : "drop an audio clip here → new audio track below"
+        }
+        style={{
+          flex: 1,
+          background: active ? "rgba(199,174,122,0.15)" : "transparent",
+          ...(side === "top" ? { borderBottom: edge } : { borderTop: edge }),
+        }}
+      />
+    </div>
   );
 }
 
@@ -769,6 +855,11 @@ interface TrackLaneProps {
   onBackgroundPointerDown: () => void;
   /** Active route — passed to ClipBlock so audio clips can fetch their waveform. */
   route?: string;
+  /** Monitor mute/hide state for this track + its toggle (view state, not the doc). */
+  previewMuted: boolean;
+  onToggleMute: () => void;
+  /** A media drag dropped on this lane (from the Media panel / source monitor). */
+  onMediaDrop: (track: Track, e: React.DragEvent, laneEl: HTMLElement) => void;
 }
 
 function TrackLane({
@@ -780,22 +871,31 @@ function TrackLane({
   onClipPointerDown,
   onBackgroundPointerDown,
   route,
+  previewMuted,
+  onToggleMute,
+  onMediaDrop,
 }: TrackLaneProps) {
   const placed = placeItems(track);
   const label = track.name ?? track.id;
   const previewed = applyPreview(placed, drag);
+  const MuteIcon = track.kind === "audio" ? (previewMuted ? VolumeX : Volume2) : previewMuted ? EyeOff : Eye;
 
   return (
     <div style={{ display: "flex", height: trackH(track), borderBottom: "1px solid #14171f" }}>
+      {/* FROZEN header column — sticky against horizontal scroll; the lanes slide
+          under it (the Premiere frozen-gutter feel). */}
       <div
         style={{
           width: GUTTER,
           flex: "0 0 auto",
+          position: "sticky",
+          left: 0,
+          zIndex: 7,
           display: "flex",
           alignItems: "center",
           gap: 6,
           paddingLeft: 10,
-          paddingRight: 6,
+          paddingRight: 4,
           fontSize: 11,
           fontFamily: "ui-monospace, monospace",
           color: track.kind === "audio" ? "#7fd9c0" : "#9ab4d9",
@@ -809,12 +909,56 @@ function TrackLane({
         ) : (
           <Film size={13} strokeWidth={1.75} style={{ flexShrink: 0 }} />
         )}
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+        <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {label}
+        </span>
+        <button
+          type="button"
+          onClick={onToggleMute}
+          aria-pressed={previewMuted}
+          aria-label={
+            track.kind === "audio"
+              ? previewMuted
+                ? "Unmute track in the monitor"
+                : "Mute track in the monitor"
+              : previewMuted
+                ? "Show track in the monitor"
+                : "Hide track in the monitor"
+          }
+          title={
+            track.kind === "audio"
+              ? "Mute this track in the monitor"
+              : "Hide this track in the monitor"
+          }
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 20,
+            height: 18,
+            borderRadius: 4,
+            border: "none",
+            background: "transparent",
+            color: previewMuted ? "#c7ae7a" : "#6B716A",
+            cursor: "pointer",
+            flexShrink: 0,
+          }}
+        >
+          <MuteIcon size={13} strokeWidth={1.75} />
+        </button>
       </div>
-      {/* Lane background: a pointerdown here (not on a clip) deselects. */}
+      {/* Lane background: a pointerdown here (not on a clip) deselects. Also the
+          drop target for media drags (Media panel tiles / the source monitor chip). */}
       <div
-        style={{ position: "relative", flex: 1, background: "#0a0b0f" }}
+        style={{ position: "relative", flex: 1, background: "#0a0b0f", opacity: previewMuted ? 0.45 : 1 }}
         onPointerDown={onBackgroundPointerDown}
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes(MEDIA_DRAG_MIME)) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "copy";
+          }
+        }}
+        onDrop={(e) => onMediaDrop(track, e, e.currentTarget as HTMLElement)}
       >
         {previewed.map((p, i) => {
           const isClip = p.item.kind === "clip";
