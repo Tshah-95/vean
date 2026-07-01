@@ -25,6 +25,7 @@ import {
   type Tool,
   buildInvocation,
   cursorFor,
+  gestureDxBounds,
   resolveGesture,
   snapFrame,
 } from "../timelineGestures";
@@ -297,6 +298,18 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         tool = bodyTool;
       }
 
+      // Frames the clip may EXTEND on its trim side before a NON-RIPPLE wall: a
+      // neighbour blank yields its length; real content (clip/dissolve) or the track
+      // head yields 0; open trailing space (a trimOut with nothing to the right) is
+      // unbounded. Captured now — the timeline is static for the drag's lifetime.
+      let extendRoom: number | undefined;
+      if (tool === "trimIn") {
+        extendRoom = prev?.item.kind === "blank" ? prev.length : 0;
+      } else if (tool === "trimOut") {
+        extendRoom =
+          next == null ? Number.POSITIVE_INFINITY : next.item.kind === "blank" ? next.length : 0;
+      }
+
       const gesture: Gesture = {
         tool,
         uuid,
@@ -304,6 +317,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         placed,
         neighbours: { left: seamLeft, right: seamRight },
         ripple: mods.alt && (tool === "trimIn" || tool === "trimOut" || tool === "move"),
+        extendRoom,
       };
 
       target.setPointerCapture?.(e.pointerId);
@@ -376,10 +390,16 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
           }
           dxFrames = rawFrames + bestAdj;
         }
-        // Clamp move/slide so the clip start never goes negative.
-        if (g.tool === "move" || g.tool === "slide") {
-          dxFrames = Math.max(dxFrames, -g.placed.start);
-        }
+        // Clamp the snapped delta to the gesture's NATURAL LIMITS so an edge stops
+        // dead at the media / min-length / neighbour wall (Premiere/Resolve) instead
+        // of travelling past it and erroring on commit. Clamp AFTER snapping so the
+        // wall wins over a snap target beyond it; if the clamp overrode a snap, drop
+        // the guide (the edge never reached it). (move/slide keep their frame-0 floor
+        // through the same bounds.)
+        const bounds = gestureDxBounds(g);
+        const clamped = Math.max(bounds.min, Math.min(bounds.max, dxFrames));
+        if (clamped !== dxFrames) snappedTo = null;
+        dxFrames = clamped;
         return { ...d, dxFrames, snappedTo, toTrackId };
       });
     },

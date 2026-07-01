@@ -24,7 +24,7 @@
 // All deltas are computed in INTEGER FRAMES from a pixel delta at the current
 // scale — frame-exact, never a float. The op invocation is built fresh on
 // pointerup from the committed frame delta.
-import type { OpInvocation, PlacedItem, TrackAddr } from "./types";
+import type { ClipItem, OpInvocation, PlacedItem, TrackAddr } from "./types";
 
 /** How close (px) to a clip edge counts as an edge grab. Generous enough to hit
  *  reliably (8px was torture); capped per-clip in resolveGesture so a narrow clip
@@ -63,6 +63,13 @@ export interface Gesture {
   neighbours: ClipNeighbours;
   /** Whether this gesture ripples (Alt on an edge trim / move). */
   ripple: boolean;
+  /** For a TRIM, how many frames the clip may EXTEND on its trim side before a
+   *  non-ripple neighbour wall: a neighbour blank yields its length; real content
+   *  (clip/dissolve) or the track head yields 0; open trailing space (a trimOut with
+   *  nothing to the right) is `Infinity`. Captured at gesture start (the timeline is
+   *  static for the drag's lifetime) and consumed by `gestureDxBounds`. Undefined for
+   *  non-trim tools. */
+  extendRoom?: number;
 }
 
 /** The raw grab geometry, before neighbour context picks roll vs trim. */
@@ -133,6 +140,89 @@ export function cursorFor(tool: Tool): string {
       return "grab";
     default:
       return "grab";
+  }
+}
+
+/** Whether a clip has a known media ceiling on its OUT point — a real footage file
+ *  with a probed `length`. A `color` generator is POSITIONLESS (no source window)
+ *  and an un-probed file clip has an unknown length, so neither caps the tail
+ *  (mirrors the op guards: trimOut/slip only enforce `clip.length` when present and
+ *  non-color). */
+function sourceTailRoom(item: ClipItem): number {
+  if (item.service === "color" || item.length == null) return Number.POSITIVE_INFINITY;
+  return item.length - 1 - item.out; // frames the OUT may move later before source end
+}
+
+/**
+ * The inclusive integer `[min, max]` range the gesture's `dxFrames` may occupy
+ * before it crosses a NATURAL LIMIT — mirroring how Premiere/Resolve trim: an edge
+ * STOPS dead at the wall instead of travelling into an impossible place and erroring
+ * on commit. Three wall classes (all derived from the pure op guards):
+ *   1. media/source — can't reveal frames the source lacks (head ≥ frame 0; tail ≤
+ *      the source's last frame);
+ *   2. minimum length — the two edges can't cross (the clip stops at 1 frame);
+ *   3. adjacency (NON-ripple trim only) — a normal trim extends into a gap but stops
+ *      at the next clip; ripple (Alt) lifts this wall since other content shuffles.
+ *
+ * The op's own guards stay as the correctness backstop for the agent/CLI/MCP path
+ * (a coded `trimIn delta:-17` still returns a typed EditError); this clamp just means
+ * a HUMAN dragging never generates one. `±Infinity` = no wall that side (unknown
+ * source length, open trailing space, a move's open right edge). Pure integer math.
+ */
+export function gestureDxBounds(g: Gesture): { min: number; max: number } {
+  const POS = Number.POSITIVE_INFINITY;
+  const NEG = Number.NEGATIVE_INFINITY;
+  const item = g.placed.item;
+  if (item.kind !== "clip") return { min: NEG, max: POS };
+
+  switch (g.tool) {
+    case "move":
+    case "slide":
+      // The clip start can't go before frame 0; rightward the timeline just grows.
+      return { min: -g.placed.start, max: POS };
+
+    case "trimIn": {
+      // shorten head (later start): dx ≤ out−in keeps ≥1 frame.
+      // extend head (earlier start): dx ≥ −in stops at the source's first frame;
+      // non-ripple also can't pass the neighbour wall (−extendRoom).
+      const max = item.out - item.in;
+      let min = -item.in;
+      if (!g.ripple && g.extendRoom != null) min = Math.max(min, -g.extendRoom);
+      return { min, max };
+    }
+
+    case "trimOut": {
+      // shorten tail (earlier end): dx ≥ in−out keeps ≥1 frame.
+      // extend tail (later end): dx ≤ (length−1)−out stops at the source's last
+      // frame; non-ripple also can't pass the neighbour wall (extendRoom).
+      const min = item.in - item.out;
+      let max = sourceTailRoom(item);
+      if (!g.ripple && g.extendRoom != null) max = Math.min(max, g.extendRoom);
+      return { min, max };
+    }
+
+    case "slip": {
+      // newIn = in − dx ≥ 0 → dx ≤ in (source head); newOut = out − dx ≤ length−1
+      // → dx ≥ out − (length−1) (source tail, when the length is known).
+      const min =
+        item.service !== "color" && item.length != null ? item.out - (item.length - 1) : NEG;
+      return { min, max: item.in };
+    }
+
+    case "roll": {
+      const left = g.neighbours.left?.item;
+      const right = g.neighbours.right?.item;
+      if (left?.kind !== "clip" || right?.kind !== "clip") return { min: NEG, max: POS };
+      // left grows on its TAIL (new out = leftOut + dx); right retracts its HEAD
+      // (new in = rightIn + dx). Each side bounded by its own source + the ≥1-frame
+      // floor: dx ≥ max(leftIn−leftOut, −rightIn); dx ≤ min(left tail room, rightOut−rightIn).
+      const min = Math.max(left.in - left.out, -right.in);
+      const max = Math.min(sourceTailRoom(left), right.out - right.in);
+      return { min, max };
+    }
+
+    default:
+      return { min: NEG, max: POS };
   }
 }
 
