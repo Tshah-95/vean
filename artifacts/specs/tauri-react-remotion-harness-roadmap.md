@@ -529,11 +529,13 @@ separate persistent worktrees. H03K may be prepared for Tejas's decision. H05
 begins only after H02 freezes fixture/process authority and is explicitly treated
 as a reversible branch to H05F rather than a dead end.
 
-The first canonical proof command after the first merge batch is:
+The first canonical proof command after H00 is:
 
 ```text
-bun run verify:harness --json
+bun run test tests/harness-contract.test.ts
 ```
 
-It is expected to show H00 verified and downstream claims still open—not to
-manufacture a green aggregate before their oracles exist.
+This proves the evaluator independently against the fixed adversarial evidence
+corpus. `bun run verify:harness --profile developer --json` is then expected to
+remain nonzero/open until every required developer-profile oracle exists and is
+verified; H00 must not manufacture a green aggregate for downstream work.

@@ -31,6 +31,9 @@ oracle execution, evidence refresh, and completion status.
 - Escalate: only if a proposed claim has no observable proof boundary
 - Ready when: manifest parses; current evidence cannot be stale/implicit; missing
   commands remain open; stale/missing negative controls fail.
+- First canonical post-merge proof: `bun run test
+  tests/harness-contract.test.ts`; the developer aggregate remains open until its
+  downstream claims actually exist and verify.
 
 ## H01 — static workspace gates
 
