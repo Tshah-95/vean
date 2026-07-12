@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { controlRoot } from "./evidence";
 
 const controlIndex = process.argv.indexOf("--control");
-const controlId = controlIndex >= 0 ? process.argv[controlIndex + 1] : undefined;
+const controlId =
+  controlIndex >= 0
+    ? process.argv[controlIndex + 1]
+    : process.argv.find((value) => /^nc-[a-z0-9-]+$/.test(value));
 if (!controlId || !/^nc-[a-z0-9-]+$/.test(controlId))
   throw new Error("valid --control is required");
 const root = controlRoot(process.cwd(), controlId);

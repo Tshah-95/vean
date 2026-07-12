@@ -17,7 +17,7 @@ export function hashPath(path: string): string {
   const hash = createHash("sha256");
   if (stat.isDirectory()) {
     for (const entry of readdirSync(path).sort())
-      hash.update(`${entry}\0${hashPath(join(path, entry))}\0`);
+      hash.update(`entry\0${entry}\0${hashPath(join(path, entry))}\0`);
   } else {
     hash.update(readFileSync(path));
   }
