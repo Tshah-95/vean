@@ -114,7 +114,7 @@ export function validateBootstrapPolicy(
     typeof bootstrap === "object" && bootstrap !== null && !Array.isArray(bootstrap)
       ? (bootstrap as Record<string, unknown>)
       : {};
-  const allowedJobKeys = ["name", "runs-on", "timeout-minutes", "env", "steps"];
+  const allowedJobKeys = ["name", "runs-on", "timeout-minutes", "steps"];
   if (Object.keys(bootstrapMap).some((key) => !allowedJobKeys.includes(key))) {
     errors.push("bootstrap job contains unapproved keys");
   }
@@ -129,10 +129,6 @@ export function validateBootstrapPolicy(
   if (bootstrapMap["continue-on-error"] === true) {
     errors.push("required jobs cannot continue on error");
   }
-  const environment = bootstrapMap.env as Record<string, unknown> | undefined;
-  if (environment?.VEAN_CI_EVIDENCE_PATH !== "${{ runner.temp }}/harness-bootstrap.json") {
-    errors.push("stable runner-temp evidence path is missing");
-  }
   const steps = Array.isArray(bootstrapMap.steps) ? bootstrapMap.steps : [];
   const expectedStepNames = [
     "Initialize failure evidence",
@@ -143,11 +139,11 @@ export function validateBootstrapPolicy(
     "Upload structured harness evidence",
   ];
   const allowedStepKeys = [
-    ["name", "run"],
+    ["name", "env", "run"],
     ["name", "uses"],
     ["name", "uses", "with"],
     ["name", "run"],
-    ["name", "run"],
+    ["name", "env", "run"],
     ["name", "if", "uses", "with"],
   ];
   if (steps.length !== expectedStepNames.length)
@@ -187,6 +183,20 @@ export function validateBootstrapPolicy(
     }
   }
   const initializer = steps[0] as Record<string, unknown> | undefined;
+  const facadeStep = steps[4] as Record<string, unknown> | undefined;
+  for (const [label, step] of [
+    ["initializer", initializer],
+    ["facade", facadeStep],
+  ] as const) {
+    const environment = step?.env as Record<string, unknown> | undefined;
+    if (
+      !environment ||
+      Object.keys(environment).join("\0") !== "VEAN_CI_EVIDENCE_PATH" ||
+      environment.VEAN_CI_EVIDENCE_PATH !== "${{ runner.temp }}/harness-bootstrap.json"
+    ) {
+      errors.push(`${label} stable runner-temp evidence path is missing`);
+    }
+  }
   if (
     typeof initializer?.run !== "string" ||
     !initializer.run.includes("CI_BOOTSTRAP_NOT_REACHED") ||

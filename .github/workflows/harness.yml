@@ -17,10 +17,10 @@ jobs:
     name: Harness bootstrap
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      VEAN_CI_EVIDENCE_PATH: ${{ runner.temp }}/harness-bootstrap.json
     steps:
       - name: Initialize failure evidence
+        env:
+          VEAN_CI_EVIDENCE_PATH: ${{ runner.temp }}/harness-bootstrap.json
         run: |
           mkdir -p "$(dirname "$VEAN_CI_EVIDENCE_PATH")"
           printf '%s\n' '{"contract_version":"1.0.0","profile":"bootstrap","status":"failed","reason_code":"CI_BOOTSTRAP_NOT_REACHED"}' > "$VEAN_CI_EVIDENCE_PATH"
@@ -33,6 +33,8 @@ jobs:
       - name: Install locked dependencies
         run: bun install --frozen-lockfile
       - name: Run policy-defined bootstrap
+        env:
+          VEAN_CI_EVIDENCE_PATH: ${{ runner.temp }}/harness-bootstrap.json
         run: bun run verify:ci-bootstrap
       - name: Upload structured harness evidence
         if: always()

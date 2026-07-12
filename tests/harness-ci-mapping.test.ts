@@ -174,5 +174,15 @@ describe("CI bootstrap policy mapping", () => {
     expect(validateBootstrapPolicy(policy, reordered, packageJson)).toContain(
       "workflow step order mismatch at 4",
     );
+    expect(
+      validateBootstrapPolicy(
+        policy,
+        workflow.replace(
+          "    timeout-minutes: 20\n",
+          "    timeout-minutes: 20\n    env:\n      VEAN_CI_EVIDENCE_PATH: ${{ runner.temp }}/harness-bootstrap.json\n",
+        ),
+        packageJson,
+      ),
+    ).toContain("bootstrap job contains unapproved keys");
   });
 });
