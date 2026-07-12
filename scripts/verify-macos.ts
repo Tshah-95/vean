@@ -29,9 +29,12 @@ import {
   runTimed,
   waitForAppium,
 } from "./harness/macos-driver";
+import { enforceMacosRunnerPolicy } from "./harness/macos-runner-policy";
 import { nativeMacosControlId, prepareNativeMacosControl } from "./harness/native-macos-control";
 import { recordProcess } from "./harness/process-ledger";
 import { runSelfUnderSupervisor } from "./harness/supervisor";
+
+enforceMacosRunnerPolicy();
 
 const repo = resolve(import.meta.dirname, "..");
 if (process.platform !== "darwin") throw new Error("H06 native shell proof requires macOS");
