@@ -66,7 +66,7 @@ describe("fixed static gate inventory", () => {
       "E_STATIC_SCRIPT_BODY:viewer/package.json:typecheck",
     );
     viewerScripts.typecheck =
-      "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.worker.json --noEmit";
+      "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.worker.json --noEmit && tsc -p tsconfig.browser.json --noEmit";
     remotionScripts.typecheck = "true";
     expect(() => assertStaticGateInventory(staticGateInventory(), scripts)).toThrow(
       "E_STATIC_SCRIPT_BODY:remotion/package.json:typecheck",

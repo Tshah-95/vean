@@ -13,6 +13,8 @@ app/src-tauri/gen/
 app/src-tauri/sidecars/
 remotion/out/
 viewer/dist/
+viewer/test-results/
+viewer/.vitest-attachments/
 
 # rendered artifacts (corpus keeps .mlt sources, never renders)
 *.mp4

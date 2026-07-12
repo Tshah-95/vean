@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["vitest/globals", "@vitest/browser-playwright"]
+  },
+  "include": ["src", "test", "vitest.browser.config.ts"],
+  "exclude": ["src/decode/decode-worker.ts"]
+}

@@ -10,12 +10,29 @@ import type {
   TimelineResponse,
 } from "./types";
 
+export class ViewerApiError extends Error {
+  constructor(
+    readonly kind: string,
+    readonly detail: string,
+  ) {
+    super(`${kind}: ${detail}`);
+    this.name = "ViewerApiError";
+  }
+}
+
+function apiError(error: ApiError, response: Response): ViewerApiError {
+  return new ViewerApiError(
+    error.kind ?? String(response.status),
+    error.detail ?? response.statusText,
+  );
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(path);
   const body = (await res.json()) as T | ApiError;
   if (!res.ok || (body as ApiError).ok === false) {
     const err = body as ApiError;
-    throw new Error(`${err.kind ?? res.status}: ${err.detail ?? res.statusText}`);
+    throw apiError(err, res);
   }
   return body as T;
 }
@@ -86,7 +103,7 @@ export async function renderProxy(
   const body = (await res.json()) as ProxyResponse | ApiError;
   if (!res.ok || (body as ApiError).ok === false) {
     const err = body as ApiError;
-    throw new Error(`${err.kind ?? res.status}: ${err.detail ?? res.statusText}`);
+    throw apiError(err, res);
   }
   return body as ProxyResponse;
 }
@@ -102,7 +119,7 @@ async function postJson<T>(path: string, payload: unknown): Promise<T> {
   const body = (await res.json()) as T | ApiError;
   if (!res.ok || (body as ApiError).ok === false) {
     const err = body as ApiError;
-    throw new Error(`${err.kind ?? res.status}: ${err.detail ?? res.statusText}`);
+    throw apiError(err, res);
   }
   return body as T;
 }
@@ -201,7 +218,7 @@ export async function runAction<T = unknown>(
   const env = (await res.json()) as { ok: true; output: T } | ApiError;
   if (!res.ok || (env as ApiError).ok === false) {
     const err = env as ApiError;
-    throw new Error(`${err.kind ?? res.status}: ${err.detail ?? res.statusText}`);
+    throw apiError(err, res);
   }
   return (env as { ok: true; output: T }).output;
 }

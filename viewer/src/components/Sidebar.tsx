@@ -39,6 +39,7 @@ export function Sidebar({
     return (
       <button
         type="button"
+        aria-label="Show panels"
         onClick={() => setOpen(true)}
         title="Show panels"
         style={{
@@ -69,12 +70,18 @@ export function Sidebar({
       }}
     >
       <div
+        role="tablist"
+        aria-label="Project panels"
         style={{ display: "flex", alignItems: "stretch", borderBottom: `1px solid ${C.border}` }}
       >
         {TABS.map((t) => (
           <button
             key={t.id}
             type="button"
+            role="tab"
+            id={`panel-tab-${t.id}`}
+            aria-selected={tab === t.id}
+            aria-controls="active-panel"
             onClick={() => setTab(t.id)}
             style={{
               flex: 1,
@@ -93,6 +100,7 @@ export function Sidebar({
         ))}
         <button
           type="button"
+          aria-label="Hide panels"
           onClick={() => setOpen(false)}
           title="Hide panels"
           style={{
@@ -106,7 +114,12 @@ export function Sidebar({
           ›
         </button>
       </div>
-      <div style={{ flex: 1, minHeight: 0 }}>
+      <div
+        id="active-panel"
+        role="tabpanel"
+        aria-labelledby={`panel-tab-${tab}`}
+        style={{ flex: 1, minHeight: 0 }}
+      >
         {tab === "media" && <MediaPanel project={project} />}
         {tab === "render" && <RenderPanel route={route} />}
         {tab === "jobs" && <JobsPanel project={project} />}

@@ -108,6 +108,7 @@ export function MediaPanel({ project }: { project?: string }) {
         }}
       >
         <input
+          aria-label="Find media"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Find media…"
@@ -150,6 +151,7 @@ export function MediaPanel({ project }: { project?: string }) {
         style={{ padding: "8px 10px", display: "flex", gap: 6, borderTop: `1px solid ${C.border}` }}
       >
         <input
+          aria-label="Media root path"
           value={newRoot}
           onChange={(e) => setNewRoot(e.target.value)}
           placeholder="/path/to/media"
