@@ -1,0 +1,73 @@
+{
+  "contract_version": "1.0.0",
+  "claim_id": "claim-browser-editor",
+  "runtime": {
+    "browser": "playwright/chromium",
+    "headless": true,
+    "host": "127.0.0.1",
+    "strict_port": true
+  },
+  "legacy_live_script_mapping": {
+    "scripts/verify-live-overlay.ts": "browser.live-overlay.prod",
+    "scripts/verify-live-comp.ts": "browser.live-comp.prod",
+    "scripts/verify-live-hmr.ts": "browser.live-hmr.dev",
+    "scripts/verify-live-multi.ts": "browser.live-multi.dev",
+    "scripts/verify-live-error.ts": "browser.live-error.dev"
+  },
+  "adversarial_controls": [
+    {
+      "id": "nc-browser-editor",
+      "reason_code": "SENSITIVITY_BROWSER_EDITOR",
+      "false_claim": "visible editor state and save UI change while the current .mlt bytes do not"
+    },
+    {
+      "id": "nc-browser-current-uri",
+      "reason_code": "SENSITIVITY_BROWSER_CURRENT_URI",
+      "false_claim": "the expected edit is saved to a different URI than the current document"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "browser.live-overlay.prod",
+      "mode": "production-dist",
+      "proof": "legacy live-overlay flow: real Player overlay, graphic-track exclusion, and DOM render"
+    },
+    {
+      "id": "browser.live-comp.prod",
+      "mode": "production-dist",
+      "proof": "legacy live-comp flow: dynamic registry resolves and renders a non-default composition"
+    },
+    {
+      "id": "browser.live-hmr.dev",
+      "mode": "vite-dev",
+      "proof": "legacy live-hmr flow: composition source edit refreshes while preserving playhead and mount"
+    },
+    {
+      "id": "browser.live-multi.dev",
+      "mode": "vite-dev",
+      "proof": "legacy live-multi flow: playhead selects the correct composition and local frame"
+    },
+    {
+      "id": "browser.live-error.dev",
+      "mode": "vite-dev",
+      "proof": "legacy live-error flow: throwing composition is attributable and isolated from the editor"
+    },
+    {
+      "id": "browser.editor.persisted-move",
+      "mode": "production-dist",
+      "action_id": "move",
+      "expected_input": {
+        "uuid": "{7c1a0e2a-0001-4abc-9d00-000000000001}",
+        "toTrack": { "trackId": "playlist0" },
+        "toPosition": 1,
+        "ripple": false,
+        "rippleAllTracks": false
+      },
+      "expected_envelope": "ok + consequences + complete diagnostics + dirty revision",
+      "expected_touched_uri": "the fixture's current corpus/shotcut-single.mlt, exactly",
+      "persisted_truth": "before/after .mlt hash differs and independent fromMlt placement is playlist0@1",
+      "diagnostics": "complete set has zero errors",
+      "coordination_db_may_change": false
+    }
+  ]
+}
