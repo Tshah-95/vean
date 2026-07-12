@@ -29,7 +29,10 @@ use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 mod harness_static_probe;
+#[cfg_attr(not(feature = "package-runtime"), allow(dead_code))]
+mod runtime_layout;
 
+#[cfg_attr(feature = "package-runtime", allow(dead_code))]
 const MACOS_RENDERER_TRIPLE: &str = "aarch64-apple-darwin";
 
 /// The live preview sidecar: the child process, the port it bound, and the project
@@ -81,15 +84,33 @@ fn vean_repo() -> PathBuf {
 }
 
 /// The runtime that runs the vean CLI (`bun` by default; `VEAN_BIN` overrides).
+#[cfg_attr(feature = "package-runtime", allow(dead_code))]
 fn vean_bin() -> String {
     std::env::var("VEAN_BIN").unwrap_or_else(|_| "bun".to_string())
+}
+
+#[cfg(feature = "package-runtime")]
+fn packaged_layout_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .resource_dir()
+        .map(|root| root.join("runtime-layout.json"))
+        .map_err(|error| format!("E_RUNTIME_LAYOUT_INVALID: {error}"))
+}
+
+#[cfg(feature = "package-runtime")]
+fn packaged_layout(app: &AppHandle) -> Result<runtime_layout::RuntimeLayout, String> {
+    let layout = runtime_layout::load(&packaged_layout_path(app)?)?;
+    runtime_layout::preflight(&layout)?;
+    Ok(layout)
 }
 
 /// The project the app should boot at: the persisted active project from
 /// `~/.vean/projects.json` (set by `vean open` / `vean project use`), or the repo
 /// root when none is selected. Lets `vean open <project>` land the app straight at
 /// that project instead of always the repo root.
-fn boot_project() -> PathBuf {
+fn boot_project(app: &AppHandle) -> PathBuf {
+    #[cfg(not(feature = "package-runtime"))]
+    let _ = app;
     if let Ok(home) = std::env::var("HOME") {
         let cfg = PathBuf::from(home).join(".vean").join("projects.json");
         if let Ok(text) = std::fs::read_to_string(&cfg) {
@@ -102,6 +123,10 @@ fn boot_project() -> PathBuf {
                 }
             }
         }
+    }
+    #[cfg(feature = "package-runtime")]
+    if let Ok(layout) = packaged_layout(app) {
+        return layout.project_root;
     }
     vean_repo()
 }
@@ -159,63 +184,127 @@ fn with_harness_wdio<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
 /// binaries live in `Contents/MacOS` (Tauri strips the target-triple suffix) with
 /// data under `Contents/Resources/sidecars`; in a source tree they're under
 /// `app/src-tauri/sidecars/bin` carrying the `-<triple>` suffix.
+#[allow(clippy::needless_return)] // cfg branches are independently type-checked build modes.
 fn renderer_env(app: &AppHandle) -> Vec<(String, String)> {
-    let triple = MACOS_RENDERER_TRIPLE;
-    // (bin_dir, sidecars_root) candidates, packaged first then the dev tree.
-    let mut roots: Vec<(PathBuf, PathBuf)> = Vec::new();
-    if let Ok(res) = app.path().resource_dir() {
-        roots.push((res.join("..").join("MacOS"), res.join("sidecars")));
-        roots.push((res.join("sidecars").join("bin"), res.join("sidecars")));
+    #[cfg(feature = "package-runtime")]
+    {
+        let Ok(layout) = packaged_layout(app) else {
+            return Vec::new();
+        };
+        let path = |id: &str| runtime_layout::resource_path(&layout, id);
+        let Ok(melt) = path("renderer.melt") else {
+            return Vec::new();
+        };
+        let Ok(ffmpeg) = path("renderer.ffmpeg") else {
+            return Vec::new();
+        };
+        let Ok(ffprobe) = path("renderer.ffprobe") else {
+            return Vec::new();
+        };
+        let Ok(modules_marker) = path("renderer.mlt-modules") else {
+            return Vec::new();
+        };
+        let Ok(data_marker) = path("renderer.mlt-data") else {
+            return Vec::new();
+        };
+        let Ok(profiles_marker) = path("renderer.mlt-profiles") else {
+            return Vec::new();
+        };
+        let Ok(presets_marker) = path("renderer.mlt-presets") else {
+            return Vec::new();
+        };
+        let s = |path: PathBuf| path.to_string_lossy().into_owned();
+        return vec![
+            ("VEAN_MELT".into(), s(melt)),
+            ("VEAN_FFMPEG".into(), s(ffmpeg)),
+            ("VEAN_FFPROBE".into(), s(ffprobe)),
+            (
+                "MLT_REPOSITORY".into(),
+                s(modules_marker
+                    .parent()
+                    .unwrap_or(&modules_marker)
+                    .to_path_buf()),
+            ),
+            (
+                "MLT_DATA".into(),
+                s(data_marker.parent().unwrap_or(&data_marker).to_path_buf()),
+            ),
+            (
+                "MLT_PROFILES_PATH".into(),
+                s(profiles_marker
+                    .parent()
+                    .unwrap_or(&profiles_marker)
+                    .to_path_buf()),
+            ),
+            (
+                "MLT_PRESETS_PATH".into(),
+                s(presets_marker
+                    .parent()
+                    .unwrap_or(&presets_marker)
+                    .to_path_buf()),
+            ),
+        ];
     }
-    let dev = vean_repo().join("app").join("src-tauri").join("sidecars");
-    roots.push((dev.join("bin"), dev));
 
-    for (bin_dir, sidecars) in roots {
-        for (suffix, melt_name) in [
-            (format!("-{triple}"), format!("melt-{triple}")),
-            (String::new(), "melt".to_string()),
-        ] {
-            let melt = bin_dir.join(&melt_name);
-            let lib_mlt = sidecars.join("lib").join("mlt");
-            let data = sidecars.join("share").join("mlt");
-            if melt.exists() && lib_mlt.is_dir() && data.is_dir() {
-                let s = |p: PathBuf| p.to_string_lossy().into_owned();
-                // The renderer dylib dir (`sidecars/lib`): the flat libav*/libmlt*
-                // closure the bundled melt/ffmpeg/ffprobe link against. In a packaged
-                // `.app` the bins live in `Contents/MacOS` but the dylibs are in
-                // `Contents/Resources/sidecars/lib`, so the bins' baked
-                // `@loader_path/../lib` rpath (which assumes bin/lib are siblings, the
-                // dev-tree layout) points at the non-existent `Contents/lib`. melt
-                // limps by on a Homebrew dev machine via a leftover
-                // `/opt/homebrew/.../lib` rpath, but `ffprobe` has only the broken
-                // rpath and CRASHES on launch (dyld: libavdevice not loaded) — which
-                // made `sourceHasAlpha` silently fail and degrade every alpha overlay
-                // to an opaque proxy. Pointing DYLD_FALLBACK_LIBRARY_PATH at the real
-                // lib dir makes all three bins resolve their dylibs regardless of baked
-                // rpath, on a clean Mac (no Homebrew). Fallback (not LIBRARY_PATH) so it
-                // only fills gaps and never shadows a system dylib.
-                let lib = sidecars.join("lib");
-                let dyld = format!("{}:/usr/local/lib:/usr/lib", s(lib));
-                return vec![
-                    ("VEAN_MELT".into(), s(melt)),
-                    (
-                        "VEAN_FFMPEG".into(),
-                        s(bin_dir.join(format!("ffmpeg{suffix}"))),
-                    ),
-                    (
-                        "VEAN_FFPROBE".into(),
-                        s(bin_dir.join(format!("ffprobe{suffix}"))),
-                    ),
-                    ("DYLD_FALLBACK_LIBRARY_PATH".into(), dyld),
-                    ("MLT_REPOSITORY".into(), s(lib_mlt)),
-                    ("MLT_DATA".into(), s(data.clone())),
-                    ("MLT_PROFILES_PATH".into(), s(data.join("profiles"))),
-                    ("MLT_PRESETS_PATH".into(), s(data.join("presets"))),
-                ];
+    #[cfg(not(feature = "package-runtime"))]
+    {
+        let triple = MACOS_RENDERER_TRIPLE;
+        // (bin_dir, sidecars_root) candidates, packaged first then the dev tree.
+        let mut roots: Vec<(PathBuf, PathBuf)> = Vec::new();
+        if let Ok(res) = app.path().resource_dir() {
+            roots.push((res.join("..").join("MacOS"), res.join("sidecars")));
+            roots.push((res.join("sidecars").join("bin"), res.join("sidecars")));
+        }
+        let dev = vean_repo().join("app").join("src-tauri").join("sidecars");
+        roots.push((dev.join("bin"), dev));
+
+        for (bin_dir, sidecars) in roots {
+            for (suffix, melt_name) in [
+                (format!("-{triple}"), format!("melt-{triple}")),
+                (String::new(), "melt".to_string()),
+            ] {
+                let melt = bin_dir.join(&melt_name);
+                let lib_mlt = sidecars.join("lib").join("mlt");
+                let data = sidecars.join("share").join("mlt");
+                if melt.exists() && lib_mlt.is_dir() && data.is_dir() {
+                    let s = |p: PathBuf| p.to_string_lossy().into_owned();
+                    // The renderer dylib dir (`sidecars/lib`): the flat libav*/libmlt*
+                    // closure the bundled melt/ffmpeg/ffprobe link against. In a packaged
+                    // `.app` the bins live in `Contents/MacOS` but the dylibs are in
+                    // `Contents/Resources/sidecars/lib`, so the bins' baked
+                    // `@loader_path/../lib` rpath (which assumes bin/lib are siblings, the
+                    // dev-tree layout) points at the non-existent `Contents/lib`. melt
+                    // limps by on a Homebrew dev machine via a leftover
+                    // `/opt/homebrew/.../lib` rpath, but `ffprobe` has only the broken
+                    // rpath and CRASHES on launch (dyld: libavdevice not loaded) — which
+                    // made `sourceHasAlpha` silently fail and degrade every alpha overlay
+                    // to an opaque proxy. Pointing DYLD_FALLBACK_LIBRARY_PATH at the real
+                    // lib dir makes all three bins resolve their dylibs regardless of baked
+                    // rpath, on a clean Mac (no Homebrew). Fallback (not LIBRARY_PATH) so it
+                    // only fills gaps and never shadows a system dylib.
+                    let lib = sidecars.join("lib");
+                    let dyld = format!("{}:/usr/local/lib:/usr/lib", s(lib));
+                    return vec![
+                        ("VEAN_MELT".into(), s(melt)),
+                        (
+                            "VEAN_FFMPEG".into(),
+                            s(bin_dir.join(format!("ffmpeg{suffix}"))),
+                        ),
+                        (
+                            "VEAN_FFPROBE".into(),
+                            s(bin_dir.join(format!("ffprobe{suffix}"))),
+                        ),
+                        ("DYLD_FALLBACK_LIBRARY_PATH".into(), dyld),
+                        ("MLT_REPOSITORY".into(), s(lib_mlt)),
+                        ("MLT_DATA".into(), s(data.clone())),
+                        ("MLT_PROFILES_PATH".into(), s(data.join("profiles"))),
+                        ("MLT_PRESETS_PATH".into(), s(data.join("presets"))),
+                    ];
+                }
             }
         }
+        Vec::new()
     }
-    Vec::new()
 }
 
 /// Whether the preview sidecar should serve the live Vite/HMR viewer (dev) or the
@@ -230,6 +319,9 @@ fn renderer_env(app: &AppHandle) -> Vec<(String, String)> {
 /// bundle has no source (or `bun`/Vite) to run a dev server, so it falls back to
 /// the snapshot even if it somehow reaches here as a debug build.
 fn preview_dev_mode() -> bool {
+    if cfg!(feature = "package-runtime") {
+        return false;
+    }
     let want_dev = match std::env::var("VEAN_PREVIEW_MODE").as_deref() {
         Ok("dev") => true,
         Ok("prod") => false,
@@ -243,10 +335,33 @@ fn preview_dev_mode() -> bool {
 /// it serves the live Vite/HMR viewer so edits under `viewer/` hot-reload straight
 /// into this native window; the shipped release bundle serves the pre-built
 /// `<repo>/viewer/dist` snapshot (see `preview_dev_mode`).
-fn spawn_sidecar(project: &PathBuf, port: u16, env: &[(String, String)]) -> std::io::Result<Child> {
-    let cli = vean_repo().join("src").join("cli.ts");
-    let mut cmd = Command::new(vean_bin());
-    cmd.arg(cli).arg("preview").arg("--no-open");
+fn spawn_sidecar(
+    app: &AppHandle,
+    project: &PathBuf,
+    port: u16,
+    env: &[(String, String)],
+) -> std::io::Result<Child> {
+    #[cfg(not(feature = "package-runtime"))]
+    let _ = app;
+    #[cfg(feature = "package-runtime")]
+    let (program, prefix, runtime_layout_path) = {
+        let layout = packaged_layout(app).map_err(std::io::Error::other)?;
+        let core = runtime_layout::resource_path(&layout, "core.executable")
+            .map_err(std::io::Error::other)?;
+        (
+            core,
+            Vec::<PathBuf>::new(),
+            Some(packaged_layout_path(app).map_err(std::io::Error::other)?),
+        )
+    };
+    #[cfg(not(feature = "package-runtime"))]
+    let (program, prefix, runtime_layout_path) = (
+        PathBuf::from(vean_bin()),
+        vec![vean_repo().join("src").join("cli.ts")],
+        None::<PathBuf>,
+    );
+    let mut cmd = Command::new(program);
+    cmd.args(prefix).arg("preview").arg("--no-open");
     cmd.process_group(0);
     cmd.env(
         "VEAN_PROCESS_MARKER",
@@ -258,6 +373,14 @@ fn spawn_sidecar(project: &PathBuf, port: u16, env: &[(String, String)]) -> std:
     // shipped bundle, which has no source or Vite to run, keeps the snapshot.
     if !preview_dev_mode() {
         cmd.arg("--prod");
+    }
+    if let Some(layout) = runtime_layout_path {
+        cmd.arg("--runtime-layout").arg(layout);
+        cmd.env_clear()
+            .env("HOME", project)
+            .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+            .env("LANG", "en_US.UTF-8")
+            .env("LC_ALL", "en_US.UTF-8");
     }
     cmd.arg("--port")
         .arg(port.to_string())
@@ -309,7 +432,7 @@ fn navigate_to_sidecar(app: &AppHandle, port: u16) {
 fn restart_sidecar(app: &AppHandle, project: PathBuf) -> Result<u16, String> {
     let port = selected_preview_port().map_err(|e| e.to_string())?;
     let env = renderer_env(app);
-    let child = spawn_sidecar(&project, port, &env).map_err(|e| e.to_string())?;
+    let child = spawn_sidecar(app, &project, port, &env).map_err(|e| e.to_string())?;
     let process_group = child.id() as i32;
     {
         let state = app.state::<AppState>();
@@ -352,19 +475,49 @@ fn active_project(app: &AppHandle) -> PathBuf {
 /// so project context resolves correctly. This is the GENERIC bridge: one path
 /// projects every registered action, with no per-action Rust.
 fn run_action_internal(
+    app: &AppHandle,
     project: &PathBuf,
     id: &str,
     input: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    let cli = vean_repo().join("src").join("cli.ts");
-    let output = Command::new(vean_bin())
-        .arg(cli)
+    #[cfg(not(feature = "package-runtime"))]
+    let _ = app;
+    #[cfg(feature = "package-runtime")]
+    let (program, prefix, runtime_layout_path) = {
+        let layout = packaged_layout(app)?;
+        let core = runtime_layout::resource_path(&layout, "core.executable")?;
+        (
+            core,
+            Vec::<PathBuf>::new(),
+            Some(packaged_layout_path(app)?),
+        )
+    };
+    #[cfg(not(feature = "package-runtime"))]
+    let (program, prefix, runtime_layout_path) = (
+        PathBuf::from(vean_bin()),
+        vec![vean_repo().join("src").join("cli.ts")],
+        None::<PathBuf>,
+    );
+    let mut command = Command::new(program);
+    command
+        .args(prefix)
         .arg("action")
         .arg("run")
         .arg(id)
         .arg("--input-json")
         .arg(input.to_string())
-        .arg("--json")
+        .arg("--json");
+    if let Some(layout) = runtime_layout_path {
+        command
+            .arg("--runtime-layout")
+            .arg(layout)
+            .env_clear()
+            .env("HOME", project)
+            .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+            .env("LANG", "en_US.UTF-8")
+            .env("LC_ALL", "en_US.UTF-8");
+    }
+    let output = command
         .current_dir(project)
         .output()
         .map_err(|e| e.to_string())?;
@@ -397,6 +550,7 @@ fn run_action(
 ) -> Result<serde_json::Value, String> {
     let project = active_project(&app);
     run_action_internal(
+        &app,
         &project,
         &id,
         &input.unwrap_or_else(|| serde_json::json!({})),
@@ -436,7 +590,7 @@ fn add_media_root_flow(app: &AppHandle) {
     };
     let project = active_project(app);
     let input = serde_json::json!({ "path": path.to_string_lossy() });
-    let message = match run_action_internal(&project, "media.root.add", &input) {
+    let message = match run_action_internal(app, &project, "media.root.add", &input) {
         Ok(env) if env.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) => format!(
             "Added media root:\n{}",
             serde_json::to_string_pretty(env.get("output").unwrap_or(&env)).unwrap_or_default()
@@ -450,10 +604,11 @@ fn add_media_root_flow(app: &AppHandle) {
 /// "Project Info" — read-only proof of the generic action bridge.
 fn project_info_flow(app: &AppHandle) {
     let project = active_project(app);
-    let message = match run_action_internal(&project, "project.current", &serde_json::json!({})) {
-        Ok(env) => serde_json::to_string_pretty(&env).unwrap_or_else(|_| env.to_string()),
-        Err(err) => format!("error: {err}"),
-    };
+    let message =
+        match run_action_internal(app, &project, "project.current", &serde_json::json!({})) {
+            Ok(env) => serde_json::to_string_pretty(&env).unwrap_or_else(|_| env.to_string()),
+            Err(err) => format!("error: {err}"),
+        };
     let _ = app
         .dialog()
         .message(message)
@@ -621,7 +776,8 @@ pub fn run() {
             // Boot the sidecar against the persisted active project (so `vean open
             // <project>` lands here), falling back to the repo root; the user switches
             // via File → Open Project Folder….
-            if let Err(err) = restart_sidecar(&handle, boot_project()) {
+            let boot = boot_project(&handle);
+            if let Err(err) = restart_sidecar(&handle, boot) {
                 eprintln!("vean: failed to start preview sidecar: {err}");
             }
             Ok(())

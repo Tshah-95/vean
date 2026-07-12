@@ -12,6 +12,9 @@
 //   • contactSheet→ `ffprobe` frame-count probe + `ffmpeg` tile filter over
 //     evenly-spaced frames of <video> into one PNG, with the cell→frame map.
 
+import { runtimeChildEnvironment } from "../runtime/environment";
+import { packageMode, resolveRuntimeResource } from "../runtime/layout";
+
 /** Result of a subprocess render: where the artifact landed + the exit signal. */
 export type RenderResult = {
   /** Absolute path to the produced file. */
@@ -97,6 +100,16 @@ function indent(s: string): string {
  *  subprocess through inherited `MLT_*` env (`Bun.spawn` inherits the parent env),
  *  so the driver needs no extra wiring for them — only the binary path. */
 export function resolveBin(name: string): string {
+  if (packageMode()) {
+    const ids: Record<string, string> = {
+      melt: "renderer.melt",
+      ffmpeg: "renderer.ffmpeg",
+      ffprobe: "renderer.ffprobe",
+    };
+    const id = ids[name];
+    if (!id) throw new Error(`E_RUNTIME_RESOURCE_MISSING: unclassified renderer ${name}`);
+    return resolveRuntimeResource(id);
+  }
   const env = process.env;
   switch (name) {
     case "melt":
@@ -116,7 +129,11 @@ async function spawnCapture(
   bin: string,
   args: string[],
 ): Promise<{ code: number; stdout: string; stderr: string }> {
-  const proc = Bun.spawn([resolveBin(bin), ...args], { stdout: "pipe", stderr: "pipe" });
+  const proc = Bun.spawn([resolveBin(bin), ...args], {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: runtimeChildEnvironment(),
+  });
   // Read both pipes concurrently so a large stream can't deadlock the buffer.
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),

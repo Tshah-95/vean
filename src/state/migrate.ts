@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
+import { runtimeResourceRoot } from "../runtime/layout";
 import { openStateDb, stateDbPath, stateDir } from "./db";
 
 export type StateStatus = {
@@ -13,12 +14,14 @@ export type StateStatus = {
   busyTimeoutMs?: number;
 };
 
-const MIGRATIONS_FOLDER = resolve(import.meta.dirname, "..", "..", "drizzle");
+function migrationsFolder(): string {
+  return runtimeResourceRoot("migrations") ?? resolve(import.meta.dirname, "..", "..", "drizzle");
+}
 
 export function initializeState(repo = process.cwd()): StateStatus {
   const handle = openStateDb(repo);
   try {
-    migrate(handle.db, { migrationsFolder: MIGRATIONS_FOLDER });
+    migrate(handle.db, { migrationsFolder: migrationsFolder() });
     return getStateStatus(repo, handle);
   } finally {
     handle.sqlite.close();

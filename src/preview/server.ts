@@ -49,6 +49,7 @@ import type { OpInvocation } from "../ops";
 import { listKnownProjects, resolveProject } from "../project/context";
 import type { ResolvedProject } from "../project/context";
 import { transcriptFromJobs } from "../query/transcript-read";
+import { runtimeResourceRoot } from "../runtime/layout";
 import { TRANSCRIBE_JOB_KIND } from "../state/job-types";
 import { listJobsByKind } from "../state/jobs";
 import { listMediaRoots } from "../state/media";
@@ -140,7 +141,10 @@ const CONTENT_TYPES: Record<string, string> = {
 
 /** The vean repo root (two levels up from `src/preview/`). */
 function veanRepoRoot(): string {
-  return resolve(new URL("../..", import.meta.url).pathname);
+  const packagedViewer = runtimeResourceRoot("viewer");
+  return packagedViewer
+    ? resolve(packagedViewer, "..")
+    : resolve(new URL("../..", import.meta.url).pathname);
 }
 
 /** Cross-origin isolation headers (DESIGN-LIVE-PREVIEW §8.5). The live-preview

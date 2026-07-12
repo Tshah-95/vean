@@ -29,6 +29,8 @@ import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { type DiagnosticInput, diag } from "../diagnostics/types";
 import type { Profile } from "../ir/types";
+import { runtimeChildEnvironment } from "../runtime/environment";
+import { resolveBin } from "./melt";
 
 /** A parsed rational `num/den` (ffprobe reports rates as fractions like `30/1` or
  *  `30000/1001`). `den` is never 0 (we reject `0/0`, ffprobe's "unknown"). */
@@ -101,7 +103,11 @@ async function spawnCapture(
   bin: string,
   args: string[],
 ): Promise<{ code: number; stdout: string; stderr: string }> {
-  const proc = Bun.spawn([bin, ...args], { stdout: "pipe", stderr: "pipe" });
+  const proc = Bun.spawn([resolveBin(bin), ...args], {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: runtimeChildEnvironment(),
+  });
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),

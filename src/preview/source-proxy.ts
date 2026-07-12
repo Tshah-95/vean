@@ -18,6 +18,7 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { resolveBin } from "../driver/melt";
+import { runtimeChildEnvironment } from "../runtime/environment";
 
 const STATE_DIR_NAME = ".vean";
 /** Bump whenever codec flags, validation, or manifest semantics change. */
@@ -133,7 +134,11 @@ type SourceProxyManifest = {
 type SpawnCapture = { code: number; stdout: string; stderr: string };
 
 async function spawnCapture(argv: string[]): Promise<SpawnCapture> {
-  const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
+  const proc = Bun.spawn(argv, {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: runtimeChildEnvironment(),
+  });
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),

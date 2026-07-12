@@ -15,6 +15,8 @@
 // lossless for editing.
 import { dirname, extname, join } from "node:path";
 import type { Fps } from "../ir/types";
+import { runtimeChildEnvironment } from "../runtime/environment";
+import { resolveBin } from "./melt";
 
 export class TranscodeError extends Error {
   constructor(
@@ -137,7 +139,11 @@ export async function transcodeToCfr(
     ...spec.audio,
     outPath,
   ];
-  const proc = Bun.spawn(["ffmpeg", ...args], { stdout: "pipe", stderr: "pipe" });
+  const proc = Bun.spawn([resolveBin("ffmpeg"), ...args], {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: runtimeChildEnvironment(),
+  });
   const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
   if (code !== 0) throw new TranscodeError(args, code, stderr);
   return { outPath, fps, cached: false };

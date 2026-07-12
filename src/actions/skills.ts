@@ -1,6 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
+import { runtimeResourceRoot } from "../runtime/layout";
 import type { ActionContext, ActionDefinition, ActionEffect } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -32,7 +33,7 @@ function veanRoot(): string {
 }
 
 function skillsDir(): string {
-  return join(veanRoot(), ".agents", "skills");
+  return runtimeResourceRoot("skills") ?? join(veanRoot(), ".agents", "skills");
 }
 
 /** A catalog row (mirrors `skill.schema.json#/$defs/entry`). */
@@ -174,7 +175,9 @@ export const skillActions: ActionDefinition[] = [
       }
       // Source: the skill's directory inside this vean install. `entry.path` is
       // the repo-relative SKILL.md; its dirname is the skill dir we copy.
-      const srcSkill = join(veanRoot(), entry.path);
+      const srcSkill = runtimeResourceRoot("skills")
+        ? join(skillsDir(), entry.id, "SKILL.md")
+        : join(veanRoot(), entry.path);
       if (!existsSync(srcSkill)) {
         return { ok: false, kind: "missing-source", detail: `skill source not found: ${srcSkill}` };
       }

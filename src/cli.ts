@@ -12,6 +12,8 @@ import {
 import { buildConfigCommand } from "./cli/config";
 import { type DoctorHost, type DoctorSurface, formatDoctorReport } from "./cli/doctor";
 import { buildFpsCommand } from "./cli/fps";
+import { configureRuntimeLayoutFromFile, preflightRuntimeLayout } from "./runtime/layout";
+import { compiledRuntimeMode } from "./runtime/mode";
 
 const program = new Command();
 
@@ -126,7 +128,19 @@ program
   .description("Agent-native video editing core")
   .version("0.0.0")
   .option("--cwd <path>", "working directory for project resolution")
-  .option("--project <id-or-path>", "project id or path for project-aware commands");
+  .option("--project <id-or-path>", "project id or path for project-aware commands")
+  .option("--runtime-layout <absolute-path>", "verified package runtime layout");
+
+program.hook("preAction", () => {
+  const opts = program.opts<{ runtimeLayout?: string }>();
+  if (compiledRuntimeMode() === "package" && !opts.runtimeLayout) {
+    throw new Error("E_RUNTIME_LAYOUT_INVALID: packaged core requires --runtime-layout");
+  }
+  if (opts.runtimeLayout) {
+    const layout = configureRuntimeLayoutFromFile(opts.runtimeLayout, compiledRuntimeMode());
+    preflightRuntimeLayout(layout);
+  }
+});
 
 program
   .command("doctor")
