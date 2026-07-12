@@ -199,7 +199,17 @@
           "artifacts/test-runs/<run-id>/negative-controls/nc-dom-accessibility.json"
         ]
       },
-      "oracle_implementation_paths": ["package.json"]
+      "oracle_implementation_paths": [
+        "scripts/verify-component.ts",
+        "scripts/harness/component-control.ts",
+        "viewer/vitest.browser.config.ts",
+        "viewer/test/setup-browser.ts",
+        "viewer/test/timeline.browser.test.tsx",
+        "viewer/src/components/TimelineStrip.tsx",
+        "viewer/src/components/ClipBlock.tsx",
+        "viewer/src/timelineKeyboard.ts",
+        "viewer/src/useTimelineEditor.ts"
+      ]
     },
     {
       "claim_id": "claim-failure-evidence",
@@ -646,7 +656,17 @@
           "artifacts/test-runs/<run-id>/negative-controls/nc-react-components.json"
         ]
       },
-      "oracle_implementation_paths": ["package.json"]
+      "oracle_implementation_paths": [
+        "scripts/verify-component.ts",
+        "scripts/harness/component-control.ts",
+        "viewer/vitest.browser.config.ts",
+        "viewer/test/setup-browser.ts",
+        "viewer/test/timeline.browser.test.tsx",
+        "viewer/src/components/TimelineStrip.tsx",
+        "viewer/src/components/ClipBlock.tsx",
+        "viewer/src/timelineKeyboard.ts",
+        "viewer/src/useTimelineEditor.ts"
+      ]
     },
     {
       "claim_id": "claim-release-evidence-current",

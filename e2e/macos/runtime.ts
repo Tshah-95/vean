@@ -73,6 +73,7 @@ export const NATIVE_ELEMENT_TYPE = {
   Sheet: 5,
   Dialog: 8,
   Button: 9,
+  SearchField: 45,
   TextField: 49,
   MenuItem: 54,
   MenuBarItem: 56,
@@ -80,6 +81,14 @@ export const NATIVE_ELEMENT_TYPE = {
 
 export function nativePredicate(elementType: number, condition?: string): string {
   if (!Number.isInteger(elementType)) throw new Error("native element type must be an integer");
+  if (
+    condition &&
+    /(?:^|[\s(])focused\s*(?:==|!=|<|>|BEGINSWITH|ENDSWITH|CONTAINS)/i.test(condition)
+  ) {
+    throw new Error(
+      "Mac2 does not expose 'focused' as an XCTest predicate key; locate semantically, then call getAttribute('focused') on the selected element",
+    );
+  }
   return `-ios predicate string:elementType == ${elementType}${condition ? ` AND (${condition})` : ""}`;
 }
 
@@ -88,9 +97,17 @@ export const NATIVE_PANEL_ROOT_TYPES = [
   NATIVE_ELEMENT_TYPE.Dialog,
 ] as const;
 
-export function focusedEnabledTextFieldPredicate(): string {
-  return nativePredicate(NATIVE_ELEMENT_TYPE.TextField, "focused == true AND enabled == true");
+export function enabledTextFieldPredicate(): string {
+  return nativePredicate(NATIVE_ELEMENT_TYPE.TextField, "enabled == true");
 }
+
+export const OPEN_PANEL_IDENTIFIER = "open-panel";
+
+export const GO_TO_FOLDER_KEYSTROKE = {
+  key: "g",
+  // XCUIKeyModifierShift (1 << 1) | XCUIKeyModifierCommand (1 << 4)
+  modifierFlags: (1 << 1) | (1 << 4),
+} as const;
 
 export async function nativeInventory(): Promise<{
   source: string;

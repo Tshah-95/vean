@@ -915,7 +915,9 @@ export function evaluateHarness(options: HarnessEvaluationOptions): HarnessEvalu
           env: {
             ...process.env,
             VEAN_HARNESS_RUN_ID: runId,
+            VEAN_HARNESS_CLAIM_ID: claimId,
             VEAN_HARNESS_CLAIM_RUN_ID: claimRunId,
+            VEAN_HARNESS_CONTROL_ID: claim.negative_control.control_id,
             VEAN_HARNESS_STARTED_AT: startedAt,
             VEAN_HARNESS_PHASE: phase,
             VEAN_HARNESS_EVIDENCE_DIR: options.evidenceDir,
