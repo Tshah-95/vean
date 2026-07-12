@@ -1,0 +1,70 @@
+{
+  "schema_version": "1.0.0",
+  "policy_id": "vean-media-golden-policy-v1",
+  "status": "draft",
+  "implementation_base_sha": "b416c8a5f26730a838a3e847aaab44e3e4772508",
+  "approved_by": null,
+  "approved_at": null,
+  "fixture_manifest": "corpus/harness/media/manifest.json",
+  "fixture_manifest_sha256": null,
+  "generation": {
+    "fixtures_command": "bun run media:fixtures:generate",
+    "goldens_command": "bun run media:goldens:generate --policy-draft artifacts/specs/media-golden-policy.json",
+    "acceptance_may_generate": false,
+    "provenance_required": [
+      "source_sha256",
+      "byte_length",
+      "container_and_stream_metadata",
+      "full_generation_argv",
+      "generator_path_version_sha256",
+      "license",
+      "derived_proxy_metadata_and_sha256",
+      "semantic_markers"
+    ],
+    "license": "repo-authored synthetic; redistributable with Vean"
+  },
+  "parity_case": {
+    "id": "lower-third-nonzero-placement-v1",
+    "composition_id": "LowerThird",
+    "clip_start_frame": 30,
+    "duration_frames": 90,
+    "master_frames": [29, 30, 36, 42, 48, 56, 75, 119, 120],
+    "expected_local_frames": [null, 0, 6, 12, 18, 26, 45, 89, null],
+    "required_bindings": [
+      "mlt_sha256",
+      "parsed_ir_sha256",
+      "canonical_props_sha256",
+      "composition_source_asset_font_sha256",
+      "react_remotion_player_versions",
+      "master_and_local_frame",
+      "live_player_png",
+      "remotion_renderstill_png",
+      "mlt_still_png"
+    ],
+    "semantic_markers": [
+      "exact_presence_boundaries",
+      "alpha_background_visibility",
+      "accent_region_centroid_and_coverage",
+      "text_region_coverage",
+      "base_motion_visible_through_transparency",
+      "no_black_occlusion_or_poison_fringe",
+      "props_colors_and_text_match",
+      "one-frame-mapping"
+    ]
+  },
+  "comparison": {
+    "within_pinned_engine_exact_png_hash": true,
+    "cross_engine_byte_identity_required": false,
+    "stable_region_ssim_min": 0.995,
+    "approved_masks_only": true,
+    "decoded_rgba_pcm_and_stream_metadata_are_authoritative": true
+  },
+  "negative_controls": [
+    "one-frame-local-offset",
+    "export-only-props-change",
+    "divergent-asset-resolution",
+    "opaque-alpha-substitution",
+    "modified-golden",
+    "golden-regeneration-during-acceptance"
+  ]
+}

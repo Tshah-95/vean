@@ -1,0 +1,87 @@
+{
+  "schema_version": "1.0.0",
+  "policy_id": "vean-media-performance-policy-v1",
+  "status": "draft",
+  "implementation_base_sha": "b416c8a5f26730a838a3e847aaab44e3e4772508",
+  "approved_by": null,
+  "approved_at": null,
+  "baseline_run_ids": [],
+  "baseline_command": "bun run verify:media --suite baseline --no-accept",
+  "acceptance_command": "bun run verify:media --suite performance --policy artifacts/specs/media-performance-policy.json",
+  "sampling": {
+    "warmup_runs": 3,
+    "measured_fresh_process_runs": 15,
+    "steady_state_composite_samples_per_run": 300,
+    "percentile_method": "nearest-rank",
+    "reported": ["raw_samples", "p50", "p95", "max"],
+    "workloads": [
+      "cold-proxy-build",
+      "warm-proxy-cache",
+      "scrub",
+      "playback",
+      "seek",
+      "teardown",
+      "context-recovery"
+    ]
+  },
+  "required_environment_identity": [
+    "cpu_model_and_count",
+    "ram",
+    "vm_or_physical_model",
+    "os_build",
+    "app_browser_webkit_binary_hashes",
+    "gpu_backend",
+    "display_scale",
+    "instrumentation_overhead",
+    "thermal_state_if_available"
+  ],
+  "functional_caps": {
+    "decoder_workers_max": 4,
+    "in_flight_decodes_max": 8,
+    "steady_queue_max": 8,
+    "queue_must_drain_to_zero_after_scrub": true,
+    "cache_resident_bytes_max": 524288000,
+    "owned_handle_open_close_balance_required": true,
+    "crashes_unhandled_errors_black_frames_stalls_max": 0,
+    "context_restore_requires_content_valid_frame": true
+  },
+  "proposed_user_visible_budgets": {
+    "approval_required": true,
+    "chrome": {
+      "composite_p95_ms": 26.7,
+      "composite_max_ms": 66.7,
+      "warm_seek_valid_frame_p95_ms": 100,
+      "playhead_audio_skew_p95_frames": 1,
+      "queue_drain_after_scrub_ms": 500,
+      "context_loss_valid_frame_ms": 1000,
+      "warm_project_open_valid_frame_ms": 2000,
+      "post_warm_memory_slope_mib_per_min": 1
+    },
+    "release_wkwebview": {
+      "composite_p95_ms": 26.7,
+      "composite_max_ms": 66.7,
+      "warm_seek_valid_frame_p95_ms": 150,
+      "playhead_audio_skew_p95_frames": 1,
+      "queue_drain_after_scrub_ms": 750,
+      "context_loss_valid_frame_ms": 1500,
+      "warm_project_open_valid_frame_ms": 3000,
+      "post_warm_memory_slope_mib_per_min": 1
+    },
+    "absolute_process_memory_ceiling_mib": null
+  },
+  "rules": {
+    "browser_ci_and_release_package_are_separate_distributions": true,
+    "automatic_baseline_multiplier_forbidden": true,
+    "acceptance_requires_approved_policy_and_exact_environment": true,
+    "post_dated_or_missing_baseline_rejected": true
+  },
+  "negative_controls": [
+    "missing-imagebitmap-close",
+    "missing-worker-decoder-audio-gl-disposal",
+    "unrestored-webgl-context-loss",
+    "injected-long-task",
+    "unbounded-queue-or-cache-growth",
+    "unapproved-policy",
+    "missing-required-runtime-cell"
+  ]
+}

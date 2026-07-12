@@ -1,0 +1,133 @@
+{
+  "schema_version": "1.0.0",
+  "policy_id": "vean-media-runtime-matrix-v1",
+  "status": "draft",
+  "implementation_base_sha": "b416c8a5f26730a838a3e847aaab44e3e4772508",
+  "approved_by": null,
+  "approved_at": null,
+  "architecture": {
+    "opaque_video": "source -> sidecar transcode -> H.264/yuv420p MP4 proxy -> mediabunny/WebCodecs",
+    "alpha_video": "source -> sidecar transcode -> VP9/yuva420p WebM proxy -> mediabunny/WebCodecs",
+    "audio": "source bytes -> AudioContext.decodeAudioData",
+    "rule": "source ingest, derived proxy, runtime decode, audio decode, and export are separate evidence cells"
+  },
+  "environment_selectors": {
+    "chrome": {
+      "runner": "playwright/chromium/headless",
+      "identity_required": ["version", "executable_sha256", "gpu_backend", "codec_capabilities"]
+    },
+    "wkwebview": {
+      "runner": "dedicated Tart macOS guest",
+      "identity_required": ["macos_build", "webkit_version", "app_sha256", "codec_capabilities"]
+    }
+  },
+  "required_cells": [
+    {
+      "id": "ingest.h264-aac",
+      "source": "h264-high-yuv420p-cfr-30000-1001-aac-mp4",
+      "derived": "avc-all-intra-yuv420p-mp4",
+      "chrome": "required_supported",
+      "wkwebview": "required_supported"
+    },
+    {
+      "id": "ingest.hevc-main10",
+      "source": "hevc-main10-vfr-aac-mov",
+      "derived": "avc-all-intra-yuv420p-mp4",
+      "chrome": "required_supported_via_proxy",
+      "wkwebview": "required_supported_via_proxy"
+    },
+    {
+      "id": "ingest.prores422-pcm",
+      "source": "prores422hq-pcm-mov",
+      "derived": "avc-all-intra-yuv420p-mp4",
+      "chrome": "required_supported_via_proxy",
+      "wkwebview": "required_supported_via_proxy"
+    },
+    {
+      "id": "ingest.prores4444-alpha",
+      "source": "prores4444-yuva444p12le-mov",
+      "derived": "vp9-yuva420p-webm",
+      "chrome": "required_supported",
+      "wkwebview": "required_supported"
+    },
+    {
+      "id": "runtime.proxy-avc",
+      "source": "committed-avc-proxy",
+      "derived": "unchanged",
+      "chrome": "required_supported",
+      "wkwebview": "required_supported"
+    },
+    {
+      "id": "runtime.proxy-vp9-alpha",
+      "source": "committed-vp9-alpha-proxy",
+      "derived": "unchanged",
+      "chrome": "required_supported",
+      "wkwebview": "required_supported"
+    },
+    {
+      "id": "audio.pcm-wav",
+      "source": "pcm-s16le-48khz-stereo-wav",
+      "derived": "unchanged",
+      "chrome": "required_supported",
+      "wkwebview": "required_supported"
+    },
+    {
+      "id": "audio.aac-lc",
+      "source": "aac-lc-48khz-stereo-m4a",
+      "derived": "unchanged",
+      "chrome": "required_supported",
+      "wkwebview": "required_supported"
+    },
+    {
+      "id": "audio.mp3",
+      "source": "mp3-48khz-stereo",
+      "derived": "unchanged",
+      "chrome": "required_supported",
+      "wkwebview": "required_supported"
+    },
+    {
+      "id": "unsupported.corrupt",
+      "source": "deterministically-truncated-video",
+      "derived": "none",
+      "chrome": "required_attributed_failure",
+      "wkwebview": "required_attributed_failure"
+    },
+    {
+      "id": "unsupported.audio",
+      "source": "deliberately-unsupported-audio",
+      "derived": "none",
+      "chrome": "required_attributed_failure",
+      "wkwebview": "required_attributed_failure"
+    },
+    {
+      "id": "fallback.approx-filter",
+      "source": "mlt-filter-outside-live-subset",
+      "derived": "one-mlt-still",
+      "chrome": "required_explicit_fallback",
+      "wkwebview": "required_explicit_fallback"
+    },
+    {
+      "id": "probe.alpha-unknown",
+      "source": "forced-alpha-probe-failure",
+      "derived": "none",
+      "chrome": "required_fail_closed",
+      "wkwebview": "required_fail_closed"
+    }
+  ],
+  "result_rules": {
+    "all_cells_remain_in_denominator": true,
+    "missing_cell_status": "blocked",
+    "silent_blank_or_silent_audio_success_forbidden": true,
+    "alpha_probe_unknown_must_not_generate_opaque_proxy": true,
+    "personal_media_can_satisfy_canonical_cells": false
+  },
+  "negative_controls": [
+    "stalled-proxy-response",
+    "corrupt-chunk",
+    "wrong-frame-timestamp",
+    "silent-or-swapped-audio-channel",
+    "opaque-alpha-substitution",
+    "missing-required-cell",
+    "unapproved-policy"
+  ]
+}
