@@ -1,12 +1,12 @@
 {
   "program": "tauri-react-remotion-harness",
-  "observed_at": "2026-07-12T01:12:43Z",
+  "observed_at": "2026-07-12T01:18:10Z",
   "target_branch": "main",
-  "target_branch_sha": "b24469368c77f751cca856ea2b4c593354bd945e",
+  "target_branch_sha": "252e174559ee6e96c0d479173116a8b2068ad626",
   "canonical_oracle": {
     "command": "bun run verify:harness --profile developer --json",
     "exit_code": 1,
-    "result": "structured OPEN at run 08aa4a04-75e8-4c36-b7c7-6d0bc2e2b551: claim-static-owned-code verifies; seven downstream developer claims remain open"
+    "result": "structured OPEN at run 1118abb8-204f-446d-ad11-f470cb13edbc: five implemented developer claims verify; browser editor and two component claims remain open"
   },
   "active_lane": "H00",
   "claims": [
@@ -33,12 +33,20 @@
       "new_gate": "fixed root/nested script-body inventory plus real viewer and macOS-only Rust pass-fail-pass controls",
       "target_branch_sha": "b24469368c77f751cca856ea2b4c593354bd945e",
       "post_integration_result": "verified: 101 files/1481 tests, both static profiles, H00 static claim, exact script no-op rejection, and macOS clippy sensitivity pass on clean canonical main"
+    },
+    {
+      "claim": "Hermetic runs, loopback mutation authority, all-exit-mode process cleanup, and the release-mode source/config webview policy are behaviorally proven.",
+      "source_of_truth": "bun run verify:fixture --json && bun run verify:webview-policy --profile release",
+      "old_failure": "tests shared mutable state, loopback writes lacked launch authority, and no outliving supervisor covered SIGKILL or timeout",
+      "new_gate": "isolated HOME/project/DB/socket fixtures, exact Host/Origin/token/cookie/nonce authority, PID/start-bound supervisor, and compiled exact-port Tauri navigation policy",
+      "target_branch_sha": "252e174559ee6e96c0d479173116a8b2068ad626",
+      "post_integration_result": "verified: exact four-claim H00 run 6d38e53c-0d85-42d7-9000-424c7ff355d3 passed with zero issues; 104 files/1498 tests and static profile passed on clean canonical main"
     }
   ],
   "roadmap_status": {
     "H00": "complete",
     "H01": "complete",
-    "H02": "open",
+    "H02": "complete",
     "H09A": "complete",
     "remaining_lanes": "open"
   }
