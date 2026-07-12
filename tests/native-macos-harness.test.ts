@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -22,6 +23,7 @@ import {
   countNativeElements,
   enabledTextFieldPredicate,
   nativePredicate,
+  observePreviewSidecars,
   waitForPreviewSidecar,
 } from "../e2e/macos/runtime";
 import { createFixture, hashFile } from "../scripts/harness/fixture";
@@ -433,6 +435,26 @@ describe("Mac2 accessibility XML inventory", () => {
 });
 
 describe("native preview sidecar polling", () => {
+  it("accepts macOS canonical /private path aliases without accepting prefix collisions", () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "vean-sidecar-alias-"));
+    const canonical = realpathSync(projectRoot);
+    const exact = nativeProcessIdentity(206, 101, `bun src/cli.ts preview --repo ${canonical}`);
+    const prefixDecoy = nativeProcessIdentity(
+      207,
+      101,
+      `bun src/cli.ts preview --repo ${canonical}-other`,
+    );
+    try {
+      const observed = observePreviewSidecars(101, projectRoot, {
+        listChildPids: () => [206, 207],
+        observeProcess: (pid) => (pid === 206 ? exact : prefixDecoy),
+      });
+      expect(observed.matching).toEqual([exact]);
+    } finally {
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   it("waits through a no-child observation for one exact delayed preview sidecar", async () => {
     let polls = 0;
     let clock = 0;

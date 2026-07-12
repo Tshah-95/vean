@@ -83,6 +83,24 @@ const previewSidecarPollDefaults: PreviewSidecarPollDependencies = {
   sleep: (durationMs) => new Promise((resolveSleep) => setTimeout(resolveSleep, durationMs)),
 };
 
+function pathAliases(path: string): string[] {
+  const aliases = new Set([path]);
+  try {
+    aliases.add(realpathSync(path));
+  } catch {
+    // Process observation must remain useful after a path disappears during
+    // teardown; the exact recorded path is still a valid identity candidate.
+  }
+  return [...aliases];
+}
+
+function commandHasRepoArgument(command: string, projectRoot: string): boolean {
+  return pathAliases(projectRoot).some((path) => {
+    const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?:^|\\s)--repo\\s+${escaped}(?:\\s|$)`).test(command);
+  });
+}
+
 export function observePreviewSidecars(
   parentPid: number,
   projectRoot: string,
@@ -105,7 +123,7 @@ export function observePreviewSidecars(
     (candidate) =>
       candidate.parentPid === parentPid &&
       candidate.command.includes("src/cli.ts preview") &&
-      candidate.command.includes(`--repo ${projectRoot}`),
+      commandHasRepoArgument(candidate.command, projectRoot),
   );
   return { parentPid, projectRoot, childPids: pids, observed, observationErrors, matching };
 }
