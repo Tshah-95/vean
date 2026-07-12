@@ -118,7 +118,11 @@ async function spawnCapture(
   args: string[],
   cwd?: string,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
-  const proc = Bun.spawn([bin, ...args], { stdout: "pipe", stderr: "pipe", ...(cwd ? { cwd } : {}) });
+  const proc = Bun.spawn([bin, ...args], {
+    stdout: "pipe",
+    stderr: "pipe",
+    ...(cwd ? { cwd } : {}),
+  });
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
