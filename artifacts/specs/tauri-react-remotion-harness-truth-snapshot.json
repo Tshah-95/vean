@@ -1,8 +1,8 @@
 {
   "program": "tauri-react-remotion-harness",
-  "observed_at": "2026-07-12T03:42:12Z",
+  "observed_at": "2026-07-12T03:43:29Z",
   "target_branch": "main",
-  "target_branch_sha": "087a7876dd0e16aac8170160ab00c38afda827b1",
+  "target_branch_sha": "170b11641b6ab4e28451aaa77494dbae05e709ee",
   "canonical_oracle": {
     "command": "bun run verify:harness --profile developer --json",
     "exit_code": 1,
@@ -63,7 +63,7 @@
       "source_of_truth": "artifacts/specs/timeline-keyboard-accessibility-contract-v1.md at SHA-256 90e92872cc4df0dc12705ee560d2e2e5e3a916210c2a2eebb73e2cbd15c9a6d1",
       "old_failure": "the product contract remained proposed and H03 could not bind implementation evidence to an approved semantic decision",
       "new_gate": "H03 and H06 scenario ledgers must reference the exact timeline-a11y-v1 path and SHA-256",
-      "target_branch_sha": "pending approval commit",
+      "target_branch_sha": "170b11641b6ab4e28451aaa77494dbae05e709ee",
       "post_integration_result": "approved by Tejas without modification on 2026-07-11; H03 dispatch authorized"
     }
   ],
