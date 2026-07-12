@@ -1,14 +1,14 @@
 {
   "program": "tauri-react-remotion-harness",
-  "observed_at": "2026-07-12T01:18:10Z",
+  "observed_at": "2026-07-12T02:36:36Z",
   "target_branch": "main",
-  "target_branch_sha": "252e174559ee6e96c0d479173116a8b2068ad626",
+  "target_branch_sha": "5e608dbc09e4146e400cf9b09d62d0c0afdc3b4a",
   "canonical_oracle": {
     "command": "bun run verify:harness --profile developer --json",
     "exit_code": 1,
     "result": "structured OPEN at run 1118abb8-204f-446d-ad11-f470cb13edbc: five implemented developer claims verify; browser editor and two component claims remain open"
   },
-  "active_lane": "H00",
+  "active_lane": "H06",
   "claims": [
     {
       "claim": "The harness evaluator independently rejects false or stale evidence and composes only explicit profile claims.",
@@ -41,12 +41,22 @@
       "new_gate": "isolated HOME/project/DB/socket fixtures, exact Host/Origin/token/cookie/nonce authority, PID/start-bound supervisor, and compiled exact-port Tauri navigation policy",
       "target_branch_sha": "252e174559ee6e96c0d479173116a8b2068ad626",
       "post_integration_result": "verified: exact four-claim H00 run 6d38e53c-0d85-42d7-9000-424c7ff355d3 passed with zero issues; 104 files/1498 tests and static profile passed on clean canonical main"
+    },
+    {
+      "claim": "The real Tauri process and its final localhost WKWebView complete a bound edit/save lifecycle without exposing production automation authority.",
+      "source_of_truth": "bun run verify:tauri --provider auto",
+      "old_failure": "Vean had no repeatable driver for its actual WKWebView and no mechanical release-instrumentation exclusion proof",
+      "new_gate": "feature-and-runtime-gated embedded WebDriver, pinned Node LTS, exact app/sidecar/listener identity, deep action-to-saved-IR truth, and real feature-mutant release scanner",
+      "target_branch_sha": "5e608dbc09e4146e400cf9b09d62d0c0afdc3b4a",
+      "post_integration_result": "verified: canonical H00 run 28e43e1f-e3f6-483a-8030-4121853a5d86 passed with zero issues; real instrumentation baseline/mutant/restore passed; 107 files/1525 tests and macOS static profile passed"
     }
   ],
   "roadmap_status": {
     "H00": "complete",
     "H01": "complete",
     "H02": "complete",
+    "H05": "complete",
+    "H05F": "no_delta",
     "H09A": "complete",
     "remaining_lanes": "open"
   }
