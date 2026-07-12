@@ -19,7 +19,9 @@ describe("CI bootstrap policy mapping", () => {
     expect(validateBootstrapPolicy(policy, workflow, packageJson)).toEqual([]);
     expect(policy.commands).toEqual(["bun run lint", "bun run typecheck", "bun run test"]);
     expect(workflow).toContain("bun install --cwd app --frozen-lockfile");
-    expect(workflow).toContain("sudo apt-get install --yes ffmpeg libxml2-utils melt");
+    expect(workflow).toContain(
+      "sudo apt-get install --yes build-essential ffmpeg file libayatana-appindicator3-dev librsvg2-dev libssl-dev libwebkit2gtk-4.1-dev libxdo-dev libxml2-utils melt",
+    );
   });
 
   it("rejects trigger removal, permissive failure, duplicate logic, and stale commands", () => {

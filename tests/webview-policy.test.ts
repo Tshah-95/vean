@@ -14,7 +14,7 @@ describe("production webview policy candidate", () => {
         encoding: "utf8",
       },
     );
-    expect(candidate.status).toBe(0);
+    expect(candidate.status, candidate.stderr).toBe(0);
     const report = JSON.parse(candidate.stdout.trim().split("\n").at(-1) ?? "{}");
     expect(report.ok).toBe(true);
     expect(report.tauriCspNonNull).toBe(true);
