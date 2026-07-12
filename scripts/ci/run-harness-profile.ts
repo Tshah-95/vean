@@ -214,7 +214,7 @@ export function validateBootstrapPolicy(
   const allowedRunSteps = runSteps.filter(
     (command) =>
       command.includes("CI_BOOTSTRAP_NOT_REACHED") ||
-      command === "bun install --frozen-lockfile" ||
+      command === "bun install --frozen-lockfile\nbun install --cwd app --frozen-lockfile" ||
       command === "bun run verify:ci-bootstrap",
   );
   if (allowedRunSteps.length !== runSteps.length)

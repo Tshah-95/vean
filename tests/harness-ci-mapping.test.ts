@@ -18,6 +18,7 @@ describe("CI bootstrap policy mapping", () => {
   it("maps the required push-main bootstrap to existing canonical commands", () => {
     expect(validateBootstrapPolicy(policy, workflow, packageJson)).toEqual([]);
     expect(policy.commands).toEqual(["bun run lint", "bun run typecheck", "bun run test"]);
+    expect(workflow).toContain("bun install --cwd app --frozen-lockfile");
   });
 
   it("rejects trigger removal, permissive failure, duplicate logic, and stale commands", () => {
