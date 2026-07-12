@@ -1,7 +1,9 @@
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import {
   type MacosShellTruthInput,
   evaluateMacosShellTruth,
+  evaluateResidualDialogControl,
 } from "../scripts/harness/macos-domain-truth";
 import {
   type TimedCommand,
@@ -24,6 +26,23 @@ function firstLaunch(overrides: Partial<TimedCommand> = {}): TimedCommand {
 }
 
 describe("native macOS doctor classification", () => {
+  it("always closes its fixture after an internal post-fixture exception", () => {
+    const result = spawnSync(
+      "bun",
+      ["scripts/doctor-macos-driver.ts", "--json", "--simulate-internal-error-after-fixture"],
+      { cwd: process.cwd(), encoding: "utf8" },
+    );
+    expect(result.status).toBe(1);
+    const output = JSON.parse(result.stdout) as {
+      reasonCode?: string;
+      failures?: Array<{ detail?: string }>;
+      checks?: { cleanup?: { detected?: unknown[] } };
+    };
+    expect(output.reasonCode).toBe("E_MACOS_DOCTOR_INTERNAL");
+    expect(output.failures?.[0]?.detail).toContain("SYNTHETIC_DOCTOR_INTERNAL_ERROR");
+    expect(output.checks?.cleanup?.detected).toEqual([]);
+  });
+
   it("prepares a real non-no-op Rust menu label mutation", () => {
     const control = prepareNativeMacosControl();
     expect(control.beforeHash).not.toBe(control.mutatedHash);
@@ -98,6 +117,7 @@ function validTruth(): MacosShellTruthInput {
       bundlePath: "/tmp/vean.app",
       bundleId: "studio.vean.h06.fixture",
       projectRoot: "/tmp/project",
+      systemPort: 10123,
       scenarioIds,
     },
     observed: {
@@ -111,18 +131,29 @@ function validTruth(): MacosShellTruthInput {
       },
       process: {
         pid: 100,
+        startedAt: "start-one",
         executable: "/tmp/vean.app/Contents/MacOS/vean",
         executableHash: "binary-hash",
       },
       quitProcess: {
         pid: 101,
+        startedAt: "start-two",
         executable: "/tmp/vean.app/Contents/MacOS/vean",
         executableHash: "binary-hash",
         bundleId: "studio.vean.h06.fixture",
         aliveAfterQuit: false,
       },
       bundleId: "studio.vean.h06.fixture",
-      session: { id: "mac2-session" },
+      session: {
+        id: "mac2-session",
+        capabilities: {
+          platformName: "mac",
+          "appium:automationName": "Mac2",
+          "appium:systemPort": 10123,
+          "appium:bundleId": "studio.vean.h06.fixture",
+          "appium:appPath": "/tmp/vean.app",
+        },
+      },
       scenarios: [
         {
           id: scenarioIds[0],
@@ -166,6 +197,24 @@ describe("native macOS domain truth", () => {
   });
 
   for (const [name, mutate, failedPredicate] of [
+    [
+      "replayed initial process as relaunch",
+      (input: MacosShellTruthInput) => {
+        if (input.observed.process && input.observed.quitProcess) {
+          input.observed.quitProcess.pid = input.observed.process.pid;
+          input.observed.quitProcess.startedAt = input.observed.process.startedAt;
+        }
+      },
+      "independentlyObservedQuitProcess",
+    ],
+    [
+      "substituted Mac2 session capability",
+      (input: MacosShellTruthInput) => {
+        const capabilities = input.observed.session?.capabilities;
+        if (capabilities) capabilities["appium:systemPort"] = 9999;
+      },
+      "driverSession",
+    ],
     [
       "substituted executable",
       (input: MacosShellTruthInput) => {
@@ -234,4 +283,26 @@ describe("native macOS domain truth", () => {
       expect(evaluateMacosShellTruth(input)[failedPredicate]).toBe(false);
     });
   }
+
+  it("rejects a residual marker without an actual native dialog inventory", () => {
+    expect(
+      evaluateResidualDialogControl({
+        markerSeen: true,
+        record: { residualDialogControl: true, residual: { dialogs: 0, sheets: 0 } },
+        cleanupDetected: [],
+      }),
+    ).toMatchObject({ nativeDialogObserved: false });
+  });
+
+  it("accepts residual-dialog detection only after clean forced teardown", () => {
+    expect(
+      Object.values(
+        evaluateResidualDialogControl({
+          markerSeen: true,
+          record: { residualDialogControl: true, residual: { dialogs: 1, sheets: 0 } },
+          cleanupDetected: [],
+        }),
+      ).every(Boolean),
+    ).toBe(true);
+  });
 });

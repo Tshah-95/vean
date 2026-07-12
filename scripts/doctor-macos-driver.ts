@@ -34,199 +34,217 @@ const fixture = await createFixture({
 });
 const fixtureAppiumHome = join(fixture.root, "appium-home");
 const localMac2Path = join(repo, "node_modules/appium-mac2-driver");
-checks.localDriverSource = {
-  path: localMac2Path,
-  hash: hashPath(localMac2Path),
-  manifestHash: hashPath(join(localMac2Path, "package.json")),
-};
+let server: ReturnType<typeof spawn> | null = null;
+let session: Awaited<ReturnType<typeof remote>> | null = null;
+let serverStdout = "";
+let serverStderr = "";
 
 function fail(code: string, detail: string, userAction?: string): void {
   failures.push({ code, detail, ...(userAction ? { userAction } : {}) });
 }
 
-if (process.platform !== "darwin") fail("E_MACOS_REQUIRED", process.platform);
-
-const packageJson = JSON.parse(readFileSync(join(repo, "package.json"), "utf8")) as {
-  devDependencies?: Record<string, string>;
-};
-checks.packagePins = {
-  appium: packageJson.devDependencies?.appium,
-  mac2: packageJson.devDependencies?.["appium-mac2-driver"],
-  webdriverio: packageJson.devDependencies?.webdriverio,
-};
-if (packageJson.devDependencies?.appium !== APPIUM_VERSION)
-  fail("E_APPIUM_PIN", String(packageJson.devDependencies?.appium));
-if (packageJson.devDependencies?.["appium-mac2-driver"] !== MAC2_VERSION)
-  fail("E_MAC2_PIN", String(packageJson.devDependencies?.["appium-mac2-driver"]));
-
-const node = await runTimed(["mise", "exec", `node@${MACOS_NODE_VERSION}`, "--", "node", "-v"], {
-  cwd: repo,
-});
-checks.node = node;
-if (node.exitCode !== 0 || node.stdout !== `v${MACOS_NODE_VERSION}`)
-  fail("E_NODE_LTS", node.stderr || node.stdout || "pinned Node unavailable");
-
-const xcode = await runTimed(["xcodebuild", "-version"], { cwd: repo });
-const developerDir = await runTimed(["xcode-select", "-p"], { cwd: repo });
-const firstLaunch = await runTimed(["xcodebuild", "-checkFirstLaunchStatus"], {
-  cwd: repo,
-  timeoutMs: 15_000,
-});
-checks.xcode = { version: xcode, developerDir, firstLaunch };
-if (xcode.exitCode !== 0 || !/^Xcode\s+\d+/m.test(xcode.stdout))
-  fail("E_XCODE", xcode.stderr || xcode.stdout);
-if (!developerDir.stdout.endsWith("/Contents/Developer"))
-  fail("E_XCODE_SELECT", developerDir.stderr || developerDir.stdout);
-const firstLaunchFailure = classifyXcodeFirstLaunch(firstLaunch);
-if (firstLaunchFailure)
-  fail(firstLaunchFailure.code, firstLaunchFailure.detail, firstLaunchFailure.userAction);
-
-const xcodeHelper = join(
-  developerDir.stdout,
-  "Platforms/MacOSX.platform/Developer/Library/Xcode/Agents/Xcode Helper.app",
-);
-const helperSignature = existsSync(xcodeHelper)
-  ? await runTimed(["codesign", "--verify", "--deep", "--strict", xcodeHelper], { cwd: repo })
-  : null;
-checks.xcodeHelper = {
-  path: xcodeHelper,
-  exists: existsSync(xcodeHelper),
-  signature: helperSignature,
-};
-if (!existsSync(xcodeHelper) || helperSignature?.exitCode !== 0)
-  fail("E_XCODE_HELPER", helperSignature?.stderr ?? "signed Xcode Helper is absent");
-
-let driverInstalled = false;
-if (
-  packageJson.devDependencies?.appium === APPIUM_VERSION &&
-  packageJson.devDependencies?.["appium-mac2-driver"] === MAC2_VERSION &&
-  node.exitCode === 0
-) {
-  const install = await ensureMac2Installed(repo, fixtureAppiumHome);
-  checks.driverInstall = install;
-  if (install.exitCode !== 0 || install.timedOut) {
-    fail("E_MAC2_INSTALL", install.stderr || install.stdout);
-  } else {
-    const driverList = await runTimed(
-      pinnedNodeCommand(repo, ["driver", "list", "--installed", "--json"]),
-      {
-        cwd: repo,
-        env: { APPIUM_HOME: fixtureAppiumHome },
-      },
-    );
-    checks.driverList = driverList;
-    let installed = false;
-    try {
-      const parsed = JSON.parse(driverList.stdout) as {
-        mac2?: { version?: string; installed?: boolean };
-      };
-      installed = parsed.mac2?.version === MAC2_VERSION && parsed.mac2.installed === true;
-    } catch {}
-    driverInstalled = installed;
-    if (!installed) fail("E_MAC2_NOT_INSTALLED", driverList.stderr || driverList.stdout);
+try {
+  if (process.argv.includes("--simulate-internal-error-after-fixture")) {
+    throw new Error("SYNTHETIC_DOCTOR_INTERNAL_ERROR");
   }
-}
+  checks.localDriverSource = {
+    path: localMac2Path,
+    hash: hashPath(localMac2Path),
+    manifestHash: hashPath(join(localMac2Path, "package.json")),
+  };
 
-if (failures.length === 0 && driverInstalled) {
-  const port = fixture.descriptor.webdriverPort;
-  const systemPort = fixture.descriptor.vitePort;
-  const [serverCommand, ...serverArgs] = pinnedNodeCommand(repo, [
-    "--address",
-    "127.0.0.1",
-    "--port",
-    String(port),
-  ]);
-  if (!serverCommand) throw new Error("pinned Appium server command is empty");
-  const server = spawn(serverCommand, serverArgs, {
+  if (process.platform !== "darwin") fail("E_MACOS_REQUIRED", process.platform);
+
+  const packageJson = JSON.parse(readFileSync(join(repo, "package.json"), "utf8")) as {
+    devDependencies?: Record<string, string>;
+  };
+  checks.packagePins = {
+    appium: packageJson.devDependencies?.appium,
+    mac2: packageJson.devDependencies?.["appium-mac2-driver"],
+    webdriverio: packageJson.devDependencies?.webdriverio,
+  };
+  if (packageJson.devDependencies?.appium !== APPIUM_VERSION)
+    fail("E_APPIUM_PIN", String(packageJson.devDependencies?.appium));
+  if (packageJson.devDependencies?.["appium-mac2-driver"] !== MAC2_VERSION)
+    fail("E_MAC2_PIN", String(packageJson.devDependencies?.["appium-mac2-driver"]));
+
+  const node = await runTimed(["mise", "exec", `node@${MACOS_NODE_VERSION}`, "--", "node", "-v"], {
     cwd: repo,
-    env: { ...process.env, APPIUM_HOME: fixtureAppiumHome },
-    detached: true,
-    stdio: ["ignore", "pipe", "pipe"],
   });
-  let serverStdout = "";
-  let serverStderr = "";
-  server.stdout?.on("data", (chunk) => {
-    serverStdout += String(chunk);
-  });
-  server.stderr?.on("data", (chunk) => {
-    serverStderr += String(chunk);
-  });
-  if (!server.pid) throw new Error("Appium doctor server has no PID");
-  const startedAt = Bun.spawnSync(["ps", "-p", String(server.pid), "-o", "lstart="], {
+  checks.node = node;
+  if (node.exitCode !== 0 || node.stdout !== `v${MACOS_NODE_VERSION}`)
+    fail("E_NODE_LTS", node.stderr || node.stdout || "pinned Node unavailable");
+
+  const xcode = await runTimed(["xcodebuild", "-version"], { cwd: repo });
+  const developerDir = await runTimed(["xcode-select", "-p"], { cwd: repo });
+  const firstLaunch = await runTimed(["xcodebuild", "-checkFirstLaunchStatus"], {
     cwd: repo,
-  })
-    .stdout.toString()
-    .trim();
-  recordProcess(fixture.descriptor.processLedger, {
-    pid: server.pid,
-    marker: `vean-h06-doctor-${fixture.descriptor.runId}`,
-    executable: "appium/index.js",
-    startedAt,
+    timeoutMs: 15_000,
   });
-  let session: Awaited<ReturnType<typeof remote>> | null = null;
-  try {
-    await waitForAppium(port);
-    session = await Promise.race([
-      remote({
-        hostname: "127.0.0.1",
-        port,
-        path: "/",
-        logLevel: "error",
-        connectionRetryTimeout: 150_000,
-        capabilities: {
-          platformName: "mac",
-          "appium:automationName": "Mac2",
-          "appium:systemPort": systemPort,
-          "appium:showServerLogs": true,
+  checks.xcode = { version: xcode, developerDir, firstLaunch };
+  if (xcode.exitCode !== 0 || !/^Xcode\s+\d+/m.test(xcode.stdout))
+    fail("E_XCODE", xcode.stderr || xcode.stdout);
+  if (!developerDir.stdout.endsWith("/Contents/Developer"))
+    fail("E_XCODE_SELECT", developerDir.stderr || developerDir.stdout);
+  const firstLaunchFailure = classifyXcodeFirstLaunch(firstLaunch);
+  if (firstLaunchFailure)
+    fail(firstLaunchFailure.code, firstLaunchFailure.detail, firstLaunchFailure.userAction);
+
+  const xcodeHelper = join(
+    developerDir.stdout,
+    "Platforms/MacOSX.platform/Developer/Library/Xcode/Agents/Xcode Helper.app",
+  );
+  const helperSignature = existsSync(xcodeHelper)
+    ? await runTimed(["codesign", "--verify", "--deep", "--strict", xcodeHelper], { cwd: repo })
+    : null;
+  checks.xcodeHelper = {
+    path: xcodeHelper,
+    exists: existsSync(xcodeHelper),
+    signature: helperSignature,
+  };
+  if (!existsSync(xcodeHelper) || helperSignature?.exitCode !== 0)
+    fail("E_XCODE_HELPER", helperSignature?.stderr ?? "signed Xcode Helper is absent");
+
+  let driverInstalled = false;
+  if (
+    packageJson.devDependencies?.appium === APPIUM_VERSION &&
+    packageJson.devDependencies?.["appium-mac2-driver"] === MAC2_VERSION &&
+    node.exitCode === 0
+  ) {
+    const install = await ensureMac2Installed(repo, fixtureAppiumHome);
+    checks.driverInstall = install;
+    if (install.exitCode !== 0 || install.timedOut) {
+      fail("E_MAC2_INSTALL", install.stderr || install.stdout);
+    } else {
+      const driverList = await runTimed(
+        pinnedNodeCommand(repo, ["driver", "list", "--installed", "--json"]),
+        {
+          cwd: repo,
+          env: { APPIUM_HOME: fixtureAppiumHome },
         },
-      }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Mac2 probe session timed out after 180s")), 180_000),
-      ),
+      );
+      checks.driverList = driverList;
+      let installed = false;
+      try {
+        const parsed = JSON.parse(driverList.stdout) as {
+          mac2?: { version?: string; installed?: boolean };
+        };
+        installed = parsed.mac2?.version === MAC2_VERSION && parsed.mac2.installed === true;
+      } catch {}
+      driverInstalled = installed;
+      if (!installed) fail("E_MAC2_NOT_INSTALLED", driverList.stderr || driverList.stdout);
+    }
+  }
+
+  if (failures.length === 0 && driverInstalled) {
+    const port = fixture.descriptor.webdriverPort;
+    const systemPort = fixture.descriptor.vitePort;
+    const [serverCommand, ...serverArgs] = pinnedNodeCommand(repo, [
+      "--address",
+      "127.0.0.1",
+      "--port",
+      String(port),
     ]);
-    const source = await session.getPageSource();
-    const active = await session.getActiveElement().catch(() => null);
-    checks.sessionProbe = {
-      sessionId: session.sessionId,
-      capabilities: session.capabilities,
-      accessibilityTreeBytes: Buffer.byteLength(source),
-      activeElementObserved: active !== null,
-    };
-    if (!source.includes("XCUIElementType"))
-      fail("E_ACCESSIBILITY_TREE", "Mac2 returned no native accessibility tree");
-  } catch (error) {
-    fail(
-      "E_MAC2_SESSION_PERMISSION",
-      String(error),
-      `Grant Accessibility to ${xcodeHelper}, allow Xcode Automation when prompted, then rerun bun run doctor:macos-driver.`,
-    );
-  } finally {
-    if (session) await session.deleteSession().catch(() => undefined);
+    if (!serverCommand) throw new Error("pinned Appium server command is empty");
+    server = spawn(serverCommand, serverArgs, {
+      cwd: repo,
+      env: { ...process.env, APPIUM_HOME: fixtureAppiumHome },
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    server.stdout?.on("data", (chunk) => {
+      serverStdout += String(chunk);
+    });
+    server.stderr?.on("data", (chunk) => {
+      serverStderr += String(chunk);
+    });
+    if (!server.pid) throw new Error("Appium doctor server has no PID");
+    const serverPid = server.pid;
+    const startedAt = Bun.spawnSync(["ps", "-p", String(serverPid), "-o", "lstart="], {
+      cwd: repo,
+    })
+      .stdout.toString()
+      .trim();
+    recordProcess(fixture.descriptor.processLedger, {
+      pid: serverPid,
+      marker: `vean-h06-doctor-${fixture.descriptor.runId}`,
+      executable: "appium/index.js",
+      startedAt,
+    });
     try {
-      process.kill(-server.pid, "SIGTERM");
+      await waitForAppium(port);
+      session = await Promise.race([
+        remote({
+          hostname: "127.0.0.1",
+          port,
+          path: "/",
+          logLevel: "error",
+          connectionRetryTimeout: 150_000,
+          capabilities: {
+            platformName: "mac",
+            "appium:automationName": "Mac2",
+            "appium:systemPort": systemPort,
+            "appium:showServerLogs": true,
+          },
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Mac2 probe session timed out after 180s")), 180_000),
+        ),
+      ]);
+      const source = await session.getPageSource();
+      const active = await session.getActiveElement().catch(() => null);
+      checks.sessionProbe = {
+        sessionId: session.sessionId,
+        capabilities: session.capabilities,
+        accessibilityTreeBytes: Buffer.byteLength(source),
+        activeElementObserved: active !== null,
+      };
+      if (!source.includes("XCUIElementType"))
+        fail("E_ACCESSIBILITY_TREE", "Mac2 returned no native accessibility tree");
+    } catch (error) {
+      fail(
+        "E_MAC2_SESSION_PERMISSION",
+        String(error),
+        `Grant Accessibility to ${xcodeHelper}, allow Xcode Automation when prompted, then rerun bun run doctor:macos-driver.`,
+      );
+    }
+  }
+} catch (error) {
+  fail("E_MACOS_DOCTOR_INTERNAL", String(error));
+} finally {
+  if (session) await session.deleteSession().catch(() => undefined);
+  if (server?.pid) {
+    const serverPid = server.pid;
+    try {
+      process.kill(-serverPid, "SIGTERM");
     } catch {}
     await Promise.race([
-      new Promise((done) => server.once("close", done)),
+      new Promise((done) => server?.once("close", done)),
       new Promise((done) => setTimeout(done, 5_000)),
     ]);
     try {
-      process.kill(-server.pid, "SIGKILL");
+      process.kill(-serverPid, "SIGKILL");
     } catch {}
-    checks.serverLogs = { stdout: serverStdout, stderr: serverStderr };
+  }
+  checks.serverLogs = { stdout: serverStdout, stderr: serverStderr };
+  const developerAppiumAfter = existsSync(developerAppiumHome)
+    ? hashPath(developerAppiumHome)
+    : null;
+  checks.appiumIsolation = {
+    fixtureOwnedHome: fixtureAppiumHome,
+    developerHome: developerAppiumHome,
+    developerHashBefore: developerAppiumBefore,
+    developerHashAfter: developerAppiumAfter,
+  };
+  if (developerAppiumBefore !== developerAppiumAfter) {
+    fail("E_DEVELOPER_APPIUM_MUTATED", "the doctor changed ~/.appium");
+  }
+  try {
+    checks.cleanup = await fixture.close();
+  } catch (error) {
+    fail("E_MACOS_DOCTOR_CLEANUP", String(error));
   }
 }
-
-const developerAppiumAfter = existsSync(developerAppiumHome) ? hashPath(developerAppiumHome) : null;
-checks.appiumIsolation = {
-  fixtureOwnedHome: fixtureAppiumHome,
-  developerHome: developerAppiumHome,
-  developerHashBefore: developerAppiumBefore,
-  developerHashAfter: developerAppiumAfter,
-};
-if (developerAppiumBefore !== developerAppiumAfter) {
-  fail("E_DEVELOPER_APPIUM_MUTATED", "the doctor changed ~/.appium");
-}
-checks.cleanup = await fixture.close();
 
 const result = {
   ok: failures.length === 0,

@@ -7,6 +7,7 @@ export type MacosShellTruthInput = {
     bundlePath: string;
     bundleId: string;
     projectRoot: string;
+    systemPort: number;
     scenarioIds: string[];
   };
   observed: {
@@ -14,16 +15,17 @@ export type MacosShellTruthInput = {
     sourceSha?: string;
     fixtureRunId?: string;
     binary?: { path?: string; hash?: string; bundlePath?: string };
-    process?: { pid?: number; executable?: string; executableHash?: string };
+    process?: { pid?: number; startedAt?: string; executable?: string; executableHash?: string };
     quitProcess?: {
       pid?: number;
+      startedAt?: string;
       executable?: string;
       executableHash?: string;
       bundleId?: string;
       aliveAfterQuit?: boolean;
     };
     bundleId?: string;
-    session?: { id?: string };
+    session?: { id?: string; capabilities?: Record<string, unknown> };
     scenarios?: Array<Record<string, unknown> & { id?: string }>;
   };
   cleanupDetected: unknown[];
@@ -49,6 +51,11 @@ export function evaluateMacosShellTruth(input: MacosShellTruthInput): Record<str
     | undefined;
   const process = input.observed.process;
   const quitProcess = input.observed.quitProcess;
+  const capabilities = input.observed.session?.capabilities;
+  const automationName = capabilities?.["appium:automationName"] ?? capabilities?.automationName;
+  const systemPort = capabilities?.["appium:systemPort"] ?? capabilities?.systemPort;
+  const bundleId = capabilities?.["appium:bundleId"] ?? capabilities?.bundleId;
+  const appPath = capabilities?.["appium:appPath"] ?? capabilities?.appPath;
   const ids = input.observed.scenarios?.map((candidate) => candidate.id).filter(Boolean) ?? [];
   return {
     nativeResult: input.observed.ok === true,
@@ -68,9 +75,16 @@ export function evaluateMacosShellTruth(input: MacosShellTruthInput): Record<str
       quitProcess?.executable === input.expected.binaryPath &&
       quitProcess?.executableHash === input.expected.binaryHash &&
       Number.isInteger(quitProcess.pid) &&
+      (quitProcess?.pid !== process?.pid || quitProcess?.startedAt !== process?.startedAt) &&
       quitProcess?.bundleId === input.expected.bundleId &&
       quitProcess.aliveAfterQuit === false,
-    driverSession: Boolean(input.observed.session?.id),
+    driverSession:
+      Boolean(input.observed.session?.id) &&
+      String(capabilities?.platformName).toLowerCase() === "mac" &&
+      automationName === "Mac2" &&
+      systemPort === input.expected.systemPort &&
+      bundleId === input.expected.bundleId &&
+      appPath === input.expected.bundlePath,
     exactScenarioLedger:
       ids.length === input.expected.scenarioIds.length &&
       input.expected.scenarioIds.every((id) => ids.includes(id)),
@@ -97,5 +111,22 @@ export function evaluateMacosShellTruth(input: MacosShellTruthInput): Record<str
       typeof quit?.accessibleName === "string" && quit.accessibleName.startsWith("Quit"),
     noResidualHarnessResources: input.cleanupDetected.length === 0,
     developerStateUnchanged: input.developerStateUnchanged,
+  };
+}
+
+export function evaluateResidualDialogControl(input: {
+  markerSeen: boolean;
+  record?: {
+    residualDialogControl?: boolean;
+    residual?: { dialogs?: number; sheets?: number };
+  };
+  cleanupDetected: unknown[];
+}): Record<string, boolean> {
+  return {
+    exactFailureMarker: input.markerSeen,
+    actualResidualRecord: input.record?.residualDialogControl === true,
+    nativeDialogObserved:
+      (input.record?.residual?.dialogs ?? 0) + (input.record?.residual?.sheets ?? 0) > 0,
+    cleanupAfterDetection: input.cleanupDetected.length === 0,
   };
 }

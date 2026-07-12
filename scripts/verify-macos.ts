@@ -17,7 +17,10 @@ import {
   writeVerifiedEvidence,
 } from "./harness/evidence";
 import { createFixture, hashFile } from "./harness/fixture";
-import { evaluateMacosShellTruth } from "./harness/macos-domain-truth";
+import {
+  evaluateMacosShellTruth,
+  evaluateResidualDialogControl,
+} from "./harness/macos-domain-truth";
 import {
   buildMacosBlockedEvidence,
   ensureMac2Installed,
@@ -349,6 +352,24 @@ if (negativePhase || residualControl) {
   if (wdioExit === 0 || !`${wdioStdout}\n${wdioStderr}`.includes(marker)) {
     throw new Error(`native negative control failed at the wrong boundary (wdio=${wdioExit})`);
   }
+  if (residualControl) {
+    const record = Bun.file(nativeResultPath).size
+      ? (JSON.parse(readFileSync(nativeResultPath, "utf8")) as {
+          residualDialogControl?: boolean;
+          residual?: { dialogs?: number; sheets?: number };
+        })
+      : undefined;
+    const residualPredicate = evaluateResidualDialogControl({
+      markerSeen: `${wdioStdout}\n${wdioStderr}`.includes(marker),
+      record,
+      cleanupDetected: cleanup?.detected ?? ["cleanup missing"],
+    });
+    if (!Object.values(residualPredicate).every(Boolean)) {
+      throw new Error(
+        `residual-dialog control did not prove detection and cleanup: ${JSON.stringify(residualPredicate)}`,
+      );
+    }
+  }
   if (negativePhase) writeControlFailure("SENSITIVITY_NATIVE_MACOS_SHELL", nativeMacosControlId);
   console.log(JSON.stringify({ ok: true, reasonCode: marker, cleanup, artifactDir: durableDir }));
   process.exit(0);
@@ -363,10 +384,11 @@ const native = JSON.parse(readFileSync(nativeResultPath, "utf8")) as {
   fixtureRunId?: string;
   binary?: { path?: string; hash?: string; bundlePath?: string };
   bundleId?: string;
-  session?: { id?: string; capabilities?: unknown };
-  process?: { pid?: number; executable?: string; executableHash?: string };
+  session?: { id?: string; capabilities?: Record<string, unknown> };
+  process?: { pid?: number; startedAt?: string; executable?: string; executableHash?: string };
   quitProcess?: {
     pid?: number;
+    startedAt?: string;
     executable?: string;
     executableHash?: string;
     bundleId?: string;
@@ -396,6 +418,7 @@ const predicate = evaluateMacosShellTruth({
     bundlePath: context.bundlePath,
     bundleId: context.bundleId,
     projectRoot: fixture.descriptor.projectRoot,
+    systemPort: fixture.descriptor.vitePort,
     scenarioIds: expectedScenarios,
   },
   observed: native,
@@ -429,7 +452,7 @@ writeVerifiedEvidence({
   claimId: "claim-native-macos-shell",
   oracleCommand: "bun run verify:macos",
   expectedPredicate:
-    "serialized development Mac2 ledger passes with exact app hash, bundle ID, driver session, semantic menu/panel/window/quit actions, focus restoration, and cleanup",
+    "the H06 development Mac2 ledger passes with exact source/app hash, bundle ID, driver session, semantic accessibility locators, focus restoration, and cleanup",
   controlId: nativeMacosControlId,
   fixturePath: contextPath,
   commandPath: join(repo, "scripts/verify-macos.ts"),
