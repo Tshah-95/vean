@@ -101,7 +101,11 @@ run(
 
 run(["bun", "run", "--cwd", "viewer", "build"]);
 const bundleId = `studio.vean.desktop.harness.s${sourceSha.slice(0, 12)}`;
-const buildRoot = join(repo, ".vean/harness/builds", `h05-${sourceSha}`);
+const buildRoot = join(
+  repo,
+  ".vean/harness/builds",
+  `h05-${sourceSha}-${fixture.descriptor.runId}`,
+);
 const tauriOverlay = JSON.stringify({
   identifier: bundleId,
   bundle: { active: true, targets: ["app"], externalBin: [], resources: [] },
@@ -346,12 +350,15 @@ writeVerifiedEvidence({
   claimId: "claim-tauri-wkwebview",
   oracleCommand: "bun run verify:tauri --provider auto",
   expectedPredicate:
-    "the embedded-safe provider binds exact app binary/PID/bundle/main window/final localhost WKWebView/WebKit/session/fixture/source identities to a real edit, Save, persisted .mlt parse, and cleanup",
+    "one approved provider branch binds exact binary hash, PID/bundle/window, final URL, WebKit identity, run nonce, canonical action/document result, and cleanup",
   controlId,
   fixturePath: durableFixturePath,
   commandPath: join(repo, "scripts/verify-tauri.ts"),
   implementationPaths: [
+    join(repo, "package.json"),
+    join(repo, "vitest.config.ts"),
     join(repo, "scripts/verify-tauri.ts"),
+    join(repo, "scripts/doctor-tauri-driver.ts"),
     join(repo, "scripts/harness/tauri-identity.ts"),
     join(repo, "scripts/harness/tauri-ledger-monitor.ts"),
     join(repo, "wdio.tauri.conf.ts"),
@@ -360,6 +367,7 @@ writeVerifiedEvidence({
     join(repo, "app/src-tauri/Cargo.toml"),
     join(repo, "app/src-tauri/src/lib.rs"),
     join(repo, "artifacts/specs/harness-scenarios/tauri.json"),
+    join(repo, "tests/tauri-harness-contract.test.ts"),
   ],
   generatedPaths: [
     nativeResultPath,
