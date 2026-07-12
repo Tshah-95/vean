@@ -121,7 +121,12 @@ function main(): void {
 
   const runId = process.env.VEAN_HARNESS_RUN_ID ?? randomUUID();
   const claimRunId = process.env.VEAN_HARNESS_CLAIM_RUN_ID ?? `${runId}:${claimId}`;
-  const summaryPath = resolve(dirname(evidencePath), "claim-static-owned-code-results.json");
+  const safeClaimRunId = claimRunId.replace(/[^a-zA-Z0-9._-]/g, "-");
+  const summaryPath = resolve(
+    dirname(evidencePath),
+    "artifacts",
+    `${safeClaimRunId}-static-results.json`,
+  );
   writeJson(summaryPath, {
     contract_version: "1.0.0",
     claim_id: claimId,
