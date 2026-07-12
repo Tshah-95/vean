@@ -27,6 +27,8 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
+mod harness_static_probe;
+
 const MACOS_RENDERER_TRIPLE: &str = "aarch64-apple-darwin";
 
 /// The live preview sidecar: the child process, the port it bound, and the project

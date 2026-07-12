@@ -136,7 +136,7 @@ function main(): void {
   const failed = results.find((result) => result.exit !== 0);
 
   if (phase === "negative-control") {
-    const expectedFailure = failed?.id === "viewer-typecheck";
+    const expectedFailure = failed?.id === "rust-clippy-macos";
     writeJson(evidencePath, {
       contract_version: "1.0.0",
       control_id: control.controlId,

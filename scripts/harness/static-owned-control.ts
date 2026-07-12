@@ -6,21 +6,21 @@ import { dirname, relative, resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "../..");
 const controlRoot = resolve(root, ".vean/harness/static-control");
-const target = resolve(root, "viewer/src/harness-static-probe.ts");
-const beforeSnapshot = resolve(controlRoot, "harness-static-probe.before.ts");
-const mutatedSnapshot = resolve(controlRoot, "harness-static-probe.mutated.ts");
+const target = resolve(root, "app/src-tauri/src/harness_static_probe.rs");
+const beforeSnapshot = resolve(controlRoot, "harness_static_probe.before.rs");
+const mutatedSnapshot = resolve(controlRoot, "harness_static_probe.mutated.rs");
 const mutationManifest = resolve(controlRoot, "mutation.json");
 const controlId = "nc-static-owned-code";
 
 const BASELINE = [
-  "// This owned source file is the H01 sensitivity probe. The harness temporarily",
-  "// replaces it with a type-invalid snapshot and must observe viewer:typecheck fail.",
-  'export const harnessStaticProbe: string = "baseline";',
+  "// H01 macOS-cfg sensitivity probe. The harness temporarily replaces this file",
+  "// with a dead-code warning and requires pinned-target Clippy to reject it.",
   "",
 ].join("\n");
 const MUTATED = [
-  "// Intentional H01 negative control: this assignment must fail strict typechecking.",
-  "export const harnessStaticProbe: string = 42;",
+  "// Intentional H01 negative control: valid Rust that warns only for the macOS target.",
+  '#[cfg(target_os = "macos")]',
+  "fn intentionally_unused_macos_static_probe() {}",
   "",
 ].join("\n");
 
