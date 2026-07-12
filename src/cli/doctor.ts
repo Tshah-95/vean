@@ -39,18 +39,14 @@ function readJson(path: string): unknown {
 }
 
 function findCommand(command: string): string | null {
-  const current = spawnSync("zsh", ["-f", "-lc", `command -v ${command}`], {
+  const current = spawnSync("sh", ["-lc", `command -v ${command}`], {
     encoding: "utf8",
   });
   if (current.status === 0 && current.stdout.trim())
     return current.stdout.trim().split("\n")[0] ?? null;
-  const login = spawnSync(
-    "zsh",
-    ["-f", "-lc", `PATH="$HOME/.local/bin:$PATH"; command -v ${command}`],
-    {
-      encoding: "utf8",
-    },
-  );
+  const login = spawnSync("sh", ["-lc", `PATH="$HOME/.local/bin:$PATH"; command -v ${command}`], {
+    encoding: "utf8",
+  });
   if (login.status === 0 && login.stdout.trim()) return login.stdout.trim().split("\n")[0] ?? null;
   return null;
 }
