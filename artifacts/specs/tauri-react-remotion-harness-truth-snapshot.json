@@ -1,12 +1,12 @@
 {
   "program": "tauri-react-remotion-harness",
-  "observed_at": "2026-07-12T02:36:36Z",
+  "observed_at": "2026-07-12T03:16:14Z",
   "target_branch": "main",
-  "target_branch_sha": "5e608dbc09e4146e400cf9b09d62d0c0afdc3b4a",
+  "target_branch_sha": "087a7876dd0e16aac8170160ab00c38afda827b1",
   "canonical_oracle": {
     "command": "bun run verify:harness --profile developer --json",
     "exit_code": 1,
-    "result": "structured OPEN at run 1118abb8-204f-446d-ad11-f470cb13edbc: five implemented developer claims verify; browser editor and two component claims remain open"
+    "result": "structured OPEN at run e54d2714-8ac3-488b-9a19-cc9e88f2f2cc: the unimplemented H03/H04 browser and component claims remain open; H06 is outside the developer profile and separately blocked on Xcode first launch"
   },
   "active_lane": "H06",
   "claims": [
@@ -49,6 +49,14 @@
       "new_gate": "feature-and-runtime-gated embedded WebDriver, pinned Node LTS, exact app/sidecar/listener identity, deep action-to-saved-IR truth, and real feature-mutant release scanner",
       "target_branch_sha": "5e608dbc09e4146e400cf9b09d62d0c0afdc3b4a",
       "post_integration_result": "verified: canonical H00 run 28e43e1f-e3f6-483a-8030-4121853a5d86 passed with zero issues; real instrumentation baseline/mutant/restore passed; 107 files/1525 tests and macOS static profile passed"
+    },
+    {
+      "claim": "The H06 development app exposes native menus, file panels, window lifecycle, focus restoration, and semantic Quit through a fixture-owned Mac2 session.",
+      "source_of_truth": "bun run verify:macos",
+      "old_failure": "Vean had no native-shell driver, no Mac2 doctor, and no semantic native accessibility ledger",
+      "new_gate": "pinned Node 24.15.0, Appium 3.5.2, and Mac2 4.0.3; fixture-owned APPIUM_HOME; exact process/app/session identity; semantic native scenarios; residual-dialog and real Rust-label controls; all-exit cleanup",
+      "target_branch_sha": "087a7876dd0e16aac8170160ab00c38afda827b1",
+      "post_integration_result": "blocked_external: canonical main emits predicate=false with E_XCODE_FIRST_LAUNCH because xcodebuild -checkFirstLaunchStatus exits 69; 73 focused canonical tests, root/H06 typechecks, and lint pass; independent verifier accepted exact implementation SHA 7495b686066b5dbadc776546755d7224cc1f09ae"
     }
   ],
   "roadmap_status": {
@@ -57,6 +65,7 @@
     "H02": "complete",
     "H05": "complete",
     "H05F": "no_delta",
+    "H06": "blocked_external",
     "H09A": "complete",
     "remaining_lanes": "open"
   }
