@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mlt LC_NUMERIC="C" root="" title="H07 lower-third parity">
+  <profile description="H07 vertical 1080x1920 30fps" width="1080" height="1920" progressive="1" frame_rate_num="30" frame_rate_den="1" sample_aspect_num="1" sample_aspect_den="1" display_aspect_num="9" display_aspect_den="16" colorspace="709"/>
+  <producer id="base" in="0" out="120"><property name="mlt_service">color</property><property name="resource">#FF241A52</property><property name="length">121</property><property name="shotcut:uuid">h07-base</property></producer>
+  <producer id="graphic" in="0" out="89"><property name="resource">.vean/cache/remotion/lower-third.mov</property><property name="length">90</property><property name="shotcut:uuid">h07-lower-third</property><property name="vean:composition">LowerThird</property><property name="vean:compositionProps">{&quot;title&quot;:&quot;vean&quot;,&quot;subtitle&quot;:&quot;video editor, agent native&quot;,&quot;accent&quot;:&quot;#c7ae7a&quot;,&quot;barColor&quot;:&quot;#11131aee&quot;}</property></producer>
+  <playlist id="v1"><property name="shotcut:video">1</property><property name="shotcut:audio">0</property><entry producer="base" in="0" out="120"/></playlist>
+  <playlist id="v2"><property name="shotcut:video">1</property><property name="shotcut:audio">0</property><blank length="30"/><entry producer="graphic" in="0" out="89"/><blank length="1"/></playlist>
+  <tractor id="main" shotcut="1"><track producer="v1"/><track producer="v2"/><transition mlt_service="qtblend" in="0" out="120"><property name="a_track">0</property><property name="b_track">1</property></transition></tractor>
+</mlt>

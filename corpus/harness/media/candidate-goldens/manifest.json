@@ -1,0 +1,195 @@
+{
+  "schema_version": "1.0.0",
+  "status": "candidate-unapproved",
+  "acceptance_eligible": false,
+  "policy_sha256": "190a7d46b0f35d29cbb49f8512688687dde06e30266edeae547f5480a2ad73e6",
+  "fixture_manifest_sha256": "7e8a9684ccd86de9af5564636401f424e5c3709be4eca9ad305e57987aa81cd5",
+  "canonical_props_sha256": "5b7cbcbfa03cdac63110033245ceb172a530939d1954862163afc706ea9ed079",
+  "composition_source_sha256": "f94274ed00d0dc0ce260e8bda536dae83cd3348964764e13ad7a588c0d372b86",
+  "remotion_package_sha256": "06c86bf020b6f68716a0e1bf3d2a9e9f757c29e70c11d2eca303a7b7f58d0187",
+  "viewer_package_sha256": "74bbc20d79286df369ee9d915844c730df39a4a557ec29d7d3ed2d79fc568208",
+  "generator": {
+    "path": "scripts/media-goldens.ts",
+    "sha256": "1a27d993c00698169e00eaec3c5e1c9dcf26322ea7bb9fc33d5f1beaf450d273"
+  },
+  "frames": [
+    {
+      "master_frame": 29,
+      "local_frame": null,
+      "expected_presence": false
+    },
+    {
+      "master_frame": 30,
+      "local_frame": 0,
+      "expected_presence": true,
+      "relative_path": "candidate-goldens/base-master-30.png",
+      "sha256": "d627cf3a3731186b8847eddd5bf7cc28fcb7c2cef7482e401280f7fb27da654f",
+      "byte_length": 21678,
+      "semantic_markers": {
+        "exact_presence_boundary": true,
+        "frame_mapping": true,
+        "nonblank_base": true
+      },
+      "remotion_renderstill": {
+        "relative_path": "candidate-goldens/remotion-master-30.png",
+        "sha256": "30ebc9497faa64f41120cbd82ae4714e048e41c1753cc2dfebbeeab85768491e",
+        "byte_length": 48138
+      },
+      "mlt_still": {
+        "relative_path": "candidate-goldens/mlt-master-30.png",
+        "sha256": "78c13b3c81bc06e40304d45ba6b1fafe10f382a3da92de482b2996bcddb52a9c",
+        "byte_length": 10389,
+        "mlt_sha256": "39a601ef3553154c743ad44ce9f2a5946a3450785af96bbbb1d3f573616d423b"
+      }
+    },
+    {
+      "master_frame": 36,
+      "local_frame": 6,
+      "expected_presence": true,
+      "relative_path": "candidate-goldens/base-master-36.png",
+      "sha256": "e4107dce8b09c548d02c0a4db9c0d50760d302981acfc41006cefa2927ea20d3",
+      "byte_length": 21666,
+      "semantic_markers": {
+        "exact_presence_boundary": true,
+        "frame_mapping": true,
+        "nonblank_base": true
+      },
+      "remotion_renderstill": {
+        "relative_path": "candidate-goldens/remotion-master-36.png",
+        "sha256": "5972411d5389721deb3d37bf10961304a9ae7c51567d85752e838f844f04780e",
+        "byte_length": 58053
+      },
+      "mlt_still": {
+        "relative_path": "candidate-goldens/mlt-master-36.png",
+        "sha256": "452498b4cba1d1b6c90c02ba068dafcd654fd9da747acf8169297148eea29d2d",
+        "byte_length": 14345,
+        "mlt_sha256": "5d21b469a90049b1ec36b2a9b7385e4c02e6a415b9842eccccc944d42d4123a5"
+      }
+    },
+    {
+      "master_frame": 42,
+      "local_frame": 12,
+      "expected_presence": true,
+      "relative_path": "candidate-goldens/base-master-42.png",
+      "sha256": "c6f3934bb1c4f70360ce1858205bf144906814b6edf10c8ce1a836ad0dc39f20",
+      "byte_length": 21638,
+      "semantic_markers": {
+        "exact_presence_boundary": true,
+        "frame_mapping": true,
+        "nonblank_base": true
+      },
+      "remotion_renderstill": {
+        "relative_path": "candidate-goldens/remotion-master-42.png",
+        "sha256": "dc4279a30519d1af0fcecd145fbf8c4835b12dcf74f11cfb456b3938b3b559f6",
+        "byte_length": 73672
+      },
+      "mlt_still": {
+        "relative_path": "candidate-goldens/mlt-master-42.png",
+        "sha256": "0b4db20b57536eccd2223f45da080f2bf4ec9ce6d5978820f84f8d2598a0c407",
+        "byte_length": 22569,
+        "mlt_sha256": "668d52f9b5a2e0d8b3b8c9f9d9b9f5ef6ebf9c93280f6c3c120b1dbe06d044ee"
+      }
+    },
+    {
+      "master_frame": 48,
+      "local_frame": 18,
+      "expected_presence": true,
+      "relative_path": "candidate-goldens/base-master-48.png",
+      "sha256": "1270e7fc714d6aa07d7d292c2036a1a3be4f95117f2205063716093b8b2daefb",
+      "byte_length": 20953,
+      "semantic_markers": {
+        "exact_presence_boundary": true,
+        "frame_mapping": true,
+        "nonblank_base": true
+      },
+      "remotion_renderstill": {
+        "relative_path": "candidate-goldens/remotion-master-48.png",
+        "sha256": "8a7c31bb26dc8aa501915db9076779a5286b9575c37a7774588d9d74f42c038b",
+        "byte_length": 81864
+      },
+      "mlt_still": {
+        "relative_path": "candidate-goldens/mlt-master-48.png",
+        "sha256": "857cb71a75e8408e8af918e6ea944c81109999aa3ea1de7fe0ed42d9a89c0a59",
+        "byte_length": 29777,
+        "mlt_sha256": "4391379f5748fa1fc407abec52085fa565c85058c3ed1683598011614f65f83d"
+      }
+    },
+    {
+      "master_frame": 56,
+      "local_frame": 26,
+      "expected_presence": true,
+      "relative_path": "candidate-goldens/base-master-56.png",
+      "sha256": "5aefc3bf657a2514d755ede59ce755ed372ecf51968ca9561c5bd34660a8440f",
+      "byte_length": 21955,
+      "semantic_markers": {
+        "exact_presence_boundary": true,
+        "frame_mapping": true,
+        "nonblank_base": true
+      },
+      "remotion_renderstill": {
+        "relative_path": "candidate-goldens/remotion-master-56.png",
+        "sha256": "87bc3a0fbcb261a152d9d6aa39727dec801e797487bfedf9f5a1631d5ce2d87a",
+        "byte_length": 82399
+      },
+      "mlt_still": {
+        "relative_path": "candidate-goldens/mlt-master-56.png",
+        "sha256": "3fe32a8bf12ed411be243f200bb6c33acc39c6700cf998a98060fa19c5ef36f7",
+        "byte_length": 30108,
+        "mlt_sha256": "25f2b811b451d9d1aea4f2d81b37104ba6b2a8c55a225d2c13fb4ad6ac3752a7"
+      }
+    },
+    {
+      "master_frame": 75,
+      "local_frame": 45,
+      "expected_presence": true,
+      "relative_path": "candidate-goldens/base-master-75.png",
+      "sha256": "43a59833a2759e2f455ea20bc2b2470b609ebb7c700cd03aba415925e2ad32cd",
+      "byte_length": 22258,
+      "semantic_markers": {
+        "exact_presence_boundary": true,
+        "frame_mapping": true,
+        "nonblank_base": true
+      },
+      "remotion_renderstill": {
+        "relative_path": "candidate-goldens/remotion-master-75.png",
+        "sha256": "6339ed183c82c78f91b66a600cad5be32f72532385e0b8c2b4ddf5b0249bbb04",
+        "byte_length": 82572
+      },
+      "mlt_still": {
+        "relative_path": "candidate-goldens/mlt-master-75.png",
+        "sha256": "061d3f813304e05281c2bad2c56dbff8309bb9b383043df4b802ff60a7df712d",
+        "byte_length": 30222,
+        "mlt_sha256": "7e82b9ca89f57adc1fa0fa269031ed5c9101e7ff637263a24004fc240a24fdea"
+      }
+    },
+    {
+      "master_frame": 119,
+      "local_frame": 89,
+      "expected_presence": true,
+      "relative_path": "candidate-goldens/base-master-119.png",
+      "sha256": "43a59833a2759e2f455ea20bc2b2470b609ebb7c700cd03aba415925e2ad32cd",
+      "byte_length": 22258,
+      "semantic_markers": {
+        "exact_presence_boundary": true,
+        "frame_mapping": true,
+        "nonblank_base": true
+      },
+      "remotion_renderstill": {
+        "relative_path": "candidate-goldens/remotion-master-119.png",
+        "sha256": "4b0a08d15501f4be04745374f1c48ee5d43f2542ba9a3ea8e1d8f37471dddbaa",
+        "byte_length": 82347
+      },
+      "mlt_still": {
+        "relative_path": "candidate-goldens/mlt-master-119.png",
+        "sha256": "e1b07541cafa255db5d023d59c9678cbbf703ca2d61f8a20f6b8c071d21ce06b",
+        "byte_length": 30162,
+        "mlt_sha256": "6f3e83c2c3a9ab9787835b5f2815159c556742aaf91747cf65c3ea6497b10b89"
+      }
+    },
+    {
+      "master_frame": 120,
+      "local_frame": null,
+      "expected_presence": false
+    }
+  ]
+}

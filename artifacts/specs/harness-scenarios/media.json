@@ -1,0 +1,79 @@
+{
+  "schema_version": "1.0.0",
+  "runtime": {
+    "chrome": "playwright/chromium/headless",
+    "wkwebview": "dedicated Tart macOS guest",
+    "host_ui_forbidden": true
+  },
+  "sections": [
+    "live.chrome",
+    "live.wkwebview",
+    "render.remotion",
+    "render.mlt",
+    "resilience",
+    "performance",
+    "performance.release-package",
+    "live-export-parity"
+  ],
+  "scenarios": [
+    {
+      "id": "media.chrome.proxy-avc",
+      "predicate": "exact fixture bytes seek to requested timestamp and yield nonblank pixels"
+    },
+    {
+      "id": "media.chrome.proxy-vp9-alpha",
+      "predicate": "exact alpha proxy yields nonblank pixels with transparent samples"
+    },
+    {
+      "id": "media.chrome.audio",
+      "predicate": "PCM, AAC, and MP3 decode to attributed non-silent channel signals"
+    },
+    {
+      "id": "media.chrome.unsupported",
+      "predicate": "corrupt video and unsupported audio fail with runtime attribution"
+    },
+    {
+      "id": "media.chrome.buffering",
+      "predicate": "delayed bytes remain stalled and never masquerade as readiness"
+    },
+    {
+      "id": "media.resources.lifecycle",
+      "predicate": "owned bitmap, worker, audio, and GL opens exactly balance closes"
+    },
+    {
+      "id": "media.webgl.context-loss",
+      "predicate": "forced loss restores a valid nonblack content pixel"
+    },
+    {
+      "id": "media.render.golden",
+      "predicate": "approved immutable generated frames match hashes and stable-region policy"
+    },
+    {
+      "id": "media.live-export.parity",
+      "predicate": "master/local mapping, document, props, assets, and engine versions remain bound"
+    },
+    {
+      "id": "media.performance.chrome",
+      "predicate": "three warmups plus fifteen fresh-process runs retain 300 raw composite samples each"
+    },
+    {
+      "id": "media.wkwebview.matrix",
+      "predicate": "the same fixture hashes run through the H05 actual-WKWebView provider"
+    },
+    {
+      "id": "media.performance.release-package",
+      "predicate": "optimized package distribution is independently measured"
+    }
+  ],
+  "negative_controls": [
+    "missing-imagebitmap-close",
+    "opaque-alpha-substitution",
+    "wrong-frame-timestamp",
+    "silent-audio",
+    "swapped-audio-channel",
+    "unrestored-webgl-context-loss",
+    "injected-long-task",
+    "unapproved-policy",
+    "golden-regeneration-during-acceptance"
+  ]
+}
