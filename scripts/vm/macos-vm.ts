@@ -1198,6 +1198,55 @@ function verifyNative(sourceRef: string, args: readonly string[]): void {
   print({ ok: true, vm: VM_NAME, runnerClass: "dedicated", sourceRef });
 }
 
+function verifyWkwebviewMedia(sourceRef: string, destination?: string): void {
+  assertRunning();
+  const ref = validateSourceRef(sourceRef);
+  sync(ref);
+  const command = [
+    "set -euo pipefail",
+    `cd ${GUEST_REPOSITORY}`,
+    `test \"$(git remote get-url origin)\" = ${REPOSITORY_URL}`,
+    'test -z "$(git status --porcelain)"',
+    ...remoteRefTruthCommands(ref, true),
+    'test "$(uname -s)" = Darwin',
+    'export PATH="$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.local/share/mise/shims:/opt/homebrew/opt/libxml2/bin:/opt/homebrew/bin:$PATH"',
+    PINNED_RUST_PATH,
+    "export VEAN_ALLOW_INTERACTIVE_MACOS_AUTOMATION=1",
+    "export VEAN_MACOS_RUNNER_CLASS=dedicated",
+    "rm -rf .vean/harness/wkwebview-media/current",
+    "bun run verify:wkwebview-media -- --output .vean/harness/wkwebview-media/current",
+    "test -f .vean/harness/wkwebview-media/current/wkwebview-media-evidence.json",
+  ].join("; ");
+  runGuestCommand(command);
+  const target = resolve(
+    destination ??
+      join(
+        process.cwd(),
+        ".vean/vm-harness/evidence",
+        `h07-wkwebview-${new Date().toISOString().replaceAll(":", "-")}.tgz`,
+      ),
+  );
+  mkdirSync(dirname(target), { recursive: true });
+  const archived = runGuestCommand(
+    `set -euo pipefail; cd ${GUEST_REPOSITORY}; test -d .vean/harness/wkwebview-media/current; test -z "$(find .vean/harness/wkwebview-media/current -type l -print -quit)"; tar -czf - .vean/harness/wkwebview-media/current | base64`,
+  );
+  const bytes = Buffer.from(archived.stdout.replaceAll(/\s/g, ""), "base64");
+  if (bytes.length < 2 || bytes[0] !== 0x1f || bytes[1] !== 0x8b) {
+    fail("guest returned an invalid H07 WKWebView evidence archive");
+  }
+  writeFileSync(target, bytes, { mode: 0o600 });
+  chmodSync(target, 0o600);
+  print({
+    ok: true,
+    vm: VM_NAME,
+    runnerClass: "dedicated",
+    sourceRef: ref,
+    evidence: target,
+    bytes: bytes.length,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  });
+}
+
 function doctorGuest(sourceRef: string): void {
   assertRunning();
   const command = guestDoctorPlan(sourceRef).at(-1);
@@ -1314,6 +1363,7 @@ export const PROJECT_ARTIFACT_ALLOWLIST = [
   "test-results",
   "playwright-report",
   "coverage",
+  ".vean/harness/wkwebview-media",
 ] as const;
 
 export function validateProjectArtifactIncludes(values: readonly string[]): string[] {
@@ -1470,7 +1520,7 @@ function optionValues(argv: readonly string[], option: string): string[] {
 
 function usage(): never {
   fail(
-    "usage: macos-vm.ts <doctor|configure|configure-shares|start|setup-ssh|status|bootstrap|sync|ready|doctor-guest|verify-shares|seed-smoke-project|provision-project|verify-native|collect-evidence|collect-project-artifacts|stop> [options]",
+    "usage: macos-vm.ts <doctor|configure|configure-shares|start|setup-ssh|status|bootstrap|sync|ready|doctor-guest|verify-shares|seed-smoke-project|provision-project|verify-native|verify-wkwebview-media|collect-evidence|collect-project-artifacts|stop> [options]",
   );
 }
 
@@ -1532,6 +1582,9 @@ if (import.meta.main) {
       }
       case "verify-native":
         verifyNative(sourceRef, passthrough);
+        break;
+      case "verify-wkwebview-media":
+        verifyWkwebviewMedia(sourceRef, optionValue(argv, "--destination"));
         break;
       case "collect-evidence": {
         const destinationIndex = argv.indexOf("--destination");

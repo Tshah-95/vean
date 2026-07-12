@@ -5,7 +5,9 @@ const context = readContext();
 
 export const config: Options.Testrunner = {
   runner: "local",
-  specs: ["./e2e/tauri/editor.spec.ts"],
+  specs: [
+    process.env.VEAN_H05_MEDIA === "1" ? "./e2e/tauri/media.spec.ts" : "./e2e/tauri/editor.spec.ts",
+  ],
   maxInstances: 1,
   services: [
     [

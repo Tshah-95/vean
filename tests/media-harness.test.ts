@@ -152,6 +152,8 @@ describe("H07 media assurance contract", () => {
     const root = mkdtempSync(join(tmpdir(), "vean-wk-media-evidence-"));
     const artifact = join(root, "runtime.json");
     writeFileSync(artifact, "observed runtime data\n");
+    const cellRuntime = join(root, "cell-runtime.json");
+    const cellFailure = join(root, "cell-failure.json");
     const evidencePath = join(root, "evidence.json");
     const policySha256s = { matrix: "a".repeat(64) };
     const evidence = {
@@ -170,26 +172,54 @@ describe("H07 media assurance contract", () => {
         macos_build: "25E246",
         webkit_version: "WebKit-1",
         app_sha256: "c".repeat(64),
+        app_bundle_id: "studio.vean.desktop.harness",
+        app_pid: 4242,
+        webdriver_session_id: "actual-session",
+        final_url: "http://127.0.0.1:43127/?route=timeline%3Amain",
+        user_agent: "Mozilla/5.0 AppleWebKit/620.4",
         codec_capabilities: { h264: true },
       },
       artifacts: {
         runtime: { path: "runtime.json", sha256: hash(artifact) },
+        "cell:runtime.proxy-avc": { path: "cell-runtime.json", sha256: "pending" },
+        "cell:failure": { path: "cell-failure.json", sha256: "pending" },
       },
       cells: [
         {
           id: "runtime.proxy-avc",
           outcome: "verified_supported",
-          observations: { decoded: true, nonblack_ratio: 0.8, seek_error_seconds: 0.01 },
-          artifact_ids: ["runtime"],
+          observations: {
+            decoded: true,
+            nonblack_ratio: 0.8,
+            seek_error_seconds: 0.01,
+            fixture_sha256: "d".repeat(64),
+            decoded_sha256: "d".repeat(64),
+          },
+          observation_artifact_id: "cell:runtime.proxy-avc",
+          artifact_ids: ["runtime", "cell:runtime.proxy-avc"],
         },
         {
           id: "failure",
           outcome: "verified_attributed_failure",
           observations: { reason: "decode-error" },
-          artifact_ids: ["runtime"],
+          observation_artifact_id: "cell:failure",
+          artifact_ids: ["runtime", "cell:failure"],
         },
       ],
     };
+    const runtimeCell = evidence.cells[0];
+    const failureCell = evidence.cells[1];
+    if (!runtimeCell || !failureCell) throw new Error("test evidence cells are incomplete");
+    writeFileSync(
+      cellRuntime,
+      `${JSON.stringify({ id: runtimeCell.id, outcome: runtimeCell.outcome, observations: runtimeCell.observations })}\n`,
+    );
+    writeFileSync(
+      cellFailure,
+      `${JSON.stringify({ id: failureCell.id, outcome: failureCell.outcome, observations: failureCell.observations })}\n`,
+    );
+    evidence.artifacts["cell:runtime.proxy-avc"].sha256 = hash(cellRuntime);
+    evidence.artifacts["cell:failure"].sha256 = hash(cellFailure);
     writeFileSync(evidencePath, `${JSON.stringify(evidence)}\n`);
     const options = {
       evidencePath,

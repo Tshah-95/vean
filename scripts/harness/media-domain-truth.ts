@@ -70,6 +70,15 @@ function assertRuntime(kind: ExternalMediaEvidenceKind, runtime: unknown): void 
     for (const key of ["macos_build", "webkit_version", "app_sha256"]) {
       string(runtime[key], `WK_${key.toUpperCase()}`);
     }
+    for (const key of ["app_bundle_id", "webdriver_session_id", "final_url", "user_agent"]) {
+      string(runtime[key], `WK_${key.toUpperCase()}`);
+    }
+    if (!Number.isInteger(runtime.app_pid) || (runtime.app_pid as number) <= 1) {
+      throw new Error("E_MEDIA_EXTERNAL_WK_APP_PID");
+    }
+    if (!(runtime.final_url as string).startsWith("http://127.0.0.1:")) {
+      throw new Error("E_MEDIA_EXTERNAL_WK_FINAL_URL");
+    }
     if (
       !object(runtime.codec_capabilities) ||
       Object.keys(runtime.codec_capabilities).length === 0
@@ -89,12 +98,15 @@ function assertRuntime(kind: ExternalMediaEvidenceKind, runtime: unknown): void 
   }
 }
 
-function assertArtifacts(evidencePath: string, artifacts: unknown): Record<string, string> {
+function assertArtifacts(
+  evidencePath: string,
+  artifacts: unknown,
+): Record<string, { sha256: string; path: string }> {
   if (!object(artifacts) || Object.keys(artifacts).length === 0) {
     throw new Error("E_MEDIA_EXTERNAL_ARTIFACTS_REQUIRED");
   }
   const root = dirname(resolve(evidencePath));
-  const verified: Record<string, string> = {};
+  const verified: Record<string, { sha256: string; path: string }> = {};
   for (const [id, entry] of Object.entries(artifacts)) {
     if (!object(entry)) throw new Error(`E_MEDIA_EXTERNAL_ARTIFACT_SCHEMA:${id}`);
     const path = resolve(root, string(entry.path, `ARTIFACT_PATH:${id}`));
@@ -106,7 +118,7 @@ function assertArtifacts(evidencePath: string, artifacts: unknown): Record<strin
     if (!statSync(path).isFile() || sha256(path) !== expected) {
       throw new Error(`E_MEDIA_EXTERNAL_ARTIFACT_DRIFT:${id}`);
     }
-    verified[id] = expected;
+    verified[id] = { sha256: expected, path };
   }
   return verified;
 }
@@ -127,7 +139,7 @@ function expectedOutcome(declaration: string): string {
 function assertWkCells(
   cells: unknown,
   required: Record<string, string>,
-  artifactIds: Set<string>,
+  artifacts: Record<string, { sha256: string; path: string }>,
 ): void {
   if (!Array.isArray(cells)) throw new Error("E_MEDIA_EXTERNAL_WK_CELLS");
   const expectedIds = Object.keys(required).sort();
@@ -143,7 +155,30 @@ function assertWkCells(
       throw new Error(`E_MEDIA_EXTERNAL_WK_CELL_OBSERVATIONS:${id}`);
     }
     const observations = raw.observations;
+    const observationArtifactId = string(
+      raw.observation_artifact_id,
+      `WK_CELL_OBSERVATION_ARTIFACT:${id}`,
+    );
+    const observationArtifact = artifacts[observationArtifactId];
+    if (!observationArtifact || observationArtifactId !== `cell:${id}`) {
+      throw new Error(`E_MEDIA_EXTERNAL_WK_CELL_RAW_ARTIFACT:${id}`);
+    }
+    const rawObservation = JSON.parse(readFileSync(observationArtifact.path, "utf8")) as unknown;
+    if (
+      !object(rawObservation) ||
+      rawObservation.id !== id ||
+      rawObservation.outcome !== raw.outcome ||
+      !sameJson(rawObservation.observations, observations)
+    ) {
+      throw new Error(`E_MEDIA_EXTERNAL_WK_CELL_RAW_MISMATCH:${id}`);
+    }
     if (id.startsWith("ingest.") || id.startsWith("runtime.proxy")) {
+      if (!/^[a-f0-9]{64}$/.test(string(observations.fixture_sha256, `WK_FIXTURE_SHA:${id}`))) {
+        throw new Error(`E_MEDIA_EXTERNAL_WK_FIXTURE_SHA:${id}`);
+      }
+      if (!/^[a-f0-9]{64}$/.test(string(observations.decoded_sha256, `WK_DECODED_SHA:${id}`))) {
+        throw new Error(`E_MEDIA_EXTERNAL_WK_DECODED_SHA:${id}`);
+      }
       const nonblackRatio = Number(observations.nonblack_ratio);
       const seekErrorSeconds = Number(observations.seek_error_seconds);
       if (
@@ -165,6 +200,9 @@ function assertWkCells(
         string(observations.derived_proxy_sha256, `WK_PROXY_SHA:${id}`);
       }
     } else if (id.startsWith("audio.")) {
+      if (!/^[a-f0-9]{64}$/.test(string(observations.fixture_sha256, `WK_FIXTURE_SHA:${id}`))) {
+        throw new Error(`E_MEDIA_EXTERNAL_WK_FIXTURE_SHA:${id}`);
+      }
       if (
         !Array.isArray(observations.rms) ||
         observations.rms.length === 0 ||
@@ -174,6 +212,9 @@ function assertWkCells(
         throw new Error(`E_MEDIA_EXTERNAL_WK_AUDIO_OBSERVATION:${id}`);
       }
     } else if (id.startsWith("unsupported.")) {
+      if (!/^[a-f0-9]{64}$/.test(string(observations.fixture_sha256, `WK_FIXTURE_SHA:${id}`))) {
+        throw new Error(`E_MEDIA_EXTERNAL_WK_FIXTURE_SHA:${id}`);
+      }
       if (observations.failed !== true || typeof observations.failure_reason !== "string") {
         throw new Error(`E_MEDIA_EXTERNAL_WK_FAILURE_OBSERVATION:${id}`);
       }
@@ -193,9 +234,7 @@ function assertWkCells(
     if (
       !Array.isArray(raw.artifact_ids) ||
       raw.artifact_ids.length === 0 ||
-      raw.artifact_ids.some(
-        (artifact) => typeof artifact !== "string" || !artifactIds.has(artifact),
-      )
+      raw.artifact_ids.some((artifact) => typeof artifact !== "string" || !artifacts[artifact])
     ) {
       throw new Error(`E_MEDIA_EXTERNAL_WK_CELL_ARTIFACTS:${id}`);
     }
@@ -301,7 +340,7 @@ export function verifyExternalMediaEvidence(options: ExternalMediaEvidenceOption
   const artifactIds = new Set(Object.keys(artifacts));
   if (options.kind === "wkwebview-media-runtime") {
     if (!options.requiredCellOutcomes) throw new Error("E_MEDIA_EXTERNAL_WK_DECLARATIONS");
-    assertWkCells(evidence.cells, options.requiredCellOutcomes, artifactIds);
+    assertWkCells(evidence.cells, options.requiredCellOutcomes, artifacts);
   } else {
     if (!options.performanceSampling || !options.performanceBudgets || !options.functionalCaps) {
       throw new Error("E_MEDIA_EXTERNAL_RELEASE_POLICY");
@@ -314,5 +353,11 @@ export function verifyExternalMediaEvidence(options: ExternalMediaEvidenceOption
       artifactIds,
     );
   }
-  return { ...evidence, evidence_sha256: sha256(evidencePath), verified_artifacts: artifacts };
+  return {
+    ...evidence,
+    evidence_sha256: sha256(evidencePath),
+    verified_artifacts: Object.fromEntries(
+      Object.entries(artifacts).map(([id, artifact]) => [id, artifact.sha256]),
+    ),
+  };
 }

@@ -19,6 +19,8 @@ export type NativeRunContext = {
   binaryHash: string;
   bundleId: string;
   expectedFinalUrl: string;
+  mediaManifestPath?: string;
+  mediaStaticPrefix?: string;
 };
 
 export function readContext(): NativeRunContext {
