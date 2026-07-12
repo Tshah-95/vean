@@ -134,6 +134,7 @@ export function validateBootstrapPolicy(
     "Initialize failure evidence",
     "Check out source",
     "Set up Bun",
+    "Install system dependencies",
     "Install locked dependencies",
     "Run policy-defined bootstrap",
     "Upload structured harness evidence",
@@ -142,6 +143,7 @@ export function validateBootstrapPolicy(
     ["name", "env", "run"],
     ["name", "uses"],
     ["name", "uses", "with"],
+    ["name", "run"],
     ["name", "run"],
     ["name", "env", "run"],
     ["name", "if", "uses", "with"],
@@ -183,7 +185,7 @@ export function validateBootstrapPolicy(
     }
   }
   const initializer = steps[0] as Record<string, unknown> | undefined;
-  const facadeStep = steps[4] as Record<string, unknown> | undefined;
+  const facadeStep = steps[5] as Record<string, unknown> | undefined;
   for (const [label, step] of [
     ["initializer", initializer],
     ["facade", facadeStep],
@@ -214,6 +216,7 @@ export function validateBootstrapPolicy(
   const allowedRunSteps = runSteps.filter(
     (command) =>
       command.includes("CI_BOOTSTRAP_NOT_REACHED") ||
+      command === "sudo apt-get update && sudo apt-get install --yes libxml2-utils" ||
       command === "bun install --frozen-lockfile\nbun install --cwd app --frozen-lockfile" ||
       command === "bun run verify:ci-bootstrap",
   );

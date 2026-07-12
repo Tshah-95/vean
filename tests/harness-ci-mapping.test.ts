@@ -19,6 +19,7 @@ describe("CI bootstrap policy mapping", () => {
     expect(validateBootstrapPolicy(policy, workflow, packageJson)).toEqual([]);
     expect(policy.commands).toEqual(["bun run lint", "bun run typecheck", "bun run test"]);
     expect(workflow).toContain("bun install --cwd app --frozen-lockfile");
+    expect(workflow).toContain("sudo apt-get install --yes libxml2-utils");
   });
 
   it("rejects trigger removal, permissive failure, duplicate logic, and stale commands", () => {
@@ -160,7 +161,7 @@ describe("CI bootstrap policy mapping", () => {
         ),
         packageJson,
       ),
-    ).toContain("workflow step 4 contains unapproved keys");
+    ).toContain("workflow step 5 contains unapproved keys");
     const uploadBlock = workflow.slice(
       workflow.indexOf("      - name: Upload structured harness evidence"),
     );
@@ -173,7 +174,7 @@ describe("CI bootstrap policy mapping", () => {
       `${uploadBlock}      - name: Run policy-defined bootstrap\n`,
     );
     expect(validateBootstrapPolicy(policy, reordered, packageJson)).toContain(
-      "workflow step order mismatch at 4",
+      "workflow step order mismatch at 5",
     );
     expect(
       validateBootstrapPolicy(
