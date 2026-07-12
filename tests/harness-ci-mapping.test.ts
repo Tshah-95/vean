@@ -1,6 +1,9 @@
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { parse } from "yaml";
 import { validateBootstrapPolicy } from "../scripts/ci/run-harness-profile";
 
 type Policy = Parameters<typeof validateBootstrapPolicy>[0];
@@ -13,6 +16,15 @@ const policy = JSON.parse(
 const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")) as {
   scripts: Record<string, string>;
 };
+const parsedWorkflow = parse(workflow) as {
+  jobs: { bootstrap: { steps: Array<Record<string, unknown>> } };
+};
+
+function step(name: string): Record<string, unknown> {
+  const found = parsedWorkflow.jobs.bootstrap.steps.find((candidate) => candidate.name === name);
+  if (!found) throw new Error(`missing workflow step ${name}`);
+  return found;
+}
 
 describe("CI bootstrap policy mapping", () => {
   it("maps the required push-main bootstrap to existing canonical commands", () => {
@@ -21,6 +33,9 @@ describe("CI bootstrap policy mapping", () => {
     expect(workflow).toContain("bun install --cwd app --frozen-lockfile");
     expect(workflow).toContain(
       "sudo apt-get install --yes build-essential ffmpeg file libayatana-appindicator3-dev librsvg2-dev libssl-dev libwebkit2gtk-4.1-dev libxdo-dev libxml2-utils melt",
+    );
+    expect(policy.artifact.name_template).toBe(
+      "harness-bootstrap-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}",
     );
   });
 
@@ -113,7 +128,7 @@ describe("CI bootstrap policy mapping", () => {
         ),
         packageJson,
       ),
-    ).toContain("only evidence upload may have the exact always() condition");
+    ).toContain("only evidence finalization/upload may have the exact always() condition");
     expect(
       validateBootstrapPolicy(
         policy,
@@ -188,5 +203,179 @@ describe("CI bootstrap policy mapping", () => {
         packageJson,
       ),
     ).toContain("bootstrap job contains unapproved keys");
+  });
+
+  it("rejects weakened pre-checkout identity, finalization, and artifact lineage", () => {
+    expect(
+      validateBootstrapPolicy(
+        policy,
+        workflow.replace("          VEAN_CI_SOURCE_SHA: ${{ github.sha }}\n", ""),
+        packageJson,
+      ),
+    ).toContain("failure evidence identity environment is incomplete");
+    expect(
+      validateBootstrapPolicy(
+        policy,
+        workflow.replace('"evidence_subject_basis": "github.sha"', '"basis": "github.sha"'),
+        packageJson,
+      ),
+    ).toContain("inline step implementation mismatch: Initialize failure evidence");
+    expect(
+      validateBootstrapPolicy(
+        policy,
+        workflow.replace(
+          "      - name: Finalize structured harness evidence\n        if: always()\n",
+          "      - name: Finalize structured harness evidence\n        if: success()\n",
+        ),
+        packageJson,
+      ),
+    ).toContain("evidence finalization must run always");
+    expect(
+      validateBootstrapPolicy(
+        policy,
+        workflow.replace("          VEAN_CI_JOB_STATUS: ${{ job.status }}\n", ""),
+        packageJson,
+      ),
+    ).toContain("evidence finalization outcome environment is incomplete");
+    expect(
+      validateBootstrapPolicy(
+        policy,
+        workflow.replace(
+          "harness-bootstrap-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}\n          path:",
+          "harness-bootstrap-${{ github.sha }}\n          path:",
+        ),
+        packageJson,
+      ),
+    ).toContain("evidence upload metadata is invalid");
+  });
+
+  it("writes pre-checkout runner identity and finalizes cancelled/failed outcomes without converting them to success", () => {
+    const directory = mkdtempSync(resolve(tmpdir(), "vean-ci-evidence-"));
+    const evidencePath = resolve(directory, "bootstrap.json");
+    try {
+      const initializer = step("Initialize failure evidence");
+      const initResult = spawnSync("bash", ["-eo", "pipefail", "-c", String(initializer.run)], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          VEAN_CI_EVIDENCE_PATH: evidencePath,
+          VEAN_CI_ARTIFACT_NAME: "harness-bootstrap-deadbeef-123-2",
+          VEAN_CI_SOURCE_SHA: "deadbeef",
+          VEAN_CI_RUN_ID: "123",
+          VEAN_CI_RUN_ATTEMPT: "2",
+          VEAN_CI_JOB: "bootstrap",
+          VEAN_CI_WORKFLOW: "Harness",
+          VEAN_CI_WORKFLOW_REF: "owner/repo/.github/workflows/harness.yml@refs/heads/main",
+          VEAN_CI_WORKFLOW_SHA: "cafebabe",
+          VEAN_CI_EVENT_NAME: "push",
+          VEAN_CI_REPOSITORY: "owner/repo",
+          VEAN_CI_RUNNER_NAME: "GitHub Actions 1",
+          VEAN_CI_RUNNER_OS: "Linux",
+          VEAN_CI_RUNNER_ARCH: "X64",
+          VEAN_CI_RUNNER_ENVIRONMENT: "github-hosted",
+          ImageOS: "ubuntu24",
+          ImageVersion: "20260701.1",
+          RUNNER_TOOL_CACHE: "/opt/hostedtoolcache",
+          RUNNER_TEMP: directory,
+        },
+      });
+      expect(initResult.status, initResult.stderr).toBe(0);
+      const initialized = JSON.parse(readFileSync(evidencePath, "utf8"));
+      expect(initialized).toMatchObject({
+        status: "failed",
+        reason_code: "CI_BOOTSTRAP_NOT_REACHED",
+        evidence_subject_sha: "deadbeef",
+        evidence_subject_basis: "github.sha",
+        github: {
+          run_id: "123",
+          run_attempt: "2",
+          job: "bootstrap",
+          workflow_sha: "cafebabe",
+        },
+        runner: {
+          os: "Linux",
+          arch: "X64",
+          environment: "github-hosted",
+          image_os: "ubuntu24",
+          image_version: "20260701.1",
+        },
+        expected_artifact: {
+          name: "harness-bootstrap-deadbeef-123-2",
+          path: evidencePath,
+          retention_days: 7,
+        },
+      });
+
+      const finalizer = step("Finalize structured harness evidence");
+      const failed = spawnSync("bash", ["-eo", "pipefail", "-c", String(finalizer.run)], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          VEAN_CI_EVIDENCE_PATH: evidencePath,
+          VEAN_CI_JOB_STATUS: "failure",
+        },
+      });
+      expect(failed.status, failed.stderr).toBe(0);
+      expect(JSON.parse(readFileSync(evidencePath, "utf8"))).toMatchObject({
+        status: "failed",
+        reason_code: "CI_JOB_FAILED_BEFORE_BOOTSTRAP",
+        ci_job_status: "failure",
+      });
+
+      writeFileSync(evidencePath, `${JSON.stringify(initialized)}\n`);
+      const cancelled = spawnSync("bash", ["-eo", "pipefail", "-c", String(finalizer.run)], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          VEAN_CI_EVIDENCE_PATH: evidencePath,
+          VEAN_CI_JOB_STATUS: "cancelled",
+        },
+      });
+      expect(cancelled.status, cancelled.stderr).toBe(0);
+      expect(JSON.parse(readFileSync(evidencePath, "utf8"))).toMatchObject({
+        status: "failed",
+        reason_code: "CI_JOB_CANCELLED",
+        ci_job_status: "cancelled",
+      });
+
+      const verified = JSON.parse(readFileSync(evidencePath, "utf8"));
+      verified.status = "verified";
+      verified.reason_code = "VERIFIED";
+      writeFileSync(evidencePath, `${JSON.stringify(verified)}\n`);
+      const successful = spawnSync("bash", ["-eo", "pipefail", "-c", String(finalizer.run)], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          VEAN_CI_EVIDENCE_PATH: evidencePath,
+          VEAN_CI_JOB_STATUS: "success",
+        },
+      });
+      expect(successful.status, successful.stderr).toBe(0);
+      expect(JSON.parse(readFileSync(evidencePath, "utf8"))).toMatchObject({
+        status: "verified",
+        reason_code: "VERIFIED",
+        ci_job_status: "success",
+      });
+
+      verified.status = "failed";
+      verified.reason_code = "CI_BOOTSTRAP_NOT_REACHED";
+      writeFileSync(evidencePath, `${JSON.stringify(verified)}\n`);
+      const missingResult = spawnSync("bash", ["-eo", "pipefail", "-c", String(finalizer.run)], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          VEAN_CI_EVIDENCE_PATH: evidencePath,
+          VEAN_CI_JOB_STATUS: "success",
+        },
+      });
+      expect(missingResult.status).toBe(1);
+      expect(JSON.parse(readFileSync(evidencePath, "utf8"))).toMatchObject({
+        status: "failed",
+        reason_code: "CI_BOOTSTRAP_RESULT_MISSING",
+        ci_job_status: "success",
+      });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });

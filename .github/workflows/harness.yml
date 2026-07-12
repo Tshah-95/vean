@@ -21,9 +21,68 @@ jobs:
       - name: Initialize failure evidence
         env:
           VEAN_CI_EVIDENCE_PATH: ${{ runner.temp }}/harness-bootstrap.json
+          VEAN_CI_ARTIFACT_NAME: harness-bootstrap-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          VEAN_CI_SOURCE_SHA: ${{ github.sha }}
+          VEAN_CI_RUN_ID: ${{ github.run_id }}
+          VEAN_CI_RUN_ATTEMPT: ${{ github.run_attempt }}
+          VEAN_CI_JOB: ${{ github.job }}
+          VEAN_CI_WORKFLOW: ${{ github.workflow }}
+          VEAN_CI_WORKFLOW_REF: ${{ github.workflow_ref }}
+          VEAN_CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          VEAN_CI_EVENT_NAME: ${{ github.event_name }}
+          VEAN_CI_REPOSITORY: ${{ github.repository }}
+          VEAN_CI_RUNNER_NAME: ${{ runner.name }}
+          VEAN_CI_RUNNER_OS: ${{ runner.os }}
+          VEAN_CI_RUNNER_ARCH: ${{ runner.arch }}
+          VEAN_CI_RUNNER_ENVIRONMENT: ${{ runner.environment }}
         run: |
           mkdir -p "$(dirname "$VEAN_CI_EVIDENCE_PATH")"
-          printf '%s\n' '{"contract_version":"1.0.0","profile":"bootstrap","status":"failed","reason_code":"CI_BOOTSTRAP_NOT_REACHED"}' > "$VEAN_CI_EVIDENCE_PATH"
+          python3 - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+
+          def optional(name):
+              return os.environ.get(name) or None
+
+          payload = {
+              "contract_version": "1.0.0",
+              "profile": "bootstrap",
+              "status": "failed",
+              "reason_code": "CI_BOOTSTRAP_NOT_REACHED",
+              "evidence_subject_sha": optional("VEAN_CI_SOURCE_SHA"),
+              "evidence_subject_basis": "github.sha",
+              "initialized_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+              "github": {
+                  "repository": optional("VEAN_CI_REPOSITORY"),
+                  "workflow": optional("VEAN_CI_WORKFLOW"),
+                  "workflow_ref": optional("VEAN_CI_WORKFLOW_REF"),
+                  "workflow_sha": optional("VEAN_CI_WORKFLOW_SHA"),
+                  "run_id": optional("VEAN_CI_RUN_ID"),
+                  "run_attempt": optional("VEAN_CI_RUN_ATTEMPT"),
+                  "job": optional("VEAN_CI_JOB"),
+                  "event_name": optional("VEAN_CI_EVENT_NAME"),
+              },
+              "runner": {
+                  "name": optional("VEAN_CI_RUNNER_NAME"),
+                  "os": optional("VEAN_CI_RUNNER_OS"),
+                  "arch": optional("VEAN_CI_RUNNER_ARCH"),
+                  "environment": optional("VEAN_CI_RUNNER_ENVIRONMENT"),
+                  "image_os": optional("ImageOS"),
+                  "image_version": optional("ImageVersion"),
+                  "tool_cache": optional("RUNNER_TOOL_CACHE"),
+                  "temp": optional("RUNNER_TEMP"),
+              },
+              "expected_artifact": {
+                  "name": optional("VEAN_CI_ARTIFACT_NAME"),
+                  "path": optional("VEAN_CI_EVIDENCE_PATH"),
+                  "retention_days": 7,
+              },
+          }
+          with open(os.environ["VEAN_CI_EVIDENCE_PATH"], "w", encoding="utf-8") as handle:
+              json.dump(payload, handle, indent=2, sort_keys=True)
+              handle.write("\n")
+          PY
       - name: Check out source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Set up Bun
@@ -40,11 +99,42 @@ jobs:
         env:
           VEAN_CI_EVIDENCE_PATH: ${{ runner.temp }}/harness-bootstrap.json
         run: bun run verify:ci-bootstrap
+      - name: Finalize structured harness evidence
+        if: always()
+        env:
+          VEAN_CI_EVIDENCE_PATH: ${{ runner.temp }}/harness-bootstrap.json
+          VEAN_CI_JOB_STATUS: ${{ job.status }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          from datetime import datetime, timezone
+
+          path = os.environ["VEAN_CI_EVIDENCE_PATH"]
+          with open(path, encoding="utf-8") as handle:
+              payload = json.load(handle)
+          job_status = os.environ["VEAN_CI_JOB_STATUS"]
+          payload["ci_job_status"] = job_status
+          payload["finalized_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+          if job_status == "cancelled":
+              payload["status"] = "failed"
+              payload["reason_code"] = "CI_JOB_CANCELLED"
+          elif job_status == "failure" and payload.get("reason_code") == "CI_BOOTSTRAP_NOT_REACHED":
+              payload["reason_code"] = "CI_JOB_FAILED_BEFORE_BOOTSTRAP"
+          elif job_status == "success" and payload.get("status") != "verified":
+              payload["status"] = "failed"
+              payload["reason_code"] = "CI_BOOTSTRAP_RESULT_MISSING"
+          with open(path, "w", encoding="utf-8") as handle:
+              json.dump(payload, handle, indent=2, sort_keys=True)
+              handle.write("\n")
+          sys.exit(1 if job_status == "success" and payload.get("status") != "verified" else 0)
+          PY
       - name: Upload structured harness evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: harness-bootstrap-${{ github.sha }}
+          name: harness-bootstrap-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/harness-bootstrap.json
           if-no-files-found: error
           retention-days: 7

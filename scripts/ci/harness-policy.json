@@ -9,6 +9,15 @@
     "oven-sh/setup-bun": "0c5077e51419868618aeaa5fe8019c62421857d6",
     "actions/upload-artifact": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
   },
+  "artifact": {
+    "name_template": "harness-bootstrap-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}",
+    "path": "${{ runner.temp }}/harness-bootstrap.json",
+    "retention_days": 7
+  },
+  "inline_step_hashes": {
+    "Initialize failure evidence": "3a1ff3eef47b7ff0722e5909b37eff056ae678ba774ed34c236c553388fec296",
+    "Finalize structured harness evidence": "5d1de400de04323b2d80ce89941c0d0969acab03f669f0e640065017b7ae633f"
+  },
   "facade_script": "bun scripts/ci/run-harness-profile.ts",
   "commands": ["bun run lint", "bun run typecheck", "bun run test"],
   "covers": ["meta-evaluator-contract", "root-static", "root-tests"],

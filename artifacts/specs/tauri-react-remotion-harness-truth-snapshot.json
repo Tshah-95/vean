@@ -2,7 +2,8 @@
   "program": "tauri-react-remotion-harness",
   "observed_at": "2026-07-12T22:43:34Z",
   "target_branch": "main",
-  "target_branch_sha": "b416c8a5f26730a838a3e847aaab44e3e4772508",
+  "evidence_subject_sha": "b416c8a5f26730a838a3e847aaab44e3e4772508",
+  "evidence_subject_basis": "historical canonical main commit observed_at; this snapshot records prior evidence and is not self-authenticating proof for the current main SHA",
   "canonical_oracle": {
     "command": "bun run verify:harness --profile developer --json",
     "exit_code": 0,
@@ -15,7 +16,8 @@
       "source_of_truth": "bun run test tests/harness-contract.test.ts",
       "old_failure": "bun run verify:harness --profile developer --json (script absent)",
       "new_gate": "bun run test tests/harness-contract.test.ts: 32/32 pass; typecheck and Biome pass",
-      "target_branch_sha": "4a32c5bcff227404bd7039c1bfd4ba195ee9f129",
+      "evidence_subject_sha": "4a32c5bcff227404bd7039c1bfd4ba195ee9f129",
+      "evidence_subject_basis": "canonical main commit on which post_integration_result was observed",
       "post_integration_result": "verified: 32/32 meta-contract cases, typecheck, and Biome pass on clean canonical main"
     },
     {
@@ -23,7 +25,8 @@
       "source_of_truth": "bun run test tests/harness-ci-mapping.test.ts && bun run verify:ci-bootstrap",
       "old_failure": "no .github workflow or CI policy existed",
       "new_gate": "semantic YAML/policy validation plus 16 adversarial topology mutations and full bootstrap runner",
-      "target_branch_sha": "092fa3080376796789dcb07fb6fc324b99eaed95",
+      "evidence_subject_sha": "092fa3080376796789dcb07fb6fc324b99eaed95",
+      "evidence_subject_basis": "canonical main commit on which post_integration_result was observed",
       "post_integration_result": "verified: GitHub Actions run 29173915202 succeeded and uploaded structured evidence"
     },
     {
@@ -31,7 +34,8 @@
       "source_of_truth": "bun run verify:fast --profile developer && bun run verify:fast --profile macos",
       "old_failure": "viewer, Remotion, and Tauri Rust gates were outside the canonical fast profile",
       "new_gate": "fixed root/nested script-body inventory plus real viewer and macOS-only Rust pass-fail-pass controls",
-      "target_branch_sha": "b24469368c77f751cca856ea2b4c593354bd945e",
+      "evidence_subject_sha": "b24469368c77f751cca856ea2b4c593354bd945e",
+      "evidence_subject_basis": "canonical main commit on which post_integration_result was observed",
       "post_integration_result": "verified: 101 files/1481 tests, both static profiles, H00 static claim, exact script no-op rejection, and macOS clippy sensitivity pass on clean canonical main"
     },
     {
@@ -39,7 +43,8 @@
       "source_of_truth": "bun run verify:fixture --json && bun run verify:webview-policy --profile release",
       "old_failure": "tests shared mutable state, loopback writes lacked launch authority, and no outliving supervisor covered SIGKILL or timeout",
       "new_gate": "isolated HOME/project/DB/socket fixtures, exact Host/Origin/token/cookie/nonce authority, PID/start-bound supervisor, and compiled exact-port Tauri navigation policy",
-      "target_branch_sha": "252e174559ee6e96c0d479173116a8b2068ad626",
+      "evidence_subject_sha": "252e174559ee6e96c0d479173116a8b2068ad626",
+      "evidence_subject_basis": "canonical main commit on which post_integration_result was observed",
       "post_integration_result": "verified: exact four-claim H00 run 6d38e53c-0d85-42d7-9000-424c7ff355d3 passed with zero issues; 104 files/1498 tests and static profile passed on clean canonical main"
     },
     {
@@ -47,7 +52,8 @@
       "source_of_truth": "bun run verify:tauri --provider auto",
       "old_failure": "Vean had no repeatable driver for its actual WKWebView and no mechanical release-instrumentation exclusion proof",
       "new_gate": "feature-and-runtime-gated embedded WebDriver, pinned Node LTS, exact app/sidecar/listener identity, deep action-to-saved-IR truth, and real feature-mutant release scanner",
-      "target_branch_sha": "5e608dbc09e4146e400cf9b09d62d0c0afdc3b4a",
+      "evidence_subject_sha": "5e608dbc09e4146e400cf9b09d62d0c0afdc3b4a",
+      "evidence_subject_basis": "canonical main commit on which post_integration_result was observed",
       "post_integration_result": "verified: canonical H00 run 28e43e1f-e3f6-483a-8030-4121853a5d86 passed with zero issues; real instrumentation baseline/mutant/restore passed; 107 files/1525 tests and macOS static profile passed"
     },
     {
@@ -55,7 +61,8 @@
       "source_of_truth": "bun run verify:macos",
       "old_failure": "Vean had no native-shell driver, no Mac2 doctor, and no semantic native accessibility ledger",
       "new_gate": "pinned Node 24.15.0, Appium 3.5.2, and Mac2 4.0.3; fixture-owned APPIUM_HOME; exact process/app/session identity; semantic native scenarios; residual-dialog and real Rust-label controls; all-exit cleanup",
-      "target_branch_sha": "b416c8a5f26730a838a3e847aaab44e3e4772508",
+      "evidence_subject_sha": "b416c8a5f26730a838a3e847aaab44e3e4772508",
+      "evidence_subject_basis": "canonical main commit on which post_integration_result was observed",
       "post_integration_result": "verified in the dedicated headless Tart guest: latest-main baseline passed; the real Rust-label control failed exactly SENSITIVITY_NATIVE_MACOS_SHELL and restored to a passing baseline; the residual-dialog control detected and reaped the intentional residual; a 9,502,720-byte evidence archive was collected with SHA-256 1de92703598f991b293259c23cbcb0da01aa8b97fb7c342a98c913d983bef2bd"
     },
     {
@@ -63,7 +70,8 @@
       "source_of_truth": "artifacts/specs/timeline-keyboard-accessibility-contract-v1.md at SHA-256 90e92872cc4df0dc12705ee560d2e2e5e3a916210c2a2eebb73e2cbd15c9a6d1",
       "old_failure": "the product contract remained proposed and H03 could not bind implementation evidence to an approved semantic decision",
       "new_gate": "H03 and H06 scenario ledgers must reference the exact timeline-a11y-v1 path and SHA-256",
-      "target_branch_sha": "170b11641b6ab4e28451aaa77494dbae05e709ee",
+      "evidence_subject_sha": "170b11641b6ab4e28451aaa77494dbae05e709ee",
+      "evidence_subject_basis": "canonical main commit on which post_integration_result was observed",
       "post_integration_result": "approved by Tejas without modification on 2026-07-11; H03 dispatch authorized"
     },
     {
@@ -71,7 +79,8 @@
       "source_of_truth": "bun run verify:component && bun run verify:component --suite accessibility",
       "old_failure": "component and DOM-accessibility claims had no executable browser oracle or aggregate evidence envelope",
       "new_gate": "23 approved headless Chromium scenarios, axe checks, exact timeline-a11y-v1 binding, seven pointer/keyboard parity families, independently reparsed persisted .mlt truth, exact authority hashes, and two real product-source sensitivity controls",
-      "target_branch_sha": "516e252b8eb5c65165e3f654383552aa0f1d4beb",
+      "evidence_subject_sha": "516e252b8eb5c65165e3f654383552aa0f1d4beb",
+      "evidence_subject_basis": "canonical main commit on which post_integration_result was observed",
       "post_integration_result": "verified: H00 developer run 63a2ec57-45d4-4c8e-86a0-c8614d2bd79a accepted both H03 claims and their fail/reason-code/restore controls; direct suites each passed all 23 scenarios with zero cleanup findings"
     },
     {
@@ -79,7 +88,8 @@
       "source_of_truth": "bun run verify:browser && bun run verify:harness --profile developer --json",
       "old_failure": "the five live scripts were disconnected and no browser oracle independently bound action input, touched URI, persisted MLT, diagnostics, DOM state, or cleanup",
       "new_gate": "six-scenario strict-loopback headless Chromium ledger, independent persisted-MLT parsing, exact action/URI/envelope truth, and real editor plus current-URI source controls",
-      "target_branch_sha": "b416c8a5f26730a838a3e847aaab44e3e4772508",
+      "evidence_subject_sha": "b416c8a5f26730a838a3e847aaab44e3e4772508",
+      "evidence_subject_basis": "canonical main commit on which post_integration_result was observed",
       "post_integration_result": "verified: developer aggregate bcb9ef27-d29b-46f9-b8ae-4f9be90701a3 passed 8/8; nc-browser-current-uri failed exactly SENSITIVITY_BROWSER_CURRENT_URI, restored cleanly, and the six-scenario baseline re-passed with zero cleanup findings"
     },
     {
@@ -87,7 +97,8 @@
       "source_of_truth": "bun run vm:macos:status && bun run vm:macos:doctor-guest && bun run vm:macos:verify-shares && bun run vm:macos:verify-native",
       "old_failure": "Mac2 and Xcode shared the active host login session and could take over the user's screen",
       "new_gate": "immutable Tahoe/Xcode image digest, fixed 8 vCPU/32 GiB/200 GB profile, headless-only Tart flags, guest-local clean clone, strict private-IP SSH fallback, pinned toolchains, and two-variable dedicated-runner policy",
-      "target_branch_sha": "b416c8a5f26730a838a3e847aaab44e3e4772508",
+      "evidence_subject_sha": "b416c8a5f26730a838a3e847aaab44e3e4772508",
+      "evidence_subject_basis": "canonical main commit on which post_integration_result was observed",
       "post_integration_result": "verified environment: macOS 26.4 build 25E246, Xcode 26.5, VirtualMac2,1, key-only strict SSH, Node 24.15.0, Bun 1.3.14, pinned Cargo/Rust 1.95.0, MLT 7.40.0, MACOS_DRIVER_READY, and a current headless launch record; media library, recordings, mic, and acquired mounts exist under /Volumes/My Shared Files and all four reject writes"
     }
   ],

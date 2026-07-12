@@ -13,6 +13,12 @@ type Policy = {
   required_triggers: string[];
   required_jobs: string[];
   action_pins: Record<string, string>;
+  artifact: {
+    name_template: string;
+    path: string;
+    retention_days: number;
+  };
+  inline_step_hashes: Record<string, string>;
   facade_script: string;
   commands: string[];
   covers: string[];
@@ -24,6 +30,10 @@ const policyPath = resolve(import.meta.dirname, "harness-policy.json");
 
 function sha256(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function sha256Text(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 export function validateBootstrapPolicy(
@@ -137,6 +147,7 @@ export function validateBootstrapPolicy(
     "Install system dependencies",
     "Install locked dependencies",
     "Run policy-defined bootstrap",
+    "Finalize structured harness evidence",
     "Upload structured harness evidence",
   ];
   const allowedStepKeys = [
@@ -146,6 +157,7 @@ export function validateBootstrapPolicy(
     ["name", "run"],
     ["name", "run"],
     ["name", "env", "run"],
+    ["name", "if", "env", "run"],
     ["name", "if", "uses", "with"],
   ];
   if (steps.length !== expectedStepNames.length)
@@ -167,7 +179,15 @@ export function validateBootstrapPolicy(
   for (const rawStep of steps) {
     if (typeof rawStep !== "object" || rawStep === null || Array.isArray(rawStep)) continue;
     const step = rawStep as Record<string, unknown>;
-    if (typeof step.run === "string") runSteps.push(step.run.trim());
+    if (typeof step.run === "string") {
+      const command = step.run.trim();
+      runSteps.push(command);
+      const expectedHash =
+        typeof step.name === "string" ? policy.inline_step_hashes[step.name] : undefined;
+      if (expectedHash && sha256Text(command) !== expectedHash) {
+        errors.push(`inline step implementation mismatch: ${step.name}`);
+      }
+    }
     if (typeof step.uses === "string") {
       const match = /^([^@]+)@([0-9a-f]{40})$/.exec(step.uses);
       if (!match?.[1] || !match[2]) {
@@ -180,42 +200,61 @@ export function validateBootstrapPolicy(
     if ("continue-on-error" in step) errors.push("required steps cannot continue on error");
     const isUpload =
       typeof step.uses === "string" && step.uses.startsWith("actions/upload-artifact@");
-    if ("if" in step && (!isUpload || step.if !== "always()")) {
-      errors.push("only evidence upload may have the exact always() condition");
+    const isFinalizer = step.name === "Finalize structured harness evidence";
+    if ("if" in step && (!(isUpload || isFinalizer) || step.if !== "always()")) {
+      errors.push("only evidence finalization/upload may have the exact always() condition");
     }
   }
   const initializer = steps[0] as Record<string, unknown> | undefined;
   const facadeStep = steps[5] as Record<string, unknown> | undefined;
-  for (const [label, step] of [
-    ["initializer", initializer],
-    ["facade", facadeStep],
-  ] as const) {
-    const environment = step?.env as Record<string, unknown> | undefined;
-    if (
-      !environment ||
-      Object.keys(environment).join("\0") !== "VEAN_CI_EVIDENCE_PATH" ||
-      environment.VEAN_CI_EVIDENCE_PATH !== "${{ runner.temp }}/harness-bootstrap.json"
-    ) {
-      errors.push(`${label} stable runner-temp evidence path is missing`);
-    }
+  const finalizer = steps[6] as Record<string, unknown> | undefined;
+  const facadeEnvironment = facadeStep?.env as Record<string, unknown> | undefined;
+  if (
+    !facadeEnvironment ||
+    Object.keys(facadeEnvironment).join("\0") !== "VEAN_CI_EVIDENCE_PATH" ||
+    facadeEnvironment.VEAN_CI_EVIDENCE_PATH !== policy.artifact.path
+  ) {
+    errors.push("facade stable runner-temp evidence path is missing");
   }
   if (
     typeof initializer?.run !== "string" ||
-    !initializer.run.includes("CI_BOOTSTRAP_NOT_REACHED") ||
-    !initializer.run.includes('> "$VEAN_CI_EVIDENCE_PATH"')
+    !initializer.run.includes("CI_BOOTSTRAP_NOT_REACHED")
   ) {
     errors.push("failure evidence must be initialized before setup work");
   }
-  const expectedInitializer = [
-    'mkdir -p "$(dirname "$VEAN_CI_EVIDENCE_PATH")"',
-    `printf '%s\\n' '{"contract_version":"1.0.0","profile":"bootstrap","status":"failed","reason_code":"CI_BOOTSTRAP_NOT_REACHED"}' > "$VEAN_CI_EVIDENCE_PATH"`,
-  ].join("\n");
-  if (typeof initializer?.run !== "string" || initializer.run.trim() !== expectedInitializer) {
-    errors.push("failure evidence initializer is not exact");
+  const expectedInitializerEnvironment = {
+    VEAN_CI_EVIDENCE_PATH: policy.artifact.path,
+    VEAN_CI_ARTIFACT_NAME: policy.artifact.name_template,
+    VEAN_CI_SOURCE_SHA: "${{ github.sha }}",
+    VEAN_CI_RUN_ID: "${{ github.run_id }}",
+    VEAN_CI_RUN_ATTEMPT: "${{ github.run_attempt }}",
+    VEAN_CI_JOB: "${{ github.job }}",
+    VEAN_CI_WORKFLOW: "${{ github.workflow }}",
+    VEAN_CI_WORKFLOW_REF: "${{ github.workflow_ref }}",
+    VEAN_CI_WORKFLOW_SHA: "${{ github.workflow_sha }}",
+    VEAN_CI_EVENT_NAME: "${{ github.event_name }}",
+    VEAN_CI_REPOSITORY: "${{ github.repository }}",
+    VEAN_CI_RUNNER_NAME: "${{ runner.name }}",
+    VEAN_CI_RUNNER_OS: "${{ runner.os }}",
+    VEAN_CI_RUNNER_ARCH: "${{ runner.arch }}",
+    VEAN_CI_RUNNER_ENVIRONMENT: "${{ runner.environment }}",
+  };
+  if (JSON.stringify(initializer?.env ?? {}) !== JSON.stringify(expectedInitializerEnvironment)) {
+    errors.push("failure evidence identity environment is incomplete");
+  }
+  if (finalizer?.if !== "always()") errors.push("evidence finalization must run always");
+  if (
+    JSON.stringify(finalizer?.env ?? {}) !==
+    JSON.stringify({
+      VEAN_CI_EVIDENCE_PATH: policy.artifact.path,
+      VEAN_CI_JOB_STATUS: "${{ job.status }}",
+    })
+  ) {
+    errors.push("evidence finalization outcome environment is incomplete");
   }
   const allowedRunSteps = runSteps.filter(
     (command) =>
-      command.includes("CI_BOOTSTRAP_NOT_REACHED") ||
+      Object.values(policy.inline_step_hashes).includes(sha256Text(command)) ||
       command ===
         "sudo apt-get update && sudo apt-get install --yes build-essential ffmpeg file libayatana-appindicator3-dev librsvg2-dev libssl-dev libwebkit2gtk-4.1-dev libxdo-dev libxml2-utils melt" ||
       command === "bun install --frozen-lockfile\nbun install --cwd app --frozen-lockfile" ||
@@ -233,15 +272,12 @@ export function validateBootstrapPolicy(
   ) as Record<string, unknown> | undefined;
   if (uploadStep?.if !== "always()") errors.push("evidence upload must run always");
   const uploadWith = uploadStep?.with as Record<string, unknown> | undefined;
-  if (
-    uploadWith?.path !== "${{ runner.temp }}/harness-bootstrap.json" ||
-    uploadWith?.["if-no-files-found"] !== "error"
-  ) {
+  if (uploadWith?.path !== policy.artifact.path || uploadWith?.["if-no-files-found"] !== "error") {
     errors.push("evidence upload path/policy does not match runner-temp envelope");
   }
   if (
-    uploadWith?.name !== "harness-bootstrap-${{ github.sha }}" ||
-    uploadWith?.["retention-days"] !== 7 ||
+    uploadWith?.name !== policy.artifact.name_template ||
+    uploadWith?.["retention-days"] !== policy.artifact.retention_days ||
     Object.keys(uploadWith ?? {})
       .sort()
       .join("\0") !== ["if-no-files-found", "name", "path", "retention-days"].sort().join("\0")
@@ -300,11 +336,19 @@ function main(): void {
   const startedAt = new Date().toISOString();
   const results: Array<{ command: string; exit_code: number | null; duration_ms: number }> = [];
   const policyErrors: string[] = [];
+  let initializedEvidence: Record<string, unknown> = {};
   let exitCode = 1;
   let policy: Policy | null = null;
   let workflowPath: string | null = null;
 
   try {
+    if (existsSync(evidencePath)) {
+      const parsed = JSON.parse(readFileSync(evidencePath, "utf8")) as unknown;
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        throw new Error("initialized CI evidence must be an object");
+      }
+      initializedEvidence = parsed as Record<string, unknown>;
+    }
     policy = JSON.parse(readFileSync(policyPath, "utf8")) as Policy;
     workflowPath = resolve(root, policy.workflow_path);
     const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")) as {
@@ -338,11 +382,17 @@ function main(): void {
       evidencePath,
       `${JSON.stringify(
         {
+          ...initializedEvidence,
           contract_version: policy?.contract_version ?? "1.0.0",
           profile: policy?.profile ?? "bootstrap",
           status: exitCode === 0 ? "verified" : "failed",
           reason_code: exitCode === 0 ? "VERIFIED" : "CI_BOOTSTRAP_FAILED",
-          git_sha: process.env.GITHUB_SHA ?? null,
+          evidence_subject_sha:
+            process.env.GITHUB_SHA ?? initializedEvidence.evidence_subject_sha ?? null,
+          evidence_subject_basis:
+            process.env.GITHUB_SHA !== undefined
+              ? "github.sha"
+              : (initializedEvidence.evidence_subject_basis ?? null),
           workflow_hash: workflowPath && existsSync(workflowPath) ? sha256(workflowPath) : null,
           policy_hash: existsSync(policyPath) ? sha256(policyPath) : null,
           started_at: startedAt,
