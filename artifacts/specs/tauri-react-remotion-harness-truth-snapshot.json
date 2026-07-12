@@ -1,14 +1,14 @@
 {
   "program": "tauri-react-remotion-harness",
-  "observed_at": "2026-07-12T03:43:29Z",
+  "observed_at": "2026-07-12T08:11:32Z",
   "target_branch": "main",
-  "target_branch_sha": "170b11641b6ab4e28451aaa77494dbae05e709ee",
+  "target_branch_sha": "6fdc73b0bba73033bc4dabd95e649134d352101e",
   "canonical_oracle": {
     "command": "bun run verify:harness --profile developer --json",
     "exit_code": 1,
-    "result": "structured OPEN at run e54d2714-8ac3-488b-9a19-cc9e88f2f2cc: the unimplemented H03/H04 browser and component claims remain open; H06 is outside the developer profile and separately blocked on Xcode first launch"
+    "result": "structured OPEN at run 63a2ec57-45d4-4c8e-86a0-c8614d2bd79a: 7/8 developer claims verified, including both H03 claims and their real fail/pass/restore controls; only the unimplemented H04 browser-editor claim remains open"
   },
-  "active_lane": "H03 + H06",
+  "active_lane": "H04 + H06",
   "claims": [
     {
       "claim": "The harness evaluator independently rejects false or stale evidence and composes only explicit profile claims.",
@@ -55,8 +55,8 @@
       "source_of_truth": "bun run verify:macos",
       "old_failure": "Vean had no native-shell driver, no Mac2 doctor, and no semantic native accessibility ledger",
       "new_gate": "pinned Node 24.15.0, Appium 3.5.2, and Mac2 4.0.3; fixture-owned APPIUM_HOME; exact process/app/session identity; semantic native scenarios; residual-dialog and real Rust-label controls; all-exit cleanup",
-      "target_branch_sha": "087a7876dd0e16aac8170160ab00c38afda827b1",
-      "post_integration_result": "blocked_external: canonical main emits predicate=false with E_XCODE_FIRST_LAUNCH because xcodebuild -checkFirstLaunchStatus exits 69; 73 focused canonical tests, root/H06 typechecks, and lint pass; independent verifier accepted exact implementation SHA 7495b686066b5dbadc776546755d7224cc1f09ae"
+      "target_branch_sha": "6fdc73b0bba73033bc4dabd95e649134d352101e",
+      "post_integration_result": "in_progress: dedicated Tart guest doctor returned MACOS_DRIVER_READY with a real 58 KB accessibility tree and live Mac2 session; two safely cleaned full-app runs exposed and fixed unsupported predicate and execute-argument bugs; final native baseline/control rerun remains pending"
     },
     {
       "claim": "Timeline keyboard, focus, selection, edit-mode, announcement, and pointer-parity semantics are explicitly approved and immutable for H03 implementation.",
@@ -65,6 +65,22 @@
       "new_gate": "H03 and H06 scenario ledgers must reference the exact timeline-a11y-v1 path and SHA-256",
       "target_branch_sha": "170b11641b6ab4e28451aaa77494dbae05e709ee",
       "post_integration_result": "approved by Tejas without modification on 2026-07-11; H03 dispatch authorized"
+    },
+    {
+      "claim": "React component state, approved keyboard semantics, pointer parity, persisted MLT truth, and automated DOM accessibility pass in real headless Chromium.",
+      "source_of_truth": "bun run verify:component && bun run verify:component --suite accessibility",
+      "old_failure": "component and DOM-accessibility claims had no executable browser oracle or aggregate evidence envelope",
+      "new_gate": "23 approved headless Chromium scenarios, axe checks, exact timeline-a11y-v1 binding, seven pointer/keyboard parity families, independently reparsed persisted .mlt truth, exact authority hashes, and two real product-source sensitivity controls",
+      "target_branch_sha": "516e252b8eb5c65165e3f654383552aa0f1d4beb",
+      "post_integration_result": "verified: H00 developer run 63a2ec57-45d4-4c8e-86a0-c8614d2bd79a accepted both H03 claims and their fail/reason-code/restore controls; direct suites each passed all 23 scenarios with zero cleanup findings"
+    },
+    {
+      "claim": "Native macOS automation is isolated from the human desktop in a reproducible persistent Tart guest.",
+      "source_of_truth": "bun run vm:macos:doctor && bun run vm:macos:doctor-guest",
+      "old_failure": "Mac2 and Xcode shared the active host login session and could take over the user's screen",
+      "new_gate": "immutable Tahoe/Xcode image digest, fixed 8 vCPU/32 GiB/200 GB profile, headless-only Tart flags, guest-local clean clone, strict private-IP SSH fallback, pinned toolchains, and two-variable dedicated-runner policy",
+      "target_branch_sha": "86eee8e8e2e090e0bf4ad095433385c775a363e7",
+      "post_integration_result": "verified environment: macOS 26.4 build 25E246, Xcode 26.5, VirtualMac2,1, key-only strict SSH, Node 24.15.0, Bun 1.3.14, Rust 1.95.0, MLT 7.40.0, and MACOS_DRIVER_READY; host retained 84% free memory during native exercise"
     }
   ],
   "roadmap_status": {
@@ -74,8 +90,9 @@
     "H05": "complete",
     "H05F": "no_delta",
     "H03K": "complete",
-    "H03": "in_progress",
-    "H06": "blocked_external",
+    "H03": "complete",
+    "H04": "ready",
+    "H06": "in_progress",
     "H09A": "complete",
     "remaining_lanes": "open"
   }

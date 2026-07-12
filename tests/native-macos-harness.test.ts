@@ -13,10 +13,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  GO_TO_FOLDER_KEYSTROKE,
   NATIVE_ELEMENT_TYPE,
   NATIVE_PANEL_ROOT_TYPES,
+  OPEN_PANEL_IDENTIFIER,
   countNativeElements,
-  focusedEnabledTextFieldPredicate,
+  enabledTextFieldPredicate,
   nativePredicate,
 } from "../e2e/macos/runtime";
 import { createFixture, hashFile } from "../scripts/harness/fixture";
@@ -327,14 +329,41 @@ describe("Mac2 accessibility XML inventory", () => {
     expect(nativePredicate(NATIVE_ELEMENT_TYPE.MenuBarItem)).not.toContain("XCUIElementType");
   });
 
-  it("scopes the Go-to-folder field to native panel roots and focused enabled semantics", () => {
+  it("scopes the Go-to-folder field to a distinct native panel root and enabled semantics", () => {
     expect(NATIVE_PANEL_ROOT_TYPES).toEqual([
       NATIVE_ELEMENT_TYPE.Sheet,
       NATIVE_ELEMENT_TYPE.Dialog,
     ]);
-    expect(focusedEnabledTextFieldPredicate()).toBe(
-      "-ios predicate string:elementType == 49 AND (focused == true AND enabled == true)",
+    expect(OPEN_PANEL_IDENTIFIER).toBe("open-panel");
+    expect(enabledTextFieldPredicate()).toBe(
+      "-ios predicate string:elementType == 49 AND (enabled == true)",
     );
+    expect(NATIVE_ELEMENT_TYPE.SearchField).toBe(45);
+  });
+
+  it("uses Mac2's explicit Shift-Command-G key payload", () => {
+    expect(GO_TO_FOLDER_KEYSTROKE).toEqual({ key: "g", modifierFlags: 18 });
+  });
+
+  it("rejects focused as an unsupported Mac2 search-predicate key", () => {
+    expect(() =>
+      nativePredicate(NATIVE_ELEMENT_TYPE.TextField, "focused == true AND enabled == true"),
+    ).toThrow(/does not expose 'focused' as an XCTest predicate key/);
+    expect(nativePredicate(NATIVE_ELEMENT_TYPE.TextField, "enabled == true")).toContain(
+      "enabled == true",
+    );
+  });
+
+  it("wires focus as a post-selection attribute and never as the shortcut predicate", () => {
+    const source = readFileSync(join(process.cwd(), "e2e/macos/native-shell.spec.ts"), "utf8");
+    expect(source).toContain('browser.execute("macos: keys", { keys: [GO_TO_FOLDER_KEYSTROKE] })');
+    expect(source).not.toContain(
+      'browser.execute("macos: keys", [{ keys: [GO_TO_FOLDER_KEYSTROKE] }])',
+    );
+    expect(source).toContain('location.getAttribute("focused")');
+    expect(source).toContain("excludedAsOpenPanel");
+    expect(source).not.toContain('browser.keys(["Shift", "Command", "g"])');
+    expect(source).not.toContain('nativePredicate(NATIVE_ELEMENT_TYPE.TextField, "focused');
   });
 
   it("counts Window, Dialog, and Sheet opening tags with attributes and newlines", () => {

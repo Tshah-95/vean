@@ -4,10 +4,12 @@ import { $, browser, expect } from "@wdio/globals";
 import { describe, it } from "mocha";
 import { bundleIdentifier, childPids, processIdentity } from "../tauri/runtime";
 import {
+  GO_TO_FOLDER_KEYSTROKE,
   NATIVE_ELEMENT_TYPE,
   NATIVE_PANEL_ROOT_TYPES,
+  OPEN_PANEL_IDENTIFIER,
   appProcess,
-  focusedEnabledTextFieldPredicate,
+  enabledTextFieldPredicate,
   nativeInventory,
   nativeInventoryFromSource,
   nativePredicate,
@@ -30,7 +32,14 @@ async function goToFolderLocationField() {
     rootType: number;
     roots: number;
     displayedRoots: number;
-    focusedEnabledTextFields: number[];
+    rootsObserved: Array<{
+      rootIndex: number;
+      identifier: string;
+      title: string;
+      label: string;
+      enabledTextFields: number;
+      excludedAsOpenPanel: boolean;
+    }>;
   }> = [];
 
   for (const rootType of NATIVE_PANEL_ROOT_TYPES) {
@@ -39,16 +48,34 @@ async function goToFolderLocationField() {
       rootType,
       roots: await roots.length,
       displayedRoots: 0,
-      focusedEnabledTextFields: [] as number[],
+      rootsObserved: [] as Array<{
+        rootIndex: number;
+        identifier: string;
+        title: string;
+        label: string;
+        enabledTextFields: number;
+        excludedAsOpenPanel: boolean;
+      }>,
     };
     let rootIndex = 0;
     for await (const root of roots) {
       if (await root.isDisplayed()) {
         inventory.displayedRoots += 1;
-        const fields = await root.$$(focusedEnabledTextFieldPredicate());
+        const identifier = (await root.getAttribute("identifier")) ?? "";
+        const title = (await root.getAttribute("title")) ?? "";
+        const label = (await root.getAttribute("label")) ?? "";
+        const fields = await root.$$(enabledTextFieldPredicate());
         const fieldCount = await fields.length;
-        inventory.focusedEnabledTextFields.push(fieldCount);
-        if (fieldCount === 1) {
+        const excludedAsOpenPanel = identifier === OPEN_PANEL_IDENTIFIER;
+        inventory.rootsObserved.push({
+          rootIndex,
+          identifier,
+          title,
+          label,
+          enabledTextFields: fieldCount,
+          excludedAsOpenPanel,
+        });
+        if (!excludedAsOpenPanel && fieldCount === 1) {
           const field = await fields[0]?.getElement();
           if (field) matchedRoots.push({ rootType, rootIndex, field });
         }
@@ -143,7 +170,12 @@ describe("Vean AppKit-owned shell", () => {
       );
     }
 
-    await browser.keys(["Shift", "Command", "g"]);
+    const openPanel = await $(
+      nativePredicate(NATIVE_ELEMENT_TYPE.Sheet, `identifier == '${OPEN_PANEL_IDENTIFIER}'`),
+    );
+    await openPanel.waitForExist({ timeout: 15_000 });
+    await expect(openPanel).toBeDisplayed();
+    await browser.execute("macos: keys", { keys: [GO_TO_FOLDER_KEYSTROKE] });
     let location: WebdriverIO.Element | undefined;
     let lastRootInventory: unknown = [];
     await browser
@@ -158,7 +190,7 @@ describe("Vean AppKit-owned shell", () => {
         {
           timeout: 15_000,
           timeoutMsg:
-            "Go-to-folder native sheet/panel did not expose exactly one focused, enabled semantic text field",
+            "Go-to-folder did not expose exactly one distinct native sheet/dialog with one enabled semantic text field",
         },
       )
       .catch(async (error) => {
@@ -168,6 +200,13 @@ describe("Vean AppKit-owned shell", () => {
     if (!location) {
       await writeGoToFolderDiagnostic(context, lastRootInventory);
       throw new Error("Go-to-folder semantic text field disappeared");
+    }
+    const locationFocused = await location.getAttribute("focused");
+    if (locationFocused !== "true") {
+      await writeGoToFolderDiagnostic(context, lastRootInventory);
+      throw new Error(
+        `Go-to-folder semantic text field was selected but lacked keyboard focus: ${locationFocused}`,
+      );
     }
     await location.setValue(context.projectRoot);
     await browser.keys(["Enter"]);
