@@ -780,7 +780,21 @@
         "restoration_predicate": "restored_hash == before_hash and baseline oracle returns verified",
         "evidence_paths": ["artifacts/test-runs/<run-id>/negative-controls/nc-tauri-wkwebview.json"]
       },
-      "oracle_implementation_paths": ["package.json"]
+      "oracle_implementation_paths": [
+        "package.json",
+        "vitest.config.ts",
+        "wdio.tauri.conf.ts",
+        "scripts/verify-tauri.ts",
+        "scripts/doctor-tauri-driver.ts",
+        "scripts/harness/tauri-identity.ts",
+        "scripts/harness/tauri-ledger-monitor.ts",
+        "e2e/tauri/runtime.ts",
+        "e2e/tauri/editor.spec.ts",
+        "tests/tauri-harness-contract.test.ts",
+        "app/src-tauri/Cargo.toml",
+        "app/src-tauri/src/lib.rs",
+        "artifacts/specs/harness-scenarios/tauri.json"
+      ]
     },
     {
       "claim_id": "claim-test-instrumentation-absent",
@@ -809,7 +823,15 @@
           "artifacts/test-runs/<run-id>/negative-controls/nc-test-instrumentation-absent.json"
         ]
       },
-      "oracle_implementation_paths": ["package.json"]
+      "oracle_implementation_paths": [
+        "package.json",
+        "scripts/verify-tauri-instrumentation.ts",
+        "app/src-tauri/Cargo.toml",
+        "app/src-tauri/src/lib.rs",
+        "app/src-tauri/capabilities/default.json",
+        "app/src-tauri/tauri.conf.json",
+        "artifacts/specs/harness-scenarios/tauri.json"
+      ]
     },
     {
       "claim_id": "claim-updater",

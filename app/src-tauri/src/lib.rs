@@ -112,6 +112,46 @@ fn free_port() -> std::io::Result<u16> {
     Ok(listener.local_addr()?.port())
 }
 
+/// H05 may reserve the preview port before launching the native app so every
+/// listener is fixture-owned and collision-safe. The override is deliberately
+/// accepted only by the doubly opted-in instrumented binary; production builds
+/// always ask the OS for an ephemeral port.
+fn selected_preview_port() -> std::io::Result<u16> {
+    #[cfg(feature = "harness-wdio")]
+    if harness_wdio_requested() {
+        if let Ok(raw) = std::env::var("VEAN_HARNESS_PREVIEW_PORT") {
+            return raw.parse::<u16>().map_err(|error| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("invalid VEAN_HARNESS_PREVIEW_PORT: {error}"),
+                )
+            });
+        }
+    }
+    free_port()
+}
+
+#[cfg(feature = "harness-wdio")]
+fn harness_wdio_requested() -> bool {
+    let harness = std::env::var("VEAN_HARNESS_WDIO").ok();
+    let embedded = std::env::var("WDIO_EMBEDDED_SERVER").ok();
+    explicit_harness_wdio_opt_in(harness.as_deref(), embedded.as_deref())
+}
+
+#[cfg(feature = "harness-wdio")]
+fn explicit_harness_wdio_opt_in(harness: Option<&str>, embedded: Option<&str>) -> bool {
+    harness == Some("1") && embedded == Some("true")
+}
+
+#[cfg(feature = "harness-wdio")]
+fn with_harness_wdio<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    if harness_wdio_requested() {
+        builder.plugin(tauri_plugin_wdio_webdriver::init())
+    } else {
+        builder
+    }
+}
+
 /// Resolve the bundled renderer sidecars and return the env that points the driver
 /// (`src/driver/melt.ts` → `resolveBin`) at them: VEAN_MELT/FFMPEG/FFPROBE plus the
 /// MLT_* module/profile/data dirs. Empty when no bundle is present — dev on a
@@ -267,7 +307,7 @@ fn navigate_to_sidecar(app: &AppHandle, port: u16) {
 /// (dropping it kills the old process), pick a fresh port, spawn, and navigate the
 /// webview once the new server is up. Returns the bound port.
 fn restart_sidecar(app: &AppHandle, project: PathBuf) -> Result<u16, String> {
-    let port = free_port().map_err(|e| e.to_string())?;
+    let port = selected_preview_port().map_err(|e| e.to_string())?;
     let env = renderer_env(app);
     let child = spawn_sidecar(&project, port, &env).map_err(|e| e.to_string())?;
     let process_group = child.id() as i32;
@@ -549,7 +589,19 @@ mod navigation_policy_tests {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    #[cfg(feature = "harness-wdio")]
+    if harness_wdio_requested() {
+        // The H02 watchdog reaps by process group. WebdriverIO deliberately
+        // spawns the app as an ordinary child, so establish a harness-owned
+        // group before the sidecar (which establishes its own) is created.
+        unsafe {
+            libc::setpgid(0, 0);
+        }
+    }
+    let builder = tauri::Builder::default();
+    #[cfg(feature = "harness-wdio")]
+    let builder = with_harness_wdio(builder);
+    builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(navigation_policy_plugin())
         .manage(AppState::default())
@@ -585,5 +637,20 @@ mod tests {
     fn packaged_renderer_triple_matches_the_macos_build_architecture() {
         assert_eq!(std::env::consts::ARCH, "aarch64");
         assert_eq!(MACOS_RENDERER_TRIPLE, "aarch64-apple-darwin");
+    }
+}
+
+#[cfg(all(test, feature = "harness-wdio"))]
+mod harness_wdio_tests {
+    use super::explicit_harness_wdio_opt_in;
+
+    #[test]
+    fn instrumentation_requires_both_explicit_runtime_opt_ins() {
+        assert!(!explicit_harness_wdio_opt_in(None, None));
+        assert!(!explicit_harness_wdio_opt_in(Some("1"), None));
+        assert!(!explicit_harness_wdio_opt_in(None, Some("true")));
+        assert!(!explicit_harness_wdio_opt_in(Some("0"), Some("true")));
+        assert!(!explicit_harness_wdio_opt_in(Some("1"), Some("false")));
+        assert!(explicit_harness_wdio_opt_in(Some("1"), Some("true")));
     }
 }

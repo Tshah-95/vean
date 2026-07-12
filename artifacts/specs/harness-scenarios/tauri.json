@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "suite": "tauri-wkwebview",
+  "provider_decisions": ["embedded_basic_safe", "blackbox_fallback"],
+  "scenarios": [
+    {
+      "id": "tauri-final-viewer-split-save",
+      "provider": "embedded_basic_safe",
+      "window": "main",
+      "steps": [
+        "launch exact feature-gated instrumented binary from an H02 fixture",
+        "wait for the same WKWebViewWindow to reach its exact fixture-owned localhost origin",
+        "select the real clip with an ordinary WebDriver click",
+        "invoke split through the existing window.__veanEdit product bridge",
+        "click the real Save button",
+        "independently hash and parse the external persisted .mlt"
+      ],
+      "truth": [
+        "exact app PID/executable/hash/bundle",
+        "one main window and final localhost URL",
+        "AppleWebKit and macOS versions",
+        "driver port/session/capabilities",
+        "action and save envelopes",
+        "changed .mlt hash, parsed split clips, and exact touched URI",
+        "watchdog cleanup and unchanged developer canary"
+      ]
+    },
+    {
+      "id": "tauri-production-instrumentation-development-candidate",
+      "provider": "release-negative",
+      "steps": [
+        "build without default features",
+        "scan dependency tree, config, capabilities, frontend packages, and binary symbols",
+        "launch under hostile WDIO environment variables",
+        "reject WebDriver status/session access on the fixture-owned port"
+      ],
+      "scope": "development candidate only; H08R must repeat against the exact signed and installed release lineage"
+    }
+  ]
+}
