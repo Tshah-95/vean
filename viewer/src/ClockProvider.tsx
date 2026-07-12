@@ -2,7 +2,7 @@
 // a `useClock()` hook that subscribes via useSyncExternalStore so any component
 // re-renders on a frame change. The clock instance itself is stable across
 // renders (one master playhead per mounted viewer).
-import { createContext, useContext, useMemo, useSyncExternalStore } from "react";
+import { createContext, useContext, useEffect, useMemo, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
 import { type ClockState, MasterClock } from "./clock";
 
@@ -10,6 +10,7 @@ const ClockContext = createContext<MasterClock | null>(null);
 
 export function ClockProvider({ children }: { children: ReactNode }) {
   const clock = useMemo(() => new MasterClock(), []);
+  useEffect(() => () => clock.dispose(), [clock]);
   return <ClockContext.Provider value={clock}>{children}</ClockContext.Provider>;
 }
 

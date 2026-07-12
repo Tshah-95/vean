@@ -1,0 +1,112 @@
+{
+  "contract_version": "1.0.0",
+  "authority": "Vitest 4 Browser Mode through Playwright Chromium plus independent SessionStore/.mlt truth",
+  "interaction_contract": {
+    "version": "timeline-a11y-v1",
+    "path": "artifacts/specs/timeline-keyboard-accessibility-contract-v1.md",
+    "sha256": "90e92872cc4df0dc12705ee560d2e2e5e3a916210c2a2eebb73e2cbd15c9a6d1"
+  },
+  "required_engine": "playwright/chromium/headless",
+  "forbidden_substitutions": [
+    "jsdom",
+    "synthetic fireEvent",
+    "DOM-only edit truth",
+    "Playwright WebKit represented as WKWebView",
+    "automated DOM checks represented as VoiceOver assessment"
+  ],
+  "scenarios": [
+    { "id": "component.app.loading-error", "proof": "actual App loading and typed failure states" },
+    {
+      "id": "component.transport.semantic-controls",
+      "proof": "named transport controls update the master clock and audio state"
+    },
+    {
+      "id": "component.sidebar.tabs-and-actions",
+      "proof": "ARIA tabs select action-backed panels and collapse/reopen"
+    },
+    {
+      "id": "component.editor.undo-redo-save",
+      "proof": "real toolbar input announces history/save and dirty state"
+    },
+    {
+      "id": "component.strict-mode.cleanup",
+      "proof": "StrictMode remount/unmount balances listeners and disposes clock state"
+    },
+    {
+      "id": "component.console-failure-policy",
+      "proof": "console/error/rejection fail-closed setup is active"
+    },
+    {
+      "id": "a11y.timeline.structure",
+      "proof": "named region/toolbar/listbox/groups/options and disabled structural items"
+    },
+    {
+      "id": "a11y.timeline.roving-selection",
+      "proof": "one roving tab stop and selection follows focus"
+    },
+    { "id": "a11y.timeline.browse-horizontal", "proof": "Left/Right remain in the current track" },
+    {
+      "id": "a11y.timeline.browse-vertical",
+      "proof": "Up/Down use nearest compatible center with earlier tie-break"
+    },
+    {
+      "id": "a11y.timeline.browse-home-end",
+      "proof": "track and whole-timeline Home/End are deterministic"
+    },
+    {
+      "id": "a11y.timeline.global-shortcuts",
+      "proof": "Space, B, N, undo, redo, and save use product paths"
+    },
+    {
+      "id": "a11y.timeline.edit-target-cycle",
+      "proof": "Enter and Tab/Shift+Tab expose body/head/tail mode"
+    },
+    {
+      "id": "a11y.timeline.body-operations",
+      "proof": "move, slip, slide, and compatible-track move use canonical invocations"
+    },
+    {
+      "id": "a11y.timeline.edge-operations",
+      "proof": "trim, ripple trim, roll, and missing-neighbor limitation are canonical"
+    },
+    {
+      "id": "a11y.timeline.compatible-track-move",
+      "proof": "vertical edit move preserves time and never crosses video/audio kind"
+    },
+    {
+      "id": "a11y.timeline.snapping-and-bounds",
+      "proof": "keyboard uses pointer snap candidates and announces a held hard bound once"
+    },
+    {
+      "id": "a11y.timeline.commit-cancel-coalesce",
+      "proof": "keyup/500ms bursts create one transaction and Escape exactly cancels"
+    },
+    {
+      "id": "a11y.timeline.announcements",
+      "proof": "selection/edit/error/history/save announcements are typed and deterministic"
+    },
+    {
+      "id": "a11y.timeline.focus-restoration",
+      "proof": "commit/cancel/split/removal policies retain or restore semantic focus"
+    },
+    {
+      "id": "a11y.timeline.pointer-keyboard-parity",
+      "proof": "keyboard calls the existing gesture invocation builder for every modifier family"
+    },
+    {
+      "id": "a11y.timeline.document-truth",
+      "proof": "real browser invocation is reapplied through SessionStore and independently parsed/hashed"
+    },
+    { "id": "a11y.timeline.axe", "proof": "axe has zero blocking machine-detectable violations" }
+  ],
+  "negative_controls": [
+    {
+      "id": "nc-react-components",
+      "mutation": "reverse real ArrowDown compatible-track direction in viewer product source"
+    },
+    {
+      "id": "nc-dom-accessibility",
+      "mutation": "remove the real clip option accessible name in viewer product source"
+    }
+  ]
+}

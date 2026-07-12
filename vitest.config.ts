@@ -9,6 +9,6 @@ import { configDefaults, defineConfig } from "vitest/config";
 // Excluding the nested-worktree root keeps `bun run test` scoped to THIS tree.
 export default defineConfig({
   test: {
-    exclude: [...configDefaults.exclude, "**/.claude/worktrees/**", "e2e/**"],
+    exclude: [...configDefaults.exclude, "**/.claude/worktrees/**", "e2e/**", "viewer/test/**"],
   },
 });

@@ -10,7 +10,14 @@
 // per-clip badge. Frame math stays integer everywhere — the hook never invents a
 // float frame; it passes the UI's already-rounded integers to the edit algebra.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { applyOp, redoEdit, saveTimeline, undoEdit } from "./api";
+import {
+  type EditAuthorOpts,
+  ViewerApiError,
+  applyOp,
+  redoEdit,
+  saveTimeline,
+  undoEdit,
+} from "./api";
 import type { Diagnostic, OpInvocation, SessionEditResult, Timeline } from "./types";
 
 export interface TimelineEditor {
@@ -33,19 +40,30 @@ export interface TimelineEditor {
   /** Diagnostics for the working IR, indexed by clip uuid (others under ""). */
   diagnosticsByClip: Map<string, Diagnostic[]>;
   /** Apply one op against the working IR (optimistic-free: server is the truth). */
-  commit: (invocation: OpInvocation) => Promise<SessionEditResult | null>;
-  undo: () => void;
-  redo: () => void;
-  save: () => void;
+  commit: (invocation: OpInvocation, opts?: EditAuthorOpts) => Promise<SessionEditResult | null>;
+  undo: (opts?: EditAuthorOpts) => Promise<SessionEditResult | null>;
+  redo: (opts?: EditAuthorOpts) => Promise<SessionEditResult | null>;
+  save: () => Promise<boolean>;
   canUndo: boolean;
   canRedo: boolean;
   dirty: boolean;
   /** Transient "Saved" pulse for the indicator. */
   justSaved: boolean;
   /** The last op/undo/redo error (clip-not-found, frame-out-of-range, …), if any. */
-  lastError: string | null;
+  lastError: { kind: string; detail: string } | null;
   /** True while a commit/undo/redo/save request is in flight. */
   busy: boolean;
+  /** Author on top of the shared session history. Used to keep cancellation from
+   *  reverting a concurrent agent edit. */
+  nextUndoAuthor: string | null;
+  nextRedoAuthor: string | null;
+  lastEvent: { kind: "commit" | "undo" | "redo" | "save"; revision: number; dirty: boolean } | null;
+}
+
+/** Let normal human undo/redo continue across a committed keyboard transaction,
+ * while never borrowing an agent/session identity. */
+export function humanHistoryOptions(author: string | null): EditAuthorOpts | undefined {
+  return author?.startsWith("human:timeline-keyboard:") ? { author } : undefined;
 }
 
 /** The number of timeline frames a track occupies (sum of its item playtimes). */
@@ -98,9 +116,28 @@ export function useTimelineEditor(
   const [canRedo, setCanRedo] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
-  const [lastError, setLastError] = useState<string | null>(null);
+  const [lastError, setLastError] = useState<{ kind: string; detail: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [nextUndoAuthor, setNextUndoAuthor] = useState<string | null>(null);
+  const [nextRedoAuthor, setNextRedoAuthor] = useState<string | null>(null);
+  const [lastEvent, setLastEvent] = useState<TimelineEditor["lastEvent"]>(null);
   const savedTimer = useRef<number | null>(null);
+  // One network mutation at a time. Browser key-repeat, pointer input, and the
+  // headless bridge can otherwise resolve out of order and replace newer React IR
+  // with an older response. The chain deliberately survives rejected requests.
+  const requestTail = useRef<Promise<unknown>>(Promise.resolve());
+  const pendingCount = useRef(0);
+
+  const serialize = useCallback(<T>(work: () => Promise<T>): Promise<T> => {
+    pendingCount.current++;
+    setBusy(true);
+    const result = requestTail.current.then(work, work);
+    requestTail.current = result.finally(() => {
+      pendingCount.current--;
+      if (pendingCount.current === 0) setBusy(false);
+    });
+    return result;
+  }, []);
 
   // A new server load (route change / reload) resets the working copy: the server
   // session is the source of truth and a fresh fetch means a fresh document.
@@ -114,6 +151,9 @@ export function useTimelineEditor(
     setCanRedo(false);
     setDirty(false);
     setLastError(null);
+    setNextUndoAuthor(null);
+    setNextRedoAuthor(null);
+    setLastEvent(null);
   }, [serverTimeline]);
 
   const timeline = working ?? serverTimeline;
@@ -126,54 +166,89 @@ export function useTimelineEditor(
     setCanUndo(res.canUndo);
     setCanRedo(res.canRedo);
     setDirty(res.dirty);
+    setNextUndoAuthor(res.nextUndoAuthor ?? null);
+    setNextRedoAuthor(res.nextRedoAuthor ?? null);
     setLastError(null);
   }, []);
 
+  const ingestError = useCallback((error: unknown) => {
+    if (error instanceof ViewerApiError) {
+      setLastError({ kind: error.kind, detail: error.detail });
+      return;
+    }
+    setLastError({
+      kind: "unexpected-viewer-error",
+      detail: String((error as Error)?.message ?? error),
+    });
+  }, []);
+
   const commit = useCallback(
-    async (invocation: OpInvocation): Promise<SessionEditResult | null> => {
-      setBusy(true);
-      try {
-        const res = await applyOp(invocation, route);
-        ingest(res);
-        return res;
-      } catch (e) {
-        setLastError(String((e as Error)?.message ?? e));
-        return null;
-      } finally {
-        setBusy(false);
-      }
+    (invocation: OpInvocation, opts?: EditAuthorOpts): Promise<SessionEditResult | null> => {
+      return serialize(async () => {
+        try {
+          const res = await applyOp(invocation, route, opts);
+          ingest(res);
+          setLastEvent({ kind: "commit", revision: res.revision, dirty: res.dirty });
+          return res;
+        } catch (e) {
+          ingestError(e);
+          return null;
+        }
+      });
     },
-    [route, ingest],
+    [route, ingest, ingestError, serialize],
   );
 
-  const undo = useCallback(() => {
-    setBusy(true);
-    undoEdit(route)
-      .then(ingest)
-      .catch((e) => setLastError(String((e as Error)?.message ?? e)))
-      .finally(() => setBusy(false));
-  }, [route, ingest]);
+  const undo = useCallback(
+    (opts?: EditAuthorOpts): Promise<SessionEditResult | null> =>
+      serialize(async () => {
+        try {
+          const res = await undoEdit(route, opts);
+          ingest(res);
+          setLastEvent({ kind: "undo", revision: res.revision, dirty: res.dirty });
+          return res;
+        } catch (e) {
+          ingestError(e);
+          return null;
+        }
+      }),
+    [route, ingest, ingestError, serialize],
+  );
 
-  const redo = useCallback(() => {
-    setBusy(true);
-    redoEdit(route)
-      .then(ingest)
-      .catch((e) => setLastError(String((e as Error)?.message ?? e)))
-      .finally(() => setBusy(false));
-  }, [route, ingest]);
+  const redo = useCallback(
+    (opts?: EditAuthorOpts): Promise<SessionEditResult | null> =>
+      serialize(async () => {
+        try {
+          const res = await redoEdit(route, opts);
+          ingest(res);
+          setLastEvent({ kind: "redo", revision: res.revision, dirty: res.dirty });
+          return res;
+        } catch (e) {
+          ingestError(e);
+          return null;
+        }
+      }),
+    [route, ingest, ingestError, serialize],
+  );
 
-  const save = useCallback(() => {
-    setBusy(true);
-    saveTimeline(route)
-      .then(() => {
-        setDirty(false);
-        setJustSaved(true);
-        if (savedTimer.current != null) window.clearTimeout(savedTimer.current);
-        savedTimer.current = window.setTimeout(() => setJustSaved(false), 1600);
-      })
-      .catch((e) => setLastError(String((e as Error)?.message ?? e)))
-      .finally(() => setBusy(false));
-  }, [route]);
+  const save = useCallback(
+    (): Promise<boolean> =>
+      serialize(async () => {
+        try {
+          await saveTimeline(route);
+          setDirty(false);
+          setJustSaved(true);
+          setLastEvent({ kind: "save", revision, dirty: false });
+          if (savedTimer.current != null) window.clearTimeout(savedTimer.current);
+          savedTimer.current = window.setTimeout(() => setJustSaved(false), 1600);
+          return true;
+        } catch (e) {
+          ingestError(e);
+          return false;
+        }
+      }),
+    [ingestError, revision, route, serialize],
+  );
 
   useEffect(
     () => () => {
@@ -202,5 +277,8 @@ export function useTimelineEditor(
     justSaved,
     lastError,
     busy,
+    nextUndoAuthor,
+    nextRedoAuthor,
+    lastEvent,
   };
 }

@@ -16,7 +16,16 @@ import { TimelineStrip } from "./components/TimelineStrip";
 import { Transport } from "./components/Transport";
 import { installDecodeBridge } from "./decode/debugBridge";
 import type { TimelineResponse } from "./types";
-import { useTimelineEditor } from "./useTimelineEditor";
+import { humanHistoryOptions, useTimelineEditor } from "./useTimelineEditor";
+
+function isTextEntry(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
+  );
+}
 
 // The graphic overlay is resolved PER-FRAME from the working IR (the graphic clip
 // active at the playhead) inside `PreviewPane` — see `resolveOverlayAt`. Multi-overlay,
@@ -86,7 +95,7 @@ function Viewer({ route }: { route: string | undefined }) {
   // Keyboard: space toggles play/pause; arrows step a frame.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement) return;
+      if (isTextEntry(e.target)) return;
       if (e.code === "Space") {
         e.preventDefault();
         clock.toggle();
@@ -207,16 +216,16 @@ function Stage({
   // playhead. Coexists with the play/pause/zoom keys (different keys / handlers).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement) return;
+      if (isTextEntry(e.target)) return;
       const meta = e.metaKey || e.ctrlKey;
       if (meta && (e.key === "z" || e.key === "Z")) {
         e.preventDefault();
-        if (e.shiftKey) editor.redo();
-        else editor.undo();
+        if (e.shiftKey) editor.redo(humanHistoryOptions(editor.nextRedoAuthor));
+        else editor.undo(humanHistoryOptions(editor.nextUndoAuthor));
       } else if (meta && (e.key === "y" || e.key === "Y")) {
         // Windows-style redo.
         e.preventDefault();
-        editor.redo();
+        editor.redo(humanHistoryOptions(editor.nextRedoAuthor));
       } else if (meta && (e.key === "s" || e.key === "S")) {
         e.preventDefault();
         editor.save();
