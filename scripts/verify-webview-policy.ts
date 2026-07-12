@@ -80,16 +80,21 @@ const tauriNavigationPolicyRegistered = tauriBootstrap.includes(
 );
 const releaseCsp = contentSecurityPolicy("release");
 const declaredNavigationOrigin = `http://127.0.0.1:${port + controlConfig.navigationPortOffset}`;
+const infrastructureOk =
+  tauriConfig.app?.security?.csp !== null &&
+  tauriNavigationPolicyCompiled &&
+  tauriNavigationPolicyRegistered &&
+  unauthorized.status === 403;
+if (!infrastructureOk) {
+  throw new Error("webview policy infrastructure/compiled registration proof failed");
+}
+const policyPredicateMet =
+  response.headers.get("content-security-policy") === releaseCsp &&
+  !releaseCsp.includes("'unsafe-eval'") &&
+  isAllowedViewerNavigation(`${origin}/`, declaredNavigationOrigin) &&
+  !isAllowedViewerNavigation("https://example.com", declaredNavigationOrigin);
 const candidate = {
-  ok:
-    response.headers.get("content-security-policy") === releaseCsp &&
-    !releaseCsp.includes("'unsafe-eval'") &&
-    tauriConfig.app?.security?.csp !== null &&
-    tauriNavigationPolicyCompiled &&
-    tauriNavigationPolicyRegistered &&
-    unauthorized.status === 403 &&
-    isAllowedViewerNavigation(`${origin}/`, declaredNavigationOrigin) &&
-    !isAllowedViewerNavigation("https://example.com", origin),
+  ok: infrastructureOk && policyPredicateMet,
   scope: "release-mode bound server and Tauri source configuration candidate",
   releaseCsp,
   responseHeaders,

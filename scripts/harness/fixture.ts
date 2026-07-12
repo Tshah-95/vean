@@ -174,6 +174,18 @@ export async function createFixture(options: {
     processLedger,
     processGroup: `vean-harness-${runId}`,
   };
+  const supervisorRegistryDir = process.env.VEAN_HARNESS_SUPERVISOR_DIR;
+  const supervisorRegistryPath = supervisorRegistryDir
+    ? join(supervisorRegistryDir, `${runId}.json`)
+    : null;
+  if (supervisorRegistryPath && supervisorRegistryDir) {
+    mkdirSync(supervisorRegistryDir, { recursive: true });
+    writeFileSync(
+      supervisorRegistryPath,
+      `${JSON.stringify({ root, processLedger, runId }, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+  }
   writeFileSync(join(artifactDir, "fixture.json"), JSON.stringify(descriptor, null, 2));
   return {
     descriptor,
@@ -192,6 +204,7 @@ export async function createFixture(options: {
         throw new Error("developer-state canary changed during hermetic run");
       }
       rmSync(authorityHandle, { force: true });
+      if (supervisorRegistryPath) rmSync(supervisorRegistryPath, { force: true });
       for (const lease of leases) {
         allocatedPorts.delete(lease.port);
         rmSync(lease.leasePath, { force: true });

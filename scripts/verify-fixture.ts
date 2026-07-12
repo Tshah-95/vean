@@ -13,9 +13,13 @@ import {
 } from "./harness/evidence";
 import { type Fixture, createFixture, fixtureBehavior, hashFile } from "./harness/fixture";
 import { recordProcess } from "./harness/process-ledger";
+import { runSelfUnderSupervisor, superviseCommand } from "./harness/supervisor";
 import { inspectAndReap } from "./harness/watchdog-lib";
 
 const repo = resolve(import.meta.dirname, "..");
+if (process.env.VEAN_HARNESS_SUPERVISED !== "1") {
+  await runSelfUnderSupervisor(import.meta.path, process.argv.slice(2));
+}
 const suiteIndex = process.argv.indexOf("--suite");
 const suite = suiteIndex >= 0 ? process.argv[suiteIndex + 1] : undefined;
 const scenarioIndex = process.argv.indexOf("--scenario");
@@ -61,6 +65,13 @@ const sensitivityReason = `SENSITIVITY_${claim.id
   .replace(/^claim-/, "")
   .replaceAll("-", "_")
   .toUpperCase()}`;
+
+class ExpectedMutantFailure extends Error {}
+
+function predicateFailure(message: string): never {
+  if (negativePhase) throw new ExpectedMutantFailure(message);
+  throw new Error(message);
+}
 
 const evidenceBase = process.env.VEAN_HARNESS_EVIDENCE_PATH
   ? dirname(process.env.VEAN_HARNESS_EVIDENCE_PATH)
@@ -157,7 +168,7 @@ async function hermeticProof() {
         (result as { db?: string }).db !== fixtures[index]?.descriptor.database,
     )
   )
-    throw new Error("child environment escaped its fixture");
+    predicateFailure("child environment escaped its fixture");
   if (
     apiResults.some(
       (result, index) => (result as { runId?: string }).runId !== fixtures[index]?.descriptor.runId,
@@ -238,7 +249,7 @@ async function authorityProof() {
       valid.status === 403 ||
       replay.status !== 403
     )
-      throw new Error("bound authority matrix failed");
+      predicateFailure("bound authority matrix failed");
     if (bodies.some((body) => body.includes(token)))
       throw new Error("authority leaked in HTTP result");
     return {
@@ -275,9 +286,25 @@ async function cleanupProof() {
   });
   await Bun.sleep(100);
   const clean = await inspectAndReap(fixture.descriptor.processLedger, { reap: false });
-  if (!detected.findings.some((item) => item.kind === "marker") || clean.findings.length !== 0)
-    throw new Error("watchdog did not close orphan lifecycle");
-  return { detected, clean };
+  const abrupt = await superviseCommand(
+    ["bun", join(repo, "scripts/harness/supervisor-fixture-worker.ts"), "abrupt"],
+    { cwd: repo, timeoutMs: 5_000 },
+  );
+  const timeout = await superviseCommand(
+    ["bun", join(repo, "scripts/harness/supervisor-fixture-worker.ts"), "timeout"],
+    { cwd: repo, timeoutMs: 400 },
+  );
+  if (
+    !detected.findings.some((item) => item.kind === "marker") ||
+    clean.findings.length !== 0 ||
+    abrupt.detected.length === 0 ||
+    abrupt.remaining.length !== 0 ||
+    !timeout.timedOut ||
+    timeout.detected.length === 0 ||
+    timeout.remaining.length !== 0
+  )
+    predicateFailure("watchdog did not close orphan lifecycle");
+  return { detected, clean, abrupt, timeout };
 }
 
 let result: unknown;
@@ -321,7 +348,8 @@ try {
   if (!process.env.VEAN_HARNESS_EVIDENCE_PATH)
     console.log(JSON.stringify({ ok: true, claim_id: claim.id, result }));
 } catch (error) {
-  if (negativePhase) writeControlFailure(sensitivityReason, claim.control);
+  if (negativePhase && error instanceof ExpectedMutantFailure)
+    writeControlFailure(sensitivityReason, claim.control);
   throw error;
 } finally {
   for (const fixture of fixtures.reverse()) await fixture.close();

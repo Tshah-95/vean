@@ -19,6 +19,7 @@ import {
   reclaimStalePortLeases,
 } from "../scripts/harness/fixture";
 import { recordProcess } from "../scripts/harness/process-ledger";
+import { superviseCommand } from "../scripts/harness/supervisor";
 
 const repo = resolve(import.meta.dirname, "..");
 const active: Fixture[] = [];
@@ -186,5 +187,25 @@ describe("shared hermetic fixture", () => {
     expect(existsSync(leasePath)).toBe(false);
     rmSync(allocation.root, { recursive: true, force: true });
     rmSync(developerRoot, { recursive: true, force: true });
+  });
+
+  it("an outliving supervisor reaps descendants after owner SIGKILL and timeout", async () => {
+    const worker = join(repo, "scripts/harness/supervisor-fixture-worker.ts");
+    const abrupt = await superviseCommand(["bun", worker, "abrupt"], {
+      cwd: repo,
+      timeoutMs: 5_000,
+    });
+    expect(abrupt.exitCode).not.toBe(0);
+    expect(abrupt.detected.some((finding) => finding.kind === "marker")).toBe(true);
+    expect(abrupt.remaining).toEqual([]);
+
+    const timeout = await superviseCommand(["bun", worker, "timeout"], {
+      cwd: repo,
+      timeoutMs: 400,
+    });
+    expect(timeout.timedOut).toBe(true);
+    expect(timeout.exitCode).toBe(124);
+    expect(timeout.detected.length).toBeGreaterThan(0);
+    expect(timeout.remaining).toEqual([]);
   });
 });
