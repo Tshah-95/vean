@@ -49,6 +49,7 @@ export interface TimelineEditor {
   /** Author on top of the shared session history. Used to keep cancellation from
    *  reverting a concurrent agent edit. */
   nextUndoAuthor: string | null;
+  lastEvent: { kind: "commit" | "undo" | "redo" | "save"; revision: number; dirty: boolean } | null;
 }
 
 /** The number of timeline frames a track occupies (sum of its item playtimes). */
@@ -104,6 +105,7 @@ export function useTimelineEditor(
   const [lastError, setLastError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [nextUndoAuthor, setNextUndoAuthor] = useState<string | null>(null);
+  const [lastEvent, setLastEvent] = useState<TimelineEditor["lastEvent"]>(null);
   const savedTimer = useRef<number | null>(null);
   // One network mutation at a time. Browser key-repeat, pointer input, and the
   // headless bridge can otherwise resolve out of order and replace newer React IR
@@ -135,6 +137,7 @@ export function useTimelineEditor(
     setDirty(false);
     setLastError(null);
     setNextUndoAuthor(null);
+    setLastEvent(null);
   }, [serverTimeline]);
 
   const timeline = working ?? serverTimeline;
@@ -157,6 +160,7 @@ export function useTimelineEditor(
         try {
           const res = await applyOp(invocation, route, opts);
           ingest(res);
+          setLastEvent({ kind: "commit", revision: res.revision, dirty: res.dirty });
           return res;
         } catch (e) {
           setLastError(String((e as Error)?.message ?? e));
@@ -173,6 +177,7 @@ export function useTimelineEditor(
         try {
           const res = await undoEdit(route, opts);
           ingest(res);
+          setLastEvent({ kind: "undo", revision: res.revision, dirty: res.dirty });
           return res;
         } catch (e) {
           setLastError(String((e as Error)?.message ?? e));
@@ -188,6 +193,7 @@ export function useTimelineEditor(
         try {
           const res = await redoEdit(route, opts);
           ingest(res);
+          setLastEvent({ kind: "redo", revision: res.revision, dirty: res.dirty });
           return res;
         } catch (e) {
           setLastError(String((e as Error)?.message ?? e));
@@ -204,6 +210,7 @@ export function useTimelineEditor(
           await saveTimeline(route);
           setDirty(false);
           setJustSaved(true);
+          setLastEvent({ kind: "save", revision, dirty: false });
           if (savedTimer.current != null) window.clearTimeout(savedTimer.current);
           savedTimer.current = window.setTimeout(() => setJustSaved(false), 1600);
           return true;
@@ -212,7 +219,7 @@ export function useTimelineEditor(
           return false;
         }
       }),
-    [route, serialize],
+    [revision, route, serialize],
   );
 
   useEffect(
@@ -243,5 +250,6 @@ export function useTimelineEditor(
     lastError,
     busy,
     nextUndoAuthor,
+    lastEvent,
   };
 }

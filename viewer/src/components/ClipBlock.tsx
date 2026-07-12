@@ -73,7 +73,10 @@ export function ClipBlock({
   if (item.kind === "blank") {
     return (
       <div
-        role="note"
+        role="option"
+        aria-disabled="true"
+        aria-selected="false"
+        tabIndex={-1}
         aria-label={`Blank gap, ${length} frames, timeline frames ${start} to ${start + length - 1}`}
         style={{
           position: "absolute",
@@ -94,7 +97,10 @@ export function ClipBlock({
   if (item.kind === "dissolve") {
     return (
       <div
-        role="note"
+        role="option"
+        aria-disabled="true"
+        aria-selected="false"
+        tabIndex={-1}
         aria-label={`Dissolve, ${length} frames, timeline frames ${start} to ${start + length - 1}`}
         style={{
           position: "absolute",

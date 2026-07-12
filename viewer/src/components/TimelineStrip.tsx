@@ -136,6 +136,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
   const [announcement, setAnnouncement] = useState("");
   const [editMode, setEditMode] = useState<{ clipId: string; target: EditTarget } | null>(null);
   const optionRefs = useRef(new Map<string, HTMLDivElement>());
+  const previousClipIds = useRef<string[]>([]);
   const editorRef = useRef(editor);
   editorRef.current = editor;
   const transactionRef = useRef<{
@@ -144,6 +145,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
     expectedRevision: number;
     undoCount: number;
   } | null>(null);
+  const lastBoundaryRef = useRef<string | null>(null);
   const burstRef = useRef<{
     key: "ArrowLeft" | "ArrowRight";
     dx: number;
@@ -298,6 +300,24 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
     [editor],
   );
 
+  useEffect(() => {
+    const currentIds = clips.map((clip) => clip.id);
+    if (selectedId && !currentIds.includes(selectedId)) {
+      const removedIndex = previousClipIds.current.indexOf(selectedId);
+      const following = previousClipIds.current
+        .slice(Math.max(0, removedIndex + 1))
+        .find((id) => currentIds.includes(id));
+      const previous = previousClipIds.current
+        .slice(0, Math.max(0, removedIndex))
+        .reverse()
+        .find((id) => currentIds.includes(id));
+      const destination = following ?? previous ?? currentIds[0];
+      if (destination) focusClip(destination);
+      else editor.select(null);
+    }
+    previousClipIds.current = currentIds;
+  }, [clips, editor.select, focusClip, selectedId]);
+
   const announceSelection = useCallback((id: string) => {
     const clip = findClip(editorRef.current.timeline, id);
     if (!clip) return;
@@ -331,7 +351,9 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
       return false;
     }
     if (!result.invocation) {
-      setAnnouncement(result.limitation ?? "No timeline change");
+      const limitation = result.limitation ?? "No timeline change";
+      if (lastBoundaryRef.current !== limitation) setAnnouncement(limitation);
+      lastBoundaryRef.current = limitation;
       return true;
     }
     const response = await editorRef.current.commit(result.invocation, {
@@ -343,9 +365,16 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
     }
     transaction.expectedRevision = response.revision;
     transaction.undoCount++;
+    lastBoundaryRef.current = null;
     const direction = result.appliedDx > 0 ? "+" : "";
+    const updated = findClip(response.ir, mode.clipId);
+    const item = updated?.placed.item;
+    const resultingRange =
+      updated && item?.kind === "clip"
+        ? `, ${trackLabel(updated.track, response.ir)}, timeline ${updated.placed.start} to ${updated.placed.start + updated.placed.length - 1}, source ${item.in} to ${item.out}`
+        : "";
     setAnnouncement(
-      `${result.tool} ${direction}${result.appliedDx} frames${result.snappedTo == null ? "" : `, snapped to frame ${result.snappedTo}`}${burst.alt ? ", ripple modifier" : ""}${burst.meta ? ", roll or slide modifier" : ""}`,
+      `${result.tool} ${direction}${result.appliedDx} frames${resultingRange}${result.snappedTo == null ? "" : `, snapped to frame ${result.snappedTo}`}${burst.alt ? ", ripple modifier" : ""}${burst.meta ? ", roll or slide modifier" : ""}`,
     );
     return true;
   }, [editMode, pxPerFrame, snapCandidates, snapEnabled]);
@@ -435,7 +464,10 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         } else if (event.key === "Enter") {
           event.preventDefault();
           event.stopPropagation();
-          const author = `human:timeline-keyboard:${crypto.randomUUID()}`;
+          // Keyboard bursts remain ordinary human edits after Enter, so Cmd+Z and
+          // the toolbar can undo them. Exact Escape cancellation is protected by
+          // both the captured revision and the server's human-vs-agent boundary.
+          const author = "human";
           transactionRef.current = {
             author,
             clipId: id,
@@ -545,6 +577,15 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
   useEffect(() => {
     if (editor.justSaved) setAnnouncement("Saved; timeline is clean");
   }, [editor.justSaved]);
+  useEffect(() => {
+    if (editor.lastEvent?.kind === "undo") {
+      setAnnouncement(`Undo complete; timeline is ${editor.lastEvent.dirty ? "dirty" : "clean"}`);
+    } else if (editor.lastEvent?.kind === "redo") {
+      setAnnouncement(`Redo complete; timeline is ${editor.lastEvent.dirty ? "dirty" : "clean"}`);
+    } else if (editor.lastEvent?.kind === "save") {
+      setAnnouncement("Save complete; timeline is clean");
+    }
+  }, [editor.lastEvent]);
   useEffect(
     () => () => {
       const timer = burstRef.current?.timer;
@@ -562,10 +603,11 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
       editor.select(uuid);
 
       const target = e.currentTarget as HTMLElement;
+      target.focus();
       const rect = target.getBoundingClientRect();
       const localX = e.clientX - rect.left;
       const widthPx = rect.width;
-      const mods = { alt: e.altKey, meta: e.metaKey };
+      const mods = { alt: e.altKey, meta: e.metaKey || e.ctrlKey };
       const { zone, bodyTool } = resolveGesture(localX, widthPx, mods);
 
       // Resolve same-track neighbours (for roll + readouts).

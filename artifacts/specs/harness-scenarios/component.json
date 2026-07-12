@@ -1,0 +1,53 @@
+{
+  "contract_version": "1.0.0",
+  "authority": "Vitest 4 Browser Mode through Playwright Chromium plus independent SessionStore/.mlt truth",
+  "interaction_contract": {
+    "version": "timeline-a11y-v1",
+    "path": "artifacts/specs/timeline-keyboard-accessibility-contract-v1.md",
+    "sha256": "90e92872cc4df0dc12705ee560d2e2e5e3a916210c2a2eebb73e2cbd15c9a6d1"
+  },
+  "scenarios": [
+    {
+      "id": "component-semantic-listbox-roving-selection",
+      "proof": "named region/toolbar/listbox/groups/options and selection-follows-focus through role locators"
+    },
+    {
+      "id": "component-compatible-track-navigation",
+      "proof": "same-track, nearest-center, whole-timeline Home/End, and no implicit video/audio crossing"
+    },
+    {
+      "id": "component-keyboard-target-step-action-parity",
+      "proof": "body/head/tail edit mode, 1/10-frame steps, and canonical pointer gesture invocation shape"
+    },
+    {
+      "id": "component-repeat-burst-coalescing",
+      "proof": "three real held-key repeats emit one action/undo entry"
+    },
+    {
+      "id": "component-escape-cancel-conflict-protection",
+      "proof": "exact authored cancellation and concurrent revision/author fail-closed behavior"
+    },
+    {
+      "id": "component-strictmode-listener-cleanup",
+      "proof": "StrictMode remount/unmount leaves balanced global key listeners"
+    },
+    {
+      "id": "component-axe-structural-semantics",
+      "proof": "axe blocking violations are zero and nonselectable structural options are disabled"
+    },
+    {
+      "id": "component-independent-mlt-truth",
+      "proof": "real browser-recorded invocation is reapplied through SessionStore, serialized, independently parsed, and hash/placement checked"
+    }
+  ],
+  "negative_controls": [
+    {
+      "id": "nc-react-components",
+      "mutation": "reverse the real ArrowDown compatible-track direction in viewer product source"
+    },
+    {
+      "id": "nc-dom-accessibility",
+      "mutation": "remove the real clip option accessible name in viewer product source"
+    }
+  ]
+}
