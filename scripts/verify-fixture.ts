@@ -107,13 +107,54 @@ async function hermeticProof() {
     fixture.descriptor.vitePort,
     fixture.descriptor.webdriverPort,
   ]);
+  const servers = fixtures.map((fixture) =>
+    Bun.serve({
+      hostname: "127.0.0.1",
+      port: fixture.descriptor.previewPort,
+      fetch: () => Response.json({ runId: fixture.descriptor.runId }),
+    }),
+  );
+  let apiResults: unknown[] = [];
+  let socketOwners: Array<string | undefined> = [];
+  try {
+    apiResults = await Promise.all(
+      fixtures.map((fixture) =>
+        fetch(`http://127.0.0.1:${fixture.descriptor.previewPort}/api/health`).then((response) =>
+          response.json(),
+        ),
+      ),
+    );
+    socketOwners = fixtures.map((fixture) => {
+      const lsof = Bun.spawnSync([
+        "lsof",
+        `-iTCP:${fixture.descriptor.previewPort}`,
+        "-sTCP:LISTEN",
+        "-Fp",
+      ]);
+      return lsof.stdout
+        .toString()
+        .split("\n")
+        .find((line) => /^p\d+$/.test(line));
+    });
+  } finally {
+    for (const server of servers) server.stop(true);
+  }
   if (new Set(inodes).size !== 2 || new Set(ports).size !== 6 || hashFile(canary) !== before)
     throw new Error("isolation collision");
+  if (
+    apiResults.some(
+      (result, index) => (result as { runId?: string }).runId !== fixtures[index]?.descriptor.runId,
+    ) ||
+    socketOwners.some((owner) => !owner)
+  )
+    throw new Error("socket owner/API isolation failed");
   return {
     fixtures: fixtures.map(fixtureBehavior),
     childResults,
     databaseInodes: inodes,
     ports,
+    apiResults,
+    socketOwners,
     developerCanaryHash: before,
   };
 }

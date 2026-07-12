@@ -101,6 +101,14 @@ export async function createFixture(options: {
     rmSync(root, { recursive: true, force: true });
     throw new Error("port allocator returned duplicate ports");
   }
+  writeFileSync(
+    processLedger,
+    JSON.stringify(
+      { version: 1, processes: [], ports: [previewPort, vitePort, webdriverPort] },
+      null,
+      2,
+    ),
+  );
   const runId = randomUUID();
   const descriptor: FixtureDescriptor = {
     version: 1,

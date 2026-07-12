@@ -45,6 +45,12 @@ describe("shared hermetic fixture", () => {
     ).toBe(6);
 
     for (const fixture of [first, second]) {
+      const ledger = JSON.parse(readFileSync(fixture.descriptor.processLedger, "utf8"));
+      expect(ledger.ports).toEqual([
+        fixture.descriptor.previewPort,
+        fixture.descriptor.vitePort,
+        fixture.descriptor.webdriverPort,
+      ]);
       const child = spawnSync(
         "bun",
         ["-e", "console.log(JSON.stringify({home:process.env.HOME,db:process.env.VEAN_DB}))"],
