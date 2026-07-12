@@ -45,6 +45,7 @@ import { useClock, useClockInstance } from "../ClockProvider";
 import { usePreview } from "../PreviewProvider";
 import { renderStill } from "../api";
 import { AudioGraph } from "../audio/audioGraph";
+import { AudioScheduleGate } from "../audio/scheduleGate";
 import { type FootageProvider, type FrameImage, GlCompositor } from "../compositor/glCompositor";
 import { sourceProxyUrl } from "../decode/decoder";
 import { FrameCache } from "../decode/frameCache";
@@ -493,7 +494,7 @@ export function FootageStage({
   // its schedule is re-derived on edits + seeks. Exposed on `window.__veanAudio` so
   // the headless §9-step-6 gate can assert the graph is live + A/V-locked.
   const audioGraph = useRef<AudioGraph | null>(null);
-  const lastScheduledRevision = useRef<number | null>(null);
+  const audioScheduleGate = useRef(new AudioScheduleGate());
   // The last frame the audio path acted on — to detect a discrete SEEK (a jump) vs
   // smooth playback, so we re-schedule audio only on a real seek, never per tick.
   const prevAudioFrame = useRef(clock.currentFrame);
@@ -506,6 +507,7 @@ export function FootageStage({
     (window as unknown as { __veanAudio?: () => ReturnType<AudioGraph["getStats"]> }).__veanAudio =
       () => graph.getStats();
     return () => {
+      audioScheduleGate.current.release(graph);
       graph.dispose();
       audioGraph.current = null;
       (window as unknown as { __veanAudio?: unknown }).__veanAudio = undefined;
@@ -531,9 +533,9 @@ export function FootageStage({
   // from the current playhead — so an edit is reflected in audio with NO save, the
   // audio twin of the footage HMR loop.
   useEffect(() => {
-    if (lastScheduledRevision.current === revision) return;
-    audioGraph.current?.schedule(resolveAudio(timeline));
-    lastScheduledRevision.current = revision;
+    const graph = audioGraph.current;
+    if (!graph || !audioScheduleGate.current.shouldSchedule(graph, revision)) return;
+    graph.schedule(resolveAudio(timeline));
   }, [revision, timeline]);
 
   // Play/pause TRANSITION → start/stop the graph. Keyed on `clock.playing` ONLY (not

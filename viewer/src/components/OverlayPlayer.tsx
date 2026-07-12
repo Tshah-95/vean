@@ -16,6 +16,7 @@
 import { Player, type PlayerRef } from "@remotion/player";
 import { useEffect, useMemo, useRef } from "react";
 import { useClock, useClockInstance } from "../ClockProvider";
+import { keepPlayerPaused } from "../remotion/pausePlayer";
 import { resolveComposition } from "../remotion/registry";
 import type { Fps } from "../types";
 import { OverlayErrorFallback } from "./OverlayErrorFallback";
@@ -104,11 +105,11 @@ export function OverlayPlayer({
     const player = playerRef.current;
     if (!player) return;
     try {
-      if (clock.playing && player.isPlaying()) player.pause();
+      keepPlayerPaused(player);
     } catch {
       // ignore — older player ref shapes
     }
-  }, [clock.playing]);
+  });
 
   // Headless OVERLAY bridge (`window.__veanOverlay`) — the no-UI handle the live-overlay
   // gates use to prove the Remotion seam end-to-end: it reports the ACTIVE overlay's
