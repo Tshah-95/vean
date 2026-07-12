@@ -1,7 +1,15 @@
 #!/usr/bin/env bun
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -14,6 +22,7 @@ export const DEFAULT_IMAGE =
 export const REPOSITORY_URL = "https://github.com/Tshah-95/vean.git";
 export const GUEST_REPOSITORY = "/Users/admin/Github/vean-runner";
 export const DEFAULT_SSH_KEY = join(homedir(), ".ssh/vean_tart_ed25519");
+export const DEFAULT_KNOWN_HOSTS = join(homedir(), ".ssh/known_hosts.vean-tart");
 export const HEADLESS_RUN_ARGS = [
   "run",
   "--no-graphics",
@@ -119,6 +128,7 @@ export function sshGuestExecPlan(
   ip: string,
   command: string,
   keyPath = DEFAULT_SSH_KEY,
+  knownHostsPath = DEFAULT_KNOWN_HOSTS,
 ): readonly string[] {
   const guestIp = validateGuestIp(ip);
   if (!command) fail("guest command must not be empty");
@@ -133,6 +143,8 @@ export function sshGuestExecPlan(
     "-o",
     "StrictHostKeyChecking=yes",
     "-o",
+    `UserKnownHostsFile=${knownHostsPath}`,
+    "-o",
     "ConnectTimeout=15",
     "-o",
     "ServerAliveInterval=15",
@@ -143,34 +155,80 @@ export function sshGuestExecPlan(
   ];
 }
 
-type GuestConnection = { kind: "tart-agent" } | { kind: "ssh"; ip: string; keyPath: string };
+export function sshPasswordInstallPlan(
+  ip: string,
+  command: string,
+  knownHostsPath = DEFAULT_KNOWN_HOSTS,
+): readonly string[] {
+  const guestIp = validateGuestIp(ip);
+  if (!command) fail("guest command must not be empty");
+  return [
+    "ssh",
+    "-o",
+    "BatchMode=no",
+    "-o",
+    "PreferredAuthentications=password",
+    "-o",
+    "PubkeyAuthentication=no",
+    "-o",
+    "NumberOfPasswordPrompts=1",
+    "-o",
+    "StrictHostKeyChecking=yes",
+    "-o",
+    `UserKnownHostsFile=${knownHostsPath}`,
+    "-o",
+    "ConnectTimeout=15",
+    `admin@${guestIp}`,
+    `/bin/bash -lc ${shellQuote(command)}`,
+  ];
+}
+
+export function expectPasswordScript(password: string): string {
+  const passwordHex = Buffer.from(password).toString("hex");
+  return [
+    "set timeout 45",
+    `set password [binary format H* {${passwordHex}}]`,
+    "spawn {*}$argv",
+    "expect {",
+    '  -re {(?i)password:} { send -- "$password\\r"; exp_continue }',
+    "  eof { set result [wait]; exit [lindex $result 3] }",
+    "  timeout { exit 124 }",
+    "}",
+  ].join("\n");
+}
+
+type GuestConnection =
+  | { kind: "tart-agent" }
+  | { kind: "ssh"; ip: string; keyPath: string; knownHostsPath: string };
 
 function resolveGuestConnection(): GuestConnection {
+  const keyPath = resolve(process.env.VEAN_TART_SSH_KEY ?? DEFAULT_SSH_KEY);
+  const knownHostsPath = resolve(process.env.VEAN_TART_KNOWN_HOSTS ?? DEFAULT_KNOWN_HOSTS);
+  if (existsSync(keyPath) && existsSync(knownHostsPath)) {
+    const ip = validateGuestIp(tart(["ip", VM_NAME, "--resolver", "dhcp", "--wait", "60"]).stdout);
+    const probe = runPlan(sshGuestExecPlan(ip, "true", keyPath, knownHostsPath), {
+      allowFailure: true,
+    });
+    if (probe.exitCode === 0) return { kind: "ssh", ip, keyPath, knownHostsPath };
+  }
+
   const agent = tart(["exec", VM_NAME, "/usr/bin/true"], {
     allowFailure: true,
-    timeoutMs: 15_000,
+    timeoutMs: 5_000,
   });
   if (agent.exitCode === 0) return { kind: "tart-agent" };
-
-  const keyPath = resolve(process.env.VEAN_TART_SSH_KEY ?? DEFAULT_SSH_KEY);
-  if (!existsSync(keyPath)) {
-    fail(`Tart guest agent is unavailable and the SSH fallback key is absent: ${keyPath}`);
-  }
-  const ip = validateGuestIp(tart(["ip", VM_NAME, "--resolver", "dhcp", "--wait", "60"]).stdout);
-  const probe = runPlan(sshGuestExecPlan(ip, "true", keyPath), { allowFailure: true });
-  if (probe.exitCode !== 0) {
-    fail(
-      `Tart guest agent and strict SSH fallback are unavailable for ${VM_NAME} at ${ip}: ${probe.stderr}`,
-    );
-  }
-  return { kind: "ssh", ip, keyPath };
+  fail(
+    `no guest command transport is ready; run bun run vm:macos:setup-ssh (key=${keyPath}, knownHosts=${knownHostsPath})`,
+  );
 }
 
 function runGuestCommand(command: string): CommandResult {
   const connection = resolveGuestConnection();
   return connection.kind === "tart-agent"
     ? runPlan(guestExecPlan(command))
-    : runPlan(sshGuestExecPlan(connection.ip, command, connection.keyPath));
+    : runPlan(
+        sshGuestExecPlan(connection.ip, command, connection.keyPath, connection.knownHostsPath),
+      );
 }
 
 export function nativeVerifyPlan(
@@ -322,6 +380,105 @@ function start(): void {
   print({ ok: true, vm: VM_NAME, pid: child.pid, logPath, headless: true });
 }
 
+function hostKeyMaterial(line: string): string | null {
+  const fields = line.trim().split(/\s+/);
+  const typeIndex = fields.indexOf("ssh-ed25519");
+  if (typeIndex < 0 || !fields[typeIndex + 1]) return null;
+  return `${fields[typeIndex]} ${fields[typeIndex + 1]}`;
+}
+
+export function validateHostKeyPin(
+  scannedLines: readonly string[],
+  existingLines?: readonly string[],
+): string {
+  const scannedMaterial = scannedLines.length === 1 ? hostKeyMaterial(scannedLines[0] ?? "") : null;
+  if (!scannedMaterial) fail("expected exactly one Ed25519 host key from the Tart guest");
+  if (existingLines) {
+    const existingMaterials = existingLines
+      .map(hostKeyMaterial)
+      .filter((value): value is string => value !== null);
+    if (existingMaterials.length !== 1 || existingMaterials[0] !== scannedMaterial) {
+      fail("dedicated known-hosts entry does not match the Tart guest");
+    }
+  }
+  return scannedLines[0] ?? fail("missing scanned host key");
+}
+
+function setupSsh(): void {
+  const info = assertConfigured();
+  if (!info.Running || info.State !== "running") {
+    fail(`${VM_NAME} must be running before SSH setup`);
+  }
+  if (!existsSync("/usr/bin/expect"))
+    fail("/usr/bin/expect is required for terminal-only SSH setup");
+
+  const ip = validateGuestIp(tart(["ip", VM_NAME, "--resolver", "dhcp", "--wait", "60"]).stdout);
+  const keyPath = resolve(process.env.VEAN_TART_SSH_KEY ?? DEFAULT_SSH_KEY);
+  const knownHostsPath = resolve(process.env.VEAN_TART_KNOWN_HOSTS ?? DEFAULT_KNOWN_HOSTS);
+  mkdirSync(dirname(keyPath), { recursive: true, mode: 0o700 });
+  chmodSync(dirname(keyPath), 0o700);
+  if (!existsSync(keyPath)) {
+    run("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", `${VM_NAME}-runner`, "-f", keyPath]);
+  }
+  if ((statSync(keyPath).mode & 0o077) !== 0) {
+    fail(`SSH private key permissions are too broad: ${keyPath}`);
+  }
+  const publicKey = run("ssh-keygen", ["-y", "-f", keyPath]).stdout.trim();
+  if (!publicKey.startsWith("ssh-ed25519 ")) fail(`dedicated key is not Ed25519: ${keyPath}`);
+
+  mkdirSync(dirname(knownHostsPath), { recursive: true, mode: 0o700 });
+  const scan = run("ssh-keyscan", ["-T", "10", "-t", "ed25519", ip]);
+  const scannedLines = scan.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"));
+  validateHostKeyPin(scannedLines);
+  if (existsSync(knownHostsPath)) {
+    const existing = run("ssh-keygen", ["-F", ip, "-f", knownHostsPath], {
+      allowFailure: true,
+    });
+    const existingLines = existing.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#"));
+    try {
+      if (existing.exitCode !== 0) throw new Error("host is absent from the pin file");
+      validateHostKeyPin(scannedLines, existingLines);
+    } catch {
+      fail(
+        `dedicated known-hosts entry does not match ${VM_NAME} at ${ip}; refusing automatic replacement: ${knownHostsPath}`,
+      );
+    }
+  } else {
+    writeFileSync(knownHostsPath, `${validateHostKeyPin(scannedLines)}\n`, { mode: 0o600 });
+  }
+  chmodSync(knownHostsPath, 0o600);
+
+  const installCommand = [
+    "set -euo pipefail",
+    "umask 077",
+    'mkdir -p "$HOME/.ssh"',
+    'touch "$HOME/.ssh/authorized_keys"',
+    `grep -qxF ${shellQuote(publicKey)} "$HOME/.ssh/authorized_keys" || printf '%s\\n' ${shellQuote(publicKey)} >> "$HOME/.ssh/authorized_keys"`,
+    'chmod 700 "$HOME/.ssh"',
+    'chmod 600 "$HOME/.ssh/authorized_keys"',
+  ].join("; ");
+  const password = process.env.VEAN_TART_BOOTSTRAP_PASSWORD ?? "admin";
+  const expectScript = expectPasswordScript(password);
+  const installPlan = sshPasswordInstallPlan(ip, installCommand, knownHostsPath);
+  const expect = spawnSync("/usr/bin/expect", ["-f", "-", "--", ...installPlan], {
+    input: expectScript,
+    encoding: "utf8",
+    timeout: 60_000,
+  });
+  if ((expect.status ?? 1) !== 0) {
+    fail(`failed to authorize dedicated SSH key in ${VM_NAME}: ${expect.stderr ?? expect.stdout}`);
+  }
+  runPlan(sshGuestExecPlan(ip, "true", keyPath, knownHostsPath));
+  const fingerprint = run("ssh-keygen", ["-lf", knownHostsPath]).stdout.trim();
+  print({ ok: true, vm: VM_NAME, ip, keyPath, knownHostsPath, fingerprint, strictLogin: true });
+}
+
 function status(): void {
   if (!listVmNames().includes(VM_NAME)) {
     print({ ok: false, vm: VM_NAME, exists: false });
@@ -413,7 +570,7 @@ function stop(): void {
 
 function usage(): never {
   fail(
-    "usage: macos-vm.ts <doctor|configure|start|status|bootstrap|doctor-guest|verify-native|collect-evidence|stop> [options]",
+    "usage: macos-vm.ts <doctor|configure|start|setup-ssh|status|bootstrap|doctor-guest|verify-native|collect-evidence|stop> [options]",
   );
 }
 
@@ -435,6 +592,9 @@ if (import.meta.main) {
       }
       case "start":
         start();
+        break;
+      case "setup-ssh":
+        setupSsh();
         break;
       case "status":
         status();
