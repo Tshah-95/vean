@@ -1,12 +1,12 @@
 {
   "program": "tauri-react-remotion-harness",
-  "observed_at": "2026-07-12T00:36:20Z",
+  "observed_at": "2026-07-12T01:12:43Z",
   "target_branch": "main",
-  "target_branch_sha": "092fa3080376796789dcb07fb6fc324b99eaed95",
+  "target_branch_sha": "b24469368c77f751cca856ea2b4c593354bd945e",
   "canonical_oracle": {
     "command": "bun run verify:harness --profile developer --json",
     "exit_code": 1,
-    "result": "structured OPEN at run 25ab67bc-1722-4253-b06b-7495d7b23c96: H00 passes; eight named developer claims remain open"
+    "result": "structured OPEN at run 08aa4a04-75e8-4c36-b7c7-6d0bc2e2b551: claim-static-owned-code verifies; seven downstream developer claims remain open"
   },
   "active_lane": "H00",
   "claims": [
@@ -25,11 +25,19 @@
       "new_gate": "semantic YAML/policy validation plus 16 adversarial topology mutations and full bootstrap runner",
       "target_branch_sha": "092fa3080376796789dcb07fb6fc324b99eaed95",
       "post_integration_result": "verified: GitHub Actions run 29173915202 succeeded and uploaded structured evidence"
+    },
+    {
+      "claim": "All owned TypeScript, React, Remotion, host Rust, and pinned macOS Rust surfaces are statically gated by independently bound commands.",
+      "source_of_truth": "bun run verify:fast --profile developer && bun run verify:fast --profile macos",
+      "old_failure": "viewer, Remotion, and Tauri Rust gates were outside the canonical fast profile",
+      "new_gate": "fixed root/nested script-body inventory plus real viewer and macOS-only Rust pass-fail-pass controls",
+      "target_branch_sha": "b24469368c77f751cca856ea2b4c593354bd945e",
+      "post_integration_result": "verified: 101 files/1481 tests, both static profiles, H00 static claim, exact script no-op rejection, and macOS clippy sensitivity pass on clean canonical main"
     }
   ],
   "roadmap_status": {
     "H00": "complete",
-    "H01": "open",
+    "H01": "complete",
     "H02": "open",
     "H09A": "complete",
     "remaining_lanes": "open"
