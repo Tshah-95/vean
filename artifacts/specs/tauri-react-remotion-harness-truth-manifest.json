@@ -708,7 +708,11 @@
       "oracle_implementation_paths": [
         "package.json",
         "scripts/verify-fast.ts",
-        "scripts/harness/static-owned-control.ts"
+        "scripts/harness/static-gate-contract.ts",
+        "scripts/harness/static-gates-policy.json",
+        "scripts/harness/static-owned-control.ts",
+        "tests/static-gates-contract.test.ts",
+        "tests/viewer-runtime-contract.test.ts"
       ]
     },
     {

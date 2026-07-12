@@ -108,4 +108,8 @@ function cli(): void {
   );
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.path)) cli();
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === resolve(import.meta.dirname, "static-owned-control.ts")
+)
+  cli();

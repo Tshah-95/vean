@@ -1,0 +1,39 @@
+{
+  "contract_version": "1.0.0",
+  "profiles": {
+    "developer": [
+      {
+        "id": "static-contract-tests",
+        "command": "bun run test tests/static-gates-contract.test.ts tests/viewer-runtime-contract.test.ts"
+      },
+      { "id": "viewer-typecheck", "command": "bun run viewer:typecheck" },
+      { "id": "root-typecheck", "command": "bun run typecheck" },
+      { "id": "root-lint", "command": "bun run lint" },
+      { "id": "viewer-lint", "command": "bun run viewer:lint" },
+      { "id": "remotion-typecheck", "command": "bun run remotion:typecheck" },
+      { "id": "remotion-lint", "command": "bun run remotion:lint" },
+      { "id": "viewer-production-build", "command": "bun run viewer:build" },
+      { "id": "rustfmt", "command": "bun run rust:fmt" },
+      { "id": "rust-check-host", "command": "bun run rust:check" },
+      { "id": "rust-clippy-host", "command": "bun run rust:clippy" },
+      { "id": "rust-test-host", "command": "bun run rust:test" }
+    ],
+    "macos": [
+      {
+        "id": "static-contract-tests",
+        "command": "bun run test tests/static-gates-contract.test.ts tests/viewer-runtime-contract.test.ts"
+      },
+      { "id": "viewer-typecheck", "command": "bun run viewer:typecheck" },
+      { "id": "root-typecheck", "command": "bun run typecheck" },
+      { "id": "root-lint", "command": "bun run lint" },
+      { "id": "viewer-lint", "command": "bun run viewer:lint" },
+      { "id": "remotion-typecheck", "command": "bun run remotion:typecheck" },
+      { "id": "remotion-lint", "command": "bun run remotion:lint" },
+      { "id": "viewer-production-build", "command": "bun run viewer:build" },
+      { "id": "rustfmt", "command": "bun run rust:fmt" },
+      { "id": "rust-check-macos", "command": "bun run rust:check:macos" },
+      { "id": "rust-clippy-macos", "command": "bun run rust:clippy:macos" },
+      { "id": "rust-test-macos", "command": "bun run rust:test:macos" }
+    ]
+  }
+}

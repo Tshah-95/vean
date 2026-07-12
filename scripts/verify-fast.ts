@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
+import { type StaticGateProfiles, assertStaticGateInventory } from "./harness/static-gate-contract";
 import { prepareStaticControl } from "./harness/static-owned-control";
 
 type Profile = "developer" | "macos";
@@ -39,6 +40,16 @@ function parseProfile(): Profile {
 
 function gates(profile: Profile): Gate[] {
   const common: Gate[] = [
+    {
+      id: "static-contract-tests",
+      command: "bun",
+      args: [
+        "run",
+        "test",
+        "tests/static-gates-contract.test.ts",
+        "tests/viewer-runtime-contract.test.ts",
+      ],
+    },
     { id: "viewer-typecheck", command: "bun", args: ["run", "viewer:typecheck"] },
     { id: "root-typecheck", command: "bun", args: ["run", "typecheck"] },
     { id: "root-lint", command: "bun", args: ["run", "lint"] },
@@ -62,6 +73,17 @@ function gates(profile: Profile): Gate[] {
     );
   }
   return common;
+}
+
+function descriptors(profile: Profile) {
+  return gates(profile).map((gate) => ({
+    id: gate.id,
+    command: [gate.command, ...gate.args].join(" "),
+  }));
+}
+
+export function staticGateInventory(): StaticGateProfiles {
+  return { developer: descriptors("developer"), macos: descriptors("macos") };
 }
 
 function runGates(profile: Profile): GateResult[] {
@@ -94,11 +116,24 @@ function main(): void {
   const phase = process.env.VEAN_HARNESS_PHASE;
   const control = prepareStaticControl(phase !== "negative-control");
   const startedAt = process.env.VEAN_HARNESS_STARTED_AT ?? new Date().toISOString();
-  const results = runGates(profile);
-  const failed = results.find((result) => result.exit !== 0);
   const evidencePath =
     process.env.VEAN_HARNESS_EVIDENCE_PATH ??
     resolve(root, ".vean/harness/latest/claims/claim-static-owned-code.json");
+  try {
+    assertStaticGateInventory(staticGateInventory());
+  } catch (error) {
+    writeJson(evidencePath, {
+      contract_version: "1.0.0",
+      claim_id: claimId,
+      status: "failed",
+      reason_code: "STATIC_GATE_INVENTORY_MISMATCH",
+      detail: String(error),
+    });
+    console.error(String(error));
+    process.exit(1);
+  }
+  const results = runGates(profile);
+  const failed = results.find((result) => result.exit !== 0);
 
   if (phase === "negative-control") {
     const expectedFailure = failed?.id === "viewer-typecheck";
@@ -146,7 +181,11 @@ function main(): void {
   const implementationPaths = [
     resolve(root, "package.json"),
     resolve(root, "scripts/verify-fast.ts"),
+    resolve(root, "scripts/harness/static-gate-contract.ts"),
+    resolve(root, "scripts/harness/static-gates-policy.json"),
     resolve(root, "scripts/harness/static-owned-control.ts"),
+    resolve(root, "tests/static-gates-contract.test.ts"),
+    resolve(root, "tests/viewer-runtime-contract.test.ts"),
   ];
   const implementationHashes = Object.fromEntries(
     implementationPaths.map((path) => [relative(root, path), sha256(path)]),
@@ -177,6 +216,9 @@ function main(): void {
       ),
       generated_asset_hashes: {
         "app/src-tauri/vean-actions.json": sha256(resolve(root, "app/src-tauri/vean-actions.json")),
+        "scripts/harness/static-gates-policy.json": sha256(
+          resolve(root, "scripts/harness/static-gates-policy.json"),
+        ),
       },
       oracle_implementation_hashes: implementationHashes,
       command_implementation_path: "scripts/verify-fast.ts",
@@ -221,4 +263,5 @@ function main(): void {
   );
 }
 
-main();
+const invoked = process.argv[1] ? resolve(process.argv[1]) : "";
+if (invoked === resolve(import.meta.dirname, "verify-fast.ts")) main();
