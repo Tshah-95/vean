@@ -140,17 +140,23 @@ describe("Vean AppKit-owned shell", () => {
 
     const file = await semanticElement(MENU_BAR_ITEM, "File");
     await file.click();
-    let openProject = await $(
-      nativePredicate(
+    const exactOpenProjectItem = async () => {
+      const predicate = nativePredicate(
         MENU_ITEM,
         `title == '${context.expectedMenuLabel}' OR label == '${context.expectedMenuLabel}'`,
-      ),
-    );
-    if (!(await openProject.isExisting())) {
+      );
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const candidate = await $(predicate);
+        if (await candidate.isExisting()) return candidate;
+        await browser.keys(["Escape"]);
+        await file.click();
+        await browser.pause(150);
+      }
       throw new Error(
         `SENSITIVITY_NATIVE_MACOS_SHELL: canonical accessibility label '${context.expectedMenuLabel}' was not found`,
       );
-    }
+    };
+    let openProject = await exactOpenProjectItem();
     await openProject.click();
     const cancel = await semanticElement(BUTTON, "Cancel", 30_000);
     await cancel.click();
@@ -162,7 +168,7 @@ describe("Vean AppKit-owned shell", () => {
     });
 
     await file.click();
-    openProject = await semanticElement(MENU_ITEM, context.expectedMenuLabel);
+    openProject = await exactOpenProjectItem();
     await openProject.click();
     if (context.residualDialogControl) {
       const residual = await nativeInventory();
