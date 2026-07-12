@@ -11,6 +11,7 @@ MB RAM, and a 200 GB sparse disk.
 bun run vm:macos:doctor -- --host-only
 bun run vm:macos:configure
 bun run vm:macos:start
+bun run vm:macos:setup-ssh
 bun run vm:macos:bootstrap
 bun run vm:macos:doctor-guest
 ```
@@ -20,17 +21,27 @@ bun run vm:macos:doctor-guest
 only when the named VM is absent, then adopts and validates the fixed resource profile. It
 fails rather than replacing, shrinking, or silently accepting the wrong VM.
 `start` always uses `tart run --no-graphics --no-audio --no-clipboard`; it logs
-under `~/.local/state/vean-vm/` and waits for a guest command transport.
+under `~/.local/state/vean-vm/` and waits for a guest command transport. On the
+first boot, run `setup-ssh` before `bootstrap` when `tart exec` is unavailable.
 
-The harness prefers `tart exec`. Images whose guest agent is unavailable fall
-back to SSH only at the private address returned by
-`tart ip vean-macos-dev --resolver dhcp`. The fallback fixes the account to
-`admin` and requires `BatchMode`, `IdentitiesOnly`, strict host-key checking,
-and the dedicated key `~/.ssh/vean_tart_ed25519`. Override only the key path
-with `VEAN_TART_SSH_KEY`; host/loopback/public addresses are rejected.
+`setup-ssh` derives only the private address returned by
+`tart ip vean-macos-dev --resolver dhcp`, creates a dedicated Ed25519 key, pins
+the guest's Ed25519 host key in `~/.ssh/known_hosts.vean-tart`, and authorizes
+the key for the documented Cirrus `admin` account through terminal-only
+`/usr/bin/expect`. The public image password defaults to `admin` and is never
+written to disk or a subprocess argument; set `VEAN_TART_BOOTSTRAP_PASSWORD`
+if the image password changed. An existing mismatched host key is a hard
+failure and is never replaced automatically.
+
+After setup, the harness prefers strict SSH because this image's Tart guest
+agent hangs. Every login requires `BatchMode`, `IdentitiesOnly`, the dedicated
+key, the dedicated known-hosts file, and strict host-key checking. A bounded
+guest-agent probe is only a fallback. Override paths with `VEAN_TART_SSH_KEY`
+and `VEAN_TART_KNOWN_HOSTS`; host, loopback, and public targets are rejected.
 
 Bootstrap is idempotent and fail-closed. It completes Xcode first launch,
-installs Homebrew `mlt`, `ffmpeg`, `libxml2`, and `mise`, pins Bun 1.3.14, Node
+prepends the Apple Silicon Homebrew path, runs `brew update`, installs `mlt`,
+`ffmpeg`, `libxml2`, and `mise`, pins Bun 1.3.14, Node
 24.15.0, and Rust 1.95.0, then creates a clean guest-local clone at
 `/Users/admin/Github/vean-runner`. It refuses to erase a dirty guest clone. The
 host checkout is neither mounted nor executed.
@@ -49,7 +60,7 @@ bun run vm:macos:stop
 ```
 
 Native verification first proves that the VM is running with the fixed profile,
-the guest agent responds, the clone is clean, its origin is the canonical
+the selected guest transport responds, the clone is clean, its origin is the canonical
 GitHub repository, and its HEAD equals the requested remote ref. Only then does
 it run H06 with both required policy variables:
 `VEAN_ALLOW_INTERACTIVE_MACOS_AUTOMATION=1` and
@@ -64,8 +75,8 @@ reported by the doctor, and approve Xcode Automation when macOS prompts. Rerun
 `doctor-guest` afterward; an unapproved or incomplete permission state remains
 a hard failure.
 
-`collect-evidence` copies only `.vean/harness/native-runs` through the Tart guest
-agent into a mode-0600 archive under `.vean/vm-harness/evidence/` on the host.
+`collect-evidence` copies only `.vean/harness/native-runs` through the selected
+guest transport into a mode-0600 archive under `.vean/vm-harness/evidence/` on the host.
 No shared writable repository or authenticated VM image is created.
 
 The guest is functional evidence for native behavior, not final physical-Mac
