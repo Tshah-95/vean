@@ -1,0 +1,16 @@
+{
+  "contract_version": "1.0.0",
+  "profile": "bootstrap",
+  "workflow_path": ".github/workflows/harness.yml",
+  "required_triggers": ["push:main", "workflow_dispatch"],
+  "required_jobs": ["bootstrap"],
+  "action_pins": {
+    "actions/checkout": "de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+    "oven-sh/setup-bun": "0c5077e51419868618aeaa5fe8019c62421857d6",
+    "actions/upload-artifact": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+  },
+  "facade_script": "bun scripts/ci/run-harness-profile.ts",
+  "commands": ["bun run lint", "bun run typecheck", "bun run test"],
+  "covers": ["meta-evaluator-contract", "root-static", "root-tests"],
+  "required": true
+}
