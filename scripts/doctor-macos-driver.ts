@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -15,6 +16,7 @@ import {
   runTimed,
   waitForAppium,
 } from "./harness/macos-driver";
+import { recordProcess } from "./harness/process-ledger";
 
 const repo = resolve(import.meta.dirname, "..");
 const json = process.argv.includes("--json");
@@ -128,15 +130,39 @@ if (
 if (failures.length === 0 && driverInstalled) {
   const port = fixture.descriptor.webdriverPort;
   const systemPort = fixture.descriptor.vitePort;
-  const server = Bun.spawn(
-    pinnedNodeCommand(repo, ["--address", "127.0.0.1", "--port", String(port)]),
-    {
-      cwd: repo,
-      env: { ...process.env, APPIUM_HOME: fixtureAppiumHome },
-      stdout: "pipe",
-      stderr: "pipe",
-    },
-  );
+  const [serverCommand, ...serverArgs] = pinnedNodeCommand(repo, [
+    "--address",
+    "127.0.0.1",
+    "--port",
+    String(port),
+  ]);
+  if (!serverCommand) throw new Error("pinned Appium server command is empty");
+  const server = spawn(serverCommand, serverArgs, {
+    cwd: repo,
+    env: { ...process.env, APPIUM_HOME: fixtureAppiumHome },
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let serverStdout = "";
+  let serverStderr = "";
+  server.stdout?.on("data", (chunk) => {
+    serverStdout += String(chunk);
+  });
+  server.stderr?.on("data", (chunk) => {
+    serverStderr += String(chunk);
+  });
+  if (!server.pid) throw new Error("Appium doctor server has no PID");
+  const startedAt = Bun.spawnSync(["ps", "-p", String(server.pid), "-o", "lstart="], {
+    cwd: repo,
+  })
+    .stdout.toString()
+    .trim();
+  recordProcess(fixture.descriptor.processLedger, {
+    pid: server.pid,
+    marker: `vean-h06-doctor-${fixture.descriptor.runId}`,
+    executable: "appium/index.js",
+    startedAt,
+  });
   let session: Awaited<ReturnType<typeof remote>> | null = null;
   try {
     await waitForAppium(port);
@@ -176,9 +202,17 @@ if (failures.length === 0 && driverInstalled) {
     );
   } finally {
     if (session) await session.deleteSession().catch(() => undefined);
-    server.kill("SIGTERM");
-    await Promise.race([server.exited, new Promise((done) => setTimeout(done, 5_000))]);
-    if (server.exitCode === null) server.kill("SIGKILL");
+    try {
+      process.kill(-server.pid, "SIGTERM");
+    } catch {}
+    await Promise.race([
+      new Promise((done) => server.once("close", done)),
+      new Promise((done) => setTimeout(done, 5_000)),
+    ]);
+    try {
+      process.kill(-server.pid, "SIGKILL");
+    } catch {}
+    checks.serverLogs = { stdout: serverStdout, stderr: serverStderr };
   }
 }
 
@@ -192,7 +226,7 @@ checks.appiumIsolation = {
 if (developerAppiumBefore !== developerAppiumAfter) {
   fail("E_DEVELOPER_APPIUM_MUTATED", "the doctor changed ~/.appium");
 }
-await fixture.close();
+checks.cleanup = await fixture.close();
 
 const result = {
   ok: failures.length === 0,

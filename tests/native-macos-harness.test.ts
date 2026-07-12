@@ -149,6 +149,7 @@ function validTruth(): MacosShellTruthInput {
           id: scenarioIds[3],
           windowsAfterClose: 0,
           reopenSupportedByProduct: false,
+          automationTerminateAfterClose: true,
           automationRelaunchForQuit: true,
         },
         { id: scenarioIds[4], accessibleName: "Quit vean" },

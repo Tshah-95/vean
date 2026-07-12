@@ -87,6 +87,7 @@ describe("Vean AppKit-owned shell", () => {
     await open.waitForExist({ reverse: true, timeout: 30_000 });
 
     const app = appProcess(context);
+    const appBundleId = bundleIdentifier(app.pid);
     const sidecars = childPids(app.pid)
       .map(processIdentity)
       .filter(
@@ -121,12 +122,27 @@ describe("Vean AppKit-owned shell", () => {
       timeoutMsg: "native close button left the Vean window open",
     });
     const afterClose = await nativeInventory();
+    await browser.execute("macos: terminateApp", [
+      { bundleId: context.bundleId, path: context.bundlePath },
+    ]);
+    await browser.waitUntil(
+      async () => {
+        try {
+          process.kill(app.pid, 0);
+          return false;
+        } catch {
+          return true;
+        }
+      },
+      { timeout: 15_000, timeoutMsg: "automation cleanup did not terminate the closed app" },
+    );
     scenarios.push({
       id: "macos-window-close-reopen-classification",
       closeAccessibleName: closeName,
       windowsAfterClose: afterClose.windows,
       reopenSupportedByProduct: false,
       reason: "the current Tauri shell does not implement macOS reopen activation",
+      automationTerminateAfterClose: true,
       automationRelaunchForQuit: true,
     });
 
@@ -174,7 +190,7 @@ describe("Vean AppKit-owned shell", () => {
         bundlePath: context.bundlePath,
       },
       process: app,
-      bundleId: bundleIdentifier(app.pid),
+      bundleId: appBundleId,
       quitProcess: {
         ...quitApp,
         bundleId: quitBundleId,

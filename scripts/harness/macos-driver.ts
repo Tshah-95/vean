@@ -94,13 +94,14 @@ export async function runTimed(
     stderr += String(chunk);
   });
   let timedOut = false;
+  let forceKill: ReturnType<typeof setTimeout> | undefined;
   const timeout = setTimeout(() => {
     timedOut = true;
     if (child.pid) {
       try {
         process.kill(-child.pid, "SIGTERM");
       } catch {}
-      setTimeout(() => {
+      forceKill = setTimeout(() => {
         try {
           if (child.pid) process.kill(-child.pid, "SIGKILL");
         } catch {}
@@ -111,6 +112,7 @@ export async function runTimed(
     (done) => child.once("close", (exitCode, signal) => done({ exitCode, signal })),
   );
   clearTimeout(timeout);
+  if (forceKill) clearTimeout(forceKill);
   return {
     command,
     ...result,

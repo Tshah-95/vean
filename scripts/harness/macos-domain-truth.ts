@@ -91,6 +91,7 @@ export function evaluateMacosShellTruth(input: MacosShellTruthInput): Record<str
     honestWindowLifecycle:
       close?.windowsAfterClose === 0 &&
       close?.reopenSupportedByProduct === false &&
+      close?.automationTerminateAfterClose === true &&
       close?.automationRelaunchForQuit === true,
     semanticQuit:
       typeof quit?.accessibleName === "string" && quit.accessibleName.startsWith("Quit"),
