@@ -5,7 +5,8 @@ import { dirname, join, resolve } from "node:path";
 import { authorizeMutation, createNonceConsumer } from "../src/preview/security";
 import { createPreviewHandler } from "../src/preview/server";
 import {
-  controlIsMutated,
+  controlRoot,
+  ensureControlPlan,
   scanSecret,
   writeControlFailure,
   writeVerifiedEvidence,
@@ -45,16 +46,21 @@ const claim =
             "behavioral canaries, child environments, DB inodes, socket owners, API results, and unchanged developer-state hashes prove isolation",
         };
 
-if (process.env.VEAN_HARNESS_PHASE === "negative-control") {
-  if (!controlIsMutated(repo, claim.control)) throw new Error(`${claim.control} was not mutated`);
-  writeControlFailure(
-    `SENSITIVITY_${claim.id
-      .replace(/^claim-/, "")
-      .replaceAll("-", "_")
-      .toUpperCase()}`,
-    claim.control,
-  );
-}
+const controlContents =
+  claim.id === "claim-hermetic-runs"
+    ? { before: '{"forceSharedHome":false}\n', mutated: '{"forceSharedHome":true}\n' }
+    : claim.id === "claim-process-cleanup"
+      ? { before: '{"disableReap":false}\n', mutated: '{"disableReap":true}\n' }
+      : { before: '{"bypassAuthority":false}\n', mutated: '{"bypassAuthority":true}\n' };
+const controlPlan = ensureControlPlan(repo, claim.control, controlContents);
+const controlConfig = JSON.parse(
+  await Bun.file(join(controlRoot(repo, claim.control), "target.txt")).text(),
+) as { forceSharedHome?: boolean; disableReap?: boolean; bypassAuthority?: boolean };
+const negativePhase = process.env.VEAN_HARNESS_PHASE === "negative-control";
+const sensitivityReason = `SENSITIVITY_${claim.id
+  .replace(/^claim-/, "")
+  .replaceAll("-", "_")
+  .toUpperCase()}`;
 
 const evidenceBase = process.env.VEAN_HARNESS_EVIDENCE_PATH
   ? dirname(process.env.VEAN_HARNESS_EVIDENCE_PATH)
@@ -82,7 +88,7 @@ async function hermeticProof() {
   fixtures.push(a, b);
   writeFileSync(a.descriptor.database, "run-a\n");
   writeFileSync(b.descriptor.database, "run-b\n");
-  const childResults = [a, b].map((fixture) => {
+  const childResults = [a, b].map((fixture, index) => {
     const child = Bun.spawnSync(
       [
         "bun",
@@ -93,7 +99,10 @@ async function hermeticProof() {
         cwd: fixture.descriptor.projectRoot,
         env: {
           PATH: process.env.PATH ?? "",
-          HOME: fixture.descriptor.home,
+          HOME:
+            controlConfig.forceSharedHome && index === 1
+              ? a.descriptor.home
+              : fixture.descriptor.home,
           VEAN_DB: fixture.descriptor.database,
         },
       },
@@ -142,6 +151,14 @@ async function hermeticProof() {
   if (new Set(inodes).size !== 2 || new Set(ports).size !== 6 || hashFile(canary) !== before)
     throw new Error("isolation collision");
   if (
+    childResults.some(
+      (result, index) =>
+        (result as { home?: string }).home !== fixtures[index]?.descriptor.home ||
+        (result as { db?: string }).db !== fixtures[index]?.descriptor.database,
+    )
+  )
+    throw new Error("child environment escaped its fixture");
+  if (
     apiResults.some(
       (result, index) => (result as { runId?: string }).runId !== fixtures[index]?.descriptor.runId,
     ) ||
@@ -170,7 +187,7 @@ async function authorityProof() {
       port: 0,
       dev: false,
       policyProfile: "test",
-      mutationAuthority: authority,
+      ...(controlConfig.bypassAuthority ? {} : { mutationAuthority: authority }),
     }),
   });
   const port = server.port ?? 0;
@@ -253,7 +270,9 @@ async function cleanupProof() {
   });
   await new Promise<void>((done) => child.once("exit", () => done()));
   await Bun.sleep(100);
-  const detected = await inspectAndReap(fixture.descriptor.processLedger, { reap: true });
+  const detected = await inspectAndReap(fixture.descriptor.processLedger, {
+    reap: !controlConfig.disableReap,
+  });
   await Bun.sleep(100);
   const clean = await inspectAndReap(fixture.descriptor.processLedger, { reap: false });
   if (!detected.findings.some((item) => item.kind === "marker") || clean.findings.length !== 0)
@@ -297,9 +316,13 @@ try {
     generatedPaths: [resultPath],
     artifactPaths: [join(repo, "app/src-tauri/tauri.conf.json")],
     result,
+    controlPlan,
   });
   if (!process.env.VEAN_HARNESS_EVIDENCE_PATH)
     console.log(JSON.stringify({ ok: true, claim_id: claim.id, result }));
+} catch (error) {
+  if (negativePhase) writeControlFailure(sensitivityReason, claim.control);
+  throw error;
 } finally {
-  for (const fixture of fixtures.reverse()) fixture.close();
+  for (const fixture of fixtures.reverse()) await fixture.close();
 }

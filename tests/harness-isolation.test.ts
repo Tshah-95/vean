@@ -1,16 +1,30 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { type Fixture, createFixture, fixtureBehavior, hashFile } from "../scripts/harness/fixture";
+import {
+  type Fixture,
+  createFixture,
+  fixtureBehavior,
+  hashFile,
+  reclaimStalePortLeases,
+} from "../scripts/harness/fixture";
 import { recordProcess } from "../scripts/harness/process-ledger";
 
 const repo = resolve(import.meta.dirname, "..");
 const active: Fixture[] = [];
 
-afterEach(() => {
-  while (active.length) active.pop()?.close();
+afterEach(async () => {
+  while (active.length) await active.pop()?.close();
 });
 
 describe("shared hermetic fixture", () => {
@@ -132,5 +146,45 @@ describe("shared hermetic fixture", () => {
     );
     expect(second.status).toBe(0);
     expect(JSON.parse(second.stdout).findings).toEqual([]);
+  });
+
+  it("fixture failure teardown unconditionally audits and reaps its process ledger", async () => {
+    const developerRoot = mkdtempSync(join(tmpdir(), "vean-developer-state-"));
+    const canary = join(developerRoot, "canary");
+    writeFileSync(canary, "poison\n");
+    const fixture = await createFixture({ sourceSha: "fixture-sha", developerCanary: canary });
+    active.push(fixture);
+    const marker = `vean-failure-${fixture.descriptor.runId}`;
+    const child = spawn("bun", [join(repo, "scripts/harness/marked-child.ts"), marker], {
+      detached: true,
+      stdio: "ignore",
+    });
+    recordProcess(fixture.descriptor.processLedger, {
+      pid: child.pid ?? -1,
+      marker,
+      executable: "bun",
+      startedAt: new Date().toISOString(),
+    });
+    const cleanup = await fixture.close();
+    active.pop();
+    expect(cleanup.detected.some((finding) => finding.kind === "process")).toBe(true);
+    expect(() => process.kill(child.pid ?? -1, 0)).toThrow();
+  });
+
+  it("reclaims a port lease left by an abruptly exited allocator process", () => {
+    const developerRoot = mkdtempSync(join(tmpdir(), "vean-developer-state-"));
+    const canary = join(developerRoot, "canary");
+    writeFileSync(canary, "poison\n");
+    const fixtureModule = join(repo, "scripts/harness/fixture.ts");
+    const code = `const {createFixture}=await import(${JSON.stringify(fixtureModule)});const f=await createFixture({sourceSha:"fixture-sha",developerCanary:${JSON.stringify(canary)}});console.log(JSON.stringify({root:f.root,port:f.descriptor.previewPort}));process.exit(0);`;
+    const child = spawnSync("bun", ["-e", code], { cwd: repo, encoding: "utf8" });
+    expect(child.status).toBe(0);
+    const allocation = JSON.parse(child.stdout.trim()) as { root: string; port: number };
+    const leasePath = join(tmpdir(), "vean-harness-port-leases", `${allocation.port}.lock`);
+    expect(existsSync(leasePath)).toBe(true);
+    expect(reclaimStalePortLeases()).toContain(leasePath);
+    expect(existsSync(leasePath)).toBe(false);
+    rmSync(allocation.root, { recursive: true, force: true });
+    rmSync(developerRoot, { recursive: true, force: true });
   });
 });

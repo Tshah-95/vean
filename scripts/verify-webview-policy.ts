@@ -8,7 +8,8 @@ import {
 } from "../src/preview/security";
 import { createPreviewHandler } from "../src/preview/server";
 import {
-  controlIsMutated,
+  controlRoot,
+  ensureControlPlan,
   scanSecret,
   writeControlFailure,
   writeVerifiedEvidence,
@@ -16,10 +17,14 @@ import {
 
 const repo = resolve(import.meta.dirname, "..");
 const control = "nc-production-webview-policy";
-if (process.env.VEAN_HARNESS_PHASE === "negative-control") {
-  if (!controlIsMutated(repo, control)) throw new Error(`${control} was not mutated`);
-  writeControlFailure("SENSITIVITY_PRODUCTION_WEBVIEW_POLICY", control);
-}
+const controlPlan = ensureControlPlan(repo, control, {
+  before: '{"policyProfile":"release","navigationPortOffset":0}\n',
+  mutated: '{"policyProfile":"dev","navigationPortOffset":1}\n',
+});
+const controlConfig = JSON.parse(
+  await Bun.file(join(controlRoot(repo, control), "target.txt")).text(),
+) as { policyProfile: "dev" | "release"; navigationPortOffset: number };
+const negativePhase = process.env.VEAN_HARNESS_PHASE === "negative-control";
 
 const token = crypto.randomUUID();
 const authority = { host: "", origin: "", token, consumeNonce: createNonceConsumer() };
@@ -30,7 +35,7 @@ const server = Bun.serve({
     repo,
     port: 0,
     dev: false,
-    policyProfile: "release",
+    policyProfile: controlConfig.policyProfile,
     mutationAuthority: authority,
   }),
 });
@@ -52,33 +57,62 @@ response.headers.forEach((value, key) => {
 const tauriConfigPath = join(repo, "app/src-tauri/tauri.conf.json");
 const tauriConfig = JSON.parse(readFileSync(tauriConfigPath, "utf8"));
 const tauriBootstrap = readFileSync(join(repo, "app/src-tauri/src/lib.rs"), "utf8");
-const tauriNavigationPolicyInstalled =
-  tauriBootstrap.includes('Builder::new("navigation-policy")') &&
-  tauriBootstrap.includes('url.host_str() == Some("127.0.0.1")');
+const rustPolicyTest = Bun.spawnSync(
+  [
+    "cargo",
+    "test",
+    "--locked",
+    "--manifest-path",
+    "app/src-tauri/Cargo.toml",
+    "navigation_policy_tests",
+  ],
+  {
+    cwd: repo,
+    env: {
+      ...process.env,
+      TAURI_CONFIG: JSON.stringify({ bundle: { externalBin: [], resources: [] } }),
+    },
+  },
+);
+const tauriNavigationPolicyCompiled = rustPolicyTest.exitCode === 0;
+const tauriNavigationPolicyRegistered = tauriBootstrap.includes(
+  ".plugin(navigation_policy_plugin())",
+);
 const releaseCsp = contentSecurityPolicy("release");
+const declaredNavigationOrigin = `http://127.0.0.1:${port + controlConfig.navigationPortOffset}`;
 const candidate = {
   ok:
     response.headers.get("content-security-policy") === releaseCsp &&
     !releaseCsp.includes("'unsafe-eval'") &&
     tauriConfig.app?.security?.csp !== null &&
-    tauriNavigationPolicyInstalled &&
+    tauriNavigationPolicyCompiled &&
+    tauriNavigationPolicyRegistered &&
     unauthorized.status === 403 &&
-    isAllowedViewerNavigation(`${origin}/`, origin) &&
+    isAllowedViewerNavigation(`${origin}/`, declaredNavigationOrigin) &&
     !isAllowedViewerNavigation("https://example.com", origin),
   scope: "release-mode bound server and Tauri source configuration candidate",
   releaseCsp,
   responseHeaders,
   mutationWithoutAuthorityStatus: unauthorized.status,
   tauriCspNonNull: tauriConfig.app?.security?.csp !== null,
-  tauriNavigationPolicyInstalled,
+  tauriNavigationPolicyCompiled,
+  tauriNavigationPolicyRegistered,
   navigation: {
-    exactLoopback: isAllowedViewerNavigation(`${origin}/`, origin),
+    exactLoopback: isAllowedViewerNavigation(`${origin}/`, declaredNavigationOrigin),
+    wrongLoopbackPort: isAllowedViewerNavigation(
+      `http://127.0.0.1:${port + 1}`,
+      declaredNavigationOrigin,
+    ),
     external: isAllowedViewerNavigation("https://example.com", origin),
     localhostAlias: isAllowedViewerNavigation("http://localhost:39872", origin),
     dnsRebinding: isAllowedViewerNavigation("http://127.0.0.1.attacker.invalid:39872", origin),
   },
 };
-if (!candidate.ok) throw new Error(`webview policy candidate failed: ${JSON.stringify(candidate)}`);
+if (!candidate.ok) {
+  if (negativePhase) writeControlFailure("SENSITIVITY_PRODUCTION_WEBVIEW_POLICY", control);
+  throw new Error(`webview policy candidate failed: ${JSON.stringify(candidate)}`);
+}
+if (negativePhase) throw new Error("webview policy mutant unexpectedly satisfied the oracle");
 const evidenceBase = process.env.VEAN_HARNESS_EVIDENCE_PATH
   ? dirname(process.env.VEAN_HARNESS_EVIDENCE_PATH)
   : join(repo, ".vean/harness/standalone");
@@ -108,5 +142,6 @@ writeVerifiedEvidence({
   generatedPaths: [candidatePath],
   artifactPaths: [tauriConfigPath, join(repo, "app/src-tauri/src/lib.rs")],
   result: candidate,
+  controlPlan,
 });
 if (!process.env.VEAN_HARNESS_EVIDENCE_PATH) console.log(JSON.stringify(candidate));

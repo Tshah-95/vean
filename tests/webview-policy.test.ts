@@ -18,10 +18,12 @@ describe("production webview policy candidate", () => {
     const report = JSON.parse(candidate.stdout.trim().split("\n").at(-1) ?? "{}");
     expect(report.ok).toBe(true);
     expect(report.tauriCspNonNull).toBe(true);
-    expect(report.tauriNavigationPolicyInstalled).toBe(true);
+    expect(report.tauriNavigationPolicyCompiled).toBe(true);
+    expect(report.tauriNavigationPolicyRegistered).toBe(true);
     expect(report.mutationWithoutAuthorityStatus).toBe(403);
     expect(report.navigation).toEqual({
       exactLoopback: true,
+      wrongLoopbackPort: false,
       external: false,
       localhostAlias: false,
       dnsRebinding: false,

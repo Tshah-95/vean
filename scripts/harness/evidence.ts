@@ -42,15 +42,24 @@ export function controlRoot(repo: string, controlId: string): string {
   return join(repo, ".vean", "harness", "controls", controlId);
 }
 
-export function ensureControlPlan(repo: string, controlId: string): ControlPlan {
+export function ensureControlPlan(
+  repo: string,
+  controlId: string,
+  contents: { before: string; mutated: string } = {
+    before: `baseline:${controlId}\n`,
+    mutated: `mutated:${controlId}\n`,
+  },
+): ControlPlan {
   const root = controlRoot(repo, controlId);
   mkdirSync(root, { recursive: true });
   const target = join(root, "target.txt");
   const before = join(root, "before.txt");
   const mutated = join(root, "mutated.txt");
-  writeFileSync(before, `baseline:${controlId}\n`);
-  writeFileSync(mutated, `mutated:${controlId}\n`);
-  writeFileSync(target, readFileSync(before));
+  writeFileSync(before, contents.before);
+  writeFileSync(mutated, contents.mutated);
+  if (process.env.VEAN_HARNESS_PHASE !== "negative-control") {
+    writeFileSync(target, readFileSync(before));
+  }
   const beforeHash = hashPath(before);
   const mutatedHash = hashPath(mutated);
   const manifestPath = join(root, "mutation.json");
@@ -93,7 +102,7 @@ export function writeControlFailure(reasonCode: string, expectedControlId?: stri
     path,
     `${JSON.stringify({ control_id: controlId, status: "failed", reason_code: reasonCode })}\n`,
   );
-  process.exit(1);
+  throw new Error(`harness negative control detected: ${reasonCode}`);
 }
 
 export function scanSecret(root: string, secret: string): string[] {
@@ -123,12 +132,13 @@ export function writeVerifiedEvidence(options: {
   generatedPaths: string[];
   artifactPaths: string[];
   result: unknown;
+  controlPlan?: ControlPlan;
 }): void {
   const evidencePath = process.env.VEAN_HARNESS_EVIDENCE_PATH;
   if (!evidencePath) {
     return;
   }
-  const plan = ensureControlPlan(options.repo, options.controlId);
+  const plan = options.controlPlan ?? ensureControlPlan(options.repo, options.controlId);
   const started = process.env.VEAN_HARNESS_STARTED_AT ?? new Date().toISOString();
   const runId = process.env.VEAN_HARNESS_RUN_ID ?? "standalone";
   const claimRunId = process.env.VEAN_HARNESS_CLAIM_RUN_ID ?? `${runId}:${options.claimId}`;

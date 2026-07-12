@@ -468,14 +468,83 @@ fn install_menu(app: &AppHandle) -> tauri::Result<()> {
 /// shell may load from Tauri's internal scheme, then only the exact loopback IP
 /// used by the managed preview sidecar. `localhost` and arbitrary hostnames are
 /// rejected so DNS/hosts-file rebinding cannot widen the authority origin.
-fn navigation_allowed(url: &tauri::Url) -> bool {
-    url.scheme() == "tauri" || (url.scheme() == "http" && url.host_str() == Some("127.0.0.1"))
+fn navigation_allowed(
+    url: &tauri::Url,
+    sidecar_port: Option<u16>,
+    allow_dev_bootstrap: bool,
+) -> bool {
+    (url.scheme() == "tauri" && url.host_str() == Some("localhost"))
+        || (url.scheme() == "http"
+            && url.host_str() == Some("127.0.0.1")
+            && url.port_or_known_default() == sidecar_port)
+        || (allow_dev_bootstrap
+            && url.scheme() == "http"
+            && url.host_str() == Some("127.0.0.1")
+            && url.port_or_known_default() == Some(5173))
 }
 
 fn navigation_policy_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     tauri::plugin::Builder::new("navigation-policy")
-        .on_navigation(|_webview, url| navigation_allowed(url))
+        .on_navigation(|webview, url| {
+            let sidecar_port = webview
+                .app_handle()
+                .state::<AppState>()
+                .sidecar
+                .lock()
+                .ok()
+                .and_then(|sidecar| sidecar.as_ref().map(|sidecar| sidecar.port));
+            navigation_allowed(url, sidecar_port, cfg!(debug_assertions))
+        })
         .build()
+}
+
+#[cfg(test)]
+mod navigation_policy_tests {
+    use super::navigation_allowed;
+
+    #[test]
+    fn permits_only_tauri_bootstrap_and_the_active_sidecar_origin() {
+        let active = Some(43127);
+        assert!(navigation_allowed(
+            &"tauri://localhost/".parse().expect("tauri URL"),
+            None,
+            false
+        ));
+        assert!(!navigation_allowed(
+            &"tauri://attacker/".parse().expect("foreign tauri URL"),
+            None,
+            false
+        ));
+        assert!(navigation_allowed(
+            &"http://127.0.0.1:43127/viewer"
+                .parse()
+                .expect("sidecar URL"),
+            active,
+            false
+        ));
+        assert!(!navigation_allowed(
+            &"http://127.0.0.1:43128/attacker"
+                .parse()
+                .expect("wrong port URL"),
+            active,
+            false
+        ));
+        assert!(!navigation_allowed(
+            &"http://localhost:43127/".parse().expect("localhost URL"),
+            active,
+            false
+        ));
+        assert!(!navigation_allowed(
+            &"https://example.com/".parse().expect("external URL"),
+            active,
+            false
+        ));
+        assert!(!navigation_allowed(
+            &"http://127.0.0.1:5173/".parse().expect("dev URL"),
+            active,
+            false
+        ));
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
