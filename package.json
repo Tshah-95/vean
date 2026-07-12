@@ -94,6 +94,7 @@
     "media:goldens:generate": "bun scripts/media-goldens.ts",
     "verify:media": "bun scripts/verify-media.ts",
     "verify:wkwebview-media": "bun scripts/verify-wkwebview-media.ts",
+    "package:core": "bun scripts/package-core.ts",
     "doctor:tauri-driver": "bun scripts/doctor-tauri-driver.ts",
     "doctor:macos-driver": "bun scripts/doctor-macos-driver.ts",
     "typecheck:macos-harness": "tsc -p tsconfig.macos-harness.json --noEmit",
