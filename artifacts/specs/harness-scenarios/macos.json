@@ -3,6 +3,12 @@
   "suite": "native-macos-shell-development",
   "maxInstances": 1,
   "authority": "Appium 3 / Mac2 / XCTest native accessibility tree",
+  "interaction_contract": {
+    "version": "timeline-a11y-v1",
+    "path": "artifacts/specs/timeline-keyboard-accessibility-contract-v1.md",
+    "sha256": "90e92872cc4df0dc12705ee560d2e2e5e3a916210c2a2eebb73e2cbd15c9a6d1",
+    "scope": "native shell focus and accessibility only; detailed timeline semantics remain H03 authority"
+  },
   "excluded_authority": [
     "detailed web editor DOM",
     "screen coordinates",

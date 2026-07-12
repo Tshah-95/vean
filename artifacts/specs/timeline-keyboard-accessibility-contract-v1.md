@@ -1,7 +1,7 @@
 # Timeline keyboard and accessibility product contract
 
-Status: **proposed for Tejas approval**  
-Version candidate: `timeline-a11y-v1`  
+Status: **approved by Tejas on 2026-07-11**
+Version: `timeline-a11y-v1`
 Derived from: `viewer/src/components/TimelineStrip.tsx`, `ClipBlock.tsx`,
 `viewer/src/timelineGestures.ts`, and `viewer/src/App.tsx`
 
@@ -127,9 +127,9 @@ focus change cannot satisfy an edit scenario.
   browser; focus, announcements, cleanup, and negative bounds are deterministic.
 - H03/H06/H08 scenario ledgers bind the approved version and content hash.
 
-## Decision requested
+## Approved decision
 
-Approve the recommended bundle:
+Tejas approved the recommended bundle without modification:
 
 1. selection follows roving focus;
 2. `Enter` opens body/head/tail edit mode instead of globally overloading arrows;
@@ -152,7 +152,7 @@ edit target explicit.
 - The current clip surface is not keyboard- or screen-reader-operable.
 - DOM state alone cannot prove a real edit; persisted document truth is required.
 
-### Contested pending approval
+### Approved product semantics
 
 - Explicit edit mode versus direct modifier-only editing.
 - Selection-follows-focus versus separate focus and selection.
