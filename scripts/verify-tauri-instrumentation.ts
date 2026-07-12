@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { processIdentity, recordNativeProcess } from "../e2e/tauri/runtime";
@@ -11,24 +12,37 @@ import {
 } from "./harness/evidence";
 import { createFixture, hashFile } from "./harness/fixture";
 import { runSelfUnderSupervisor } from "./harness/supervisor";
+import {
+  type OwnedListener,
+  type WebdriverProbe,
+  evaluateProductionListeners,
+  isWebdriverProtocolResponse,
+  parseOwnedListeners,
+} from "./harness/tauri-instrumentation-policy";
 
 const repo = resolve(import.meta.dirname, "..");
 if (process.platform !== "darwin") throw new Error("H05 release listener probe requires macOS");
 if (process.env.VEAN_HARNESS_SUPERVISED !== "1") {
   await runSelfUnderSupervisor(import.meta.path, process.argv.slice(2));
 }
+const cargoToml = readFileSync(join(repo, "app/src-tauri/Cargo.toml"), "utf8");
+const mutatedCargoToml = cargoToml.replace("default = []", 'default = ["harness-wdio"]');
+if (mutatedCargoToml === cargoToml)
+  throw new Error("could not construct real Cargo feature mutant");
 const controlId = "nc-test-instrumentation-absent";
 const controlPlan = ensureControlPlan(repo, controlId, {
-  before: '{"simulateBundledInstrumentation":false}\n',
-  mutated: '{"simulateBundledInstrumentation":true}\n',
+  before: cargoToml,
+  mutated: mutatedCargoToml,
 });
-const controlConfig = JSON.parse(
-  readFileSync(join(controlRoot(repo, controlId), "target.txt"), "utf8"),
-) as { simulateBundledInstrumentation: boolean };
+const scannedCargoToml = readFileSync(join(controlRoot(repo, controlId), "target.txt"), "utf8");
 const negativePhase = process.env.VEAN_HARNESS_PHASE === "negative-control";
 const sourceSha = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: repo })
   .stdout.toString()
   .trim();
+const invocationId = (
+  process.env.VEAN_HARNESS_CLAIM_RUN_ID ??
+  `${process.env.VEAN_HARNESS_PHASE ?? "standalone"}-${randomUUID()}`
+).replace(/[^A-Za-z0-9_.-]/g, "_");
 const canary = join(repo, ".vean/harness/developer-state-canary");
 mkdirSync(dirname(canary), { recursive: true });
 if (!Bun.file(canary).size) writeFileSync(canary, "poisoned-developer-state\n", { mode: 0o600 });
@@ -48,15 +62,14 @@ function run(command: string[], env: Record<string, string> = {}): string {
   return result.stdout.toString();
 }
 
-const cargoToml = readFileSync(join(repo, "app/src-tauri/Cargo.toml"), "utf8");
 const rustBootstrap = readFileSync(join(repo, "app/src-tauri/src/lib.rs"), "utf8");
 const capability = readFileSync(join(repo, "app/src-tauri/capabilities/default.json"), "utf8");
 const tauriConfig = readFileSync(join(repo, "app/src-tauri/tauri.conf.json"), "utf8");
 const appPackage = readFileSync(join(repo, "app/package.json"), "utf8");
 const rootPackage = readFileSync(join(repo, "package.json"), "utf8");
-const syntheticCandidate = controlConfig.simulateBundledInstrumentation
-  ? `${cargoToml}\ndefault = ["harness-wdio"]\n@wdio/tauri-plugin\nwdio:default\nwithGlobalTauri: true\n`
-  : `${cargoToml}\n${capability}\n${tauriConfig}\n${appPackage}`;
+const cargoFeatureArgs = scannedCargoToml.includes('default = ["harness-wdio"]')
+  ? ["--features", "harness-wdio"]
+  : ["--no-default-features"];
 const cargoTree = run([
   "rustup",
   "run",
@@ -66,12 +79,13 @@ const cargoTree = run([
   "--locked",
   "--manifest-path",
   "app/src-tauri/Cargo.toml",
-  "--no-default-features",
+  ...cargoFeatureArgs,
 ]);
 const staticChecks = {
-  defaultFeaturesEmpty: /\[features\][\s\S]*?default\s*=\s*\[\]/.test(cargoToml),
+  scannerInputMatchesSource: scannedCargoToml === cargoToml,
+  defaultFeaturesEmpty: /\[features\][\s\S]*?default\s*=\s*\[\]/.test(scannedCargoToml),
   webdriverDependencyOptional: /tauri-plugin-wdio-webdriver\s*=\s*\{[^}]*optional\s*=\s*true/.test(
-    cargoToml,
+    scannedCargoToml,
   ),
   compileAndRuntimeGated:
     rustBootstrap.includes('#[cfg(feature = "harness-wdio")]') &&
@@ -84,14 +98,14 @@ const staticChecks = {
     !appPackage.includes("wdioTauri"),
   noWdioCapability: !capability.includes("wdio:") && !capability.includes("wdio-webdriver:"),
   noGlobalTauri: !tauriConfig.includes('"withGlobalTauri": true'),
-  detectorRejectsSyntheticMutant:
-    !syntheticCandidate.includes('default = ["harness-wdio"]') &&
-    !syntheticCandidate.includes("@wdio/tauri-plugin") &&
-    !syntheticCandidate.includes("wdio:default") &&
-    !syntheticCandidate.includes("withGlobalTauri: true"),
+  scannerRejectsRealConfigMutant: !scannedCargoToml.includes('default = ["harness-wdio"]'),
 };
 
-const buildRoot = join(repo, ".vean/harness/builds", `h05-release-negative-${sourceSha}`);
+const buildRoot = join(
+  repo,
+  ".vean/harness/builds",
+  `h05-release-negative-${sourceSha}-${invocationId}`,
+);
 run(
   [
     "rustup",
@@ -101,7 +115,7 @@ run(
     "build",
     "--locked",
     "--release",
-    "--no-default-features",
+    ...cargoFeatureArgs,
     "--manifest-path",
     "app/src-tauri/Cargo.toml",
     "--target-dir",
@@ -155,12 +169,24 @@ recordNativeProcess(
   app.pid,
   `vean-h05-release-negative-${fixture.descriptor.runId}`,
 );
-const children = Bun.spawnSync(["pgrep", "-P", String(app.pid)])
-  .stdout.toString()
-  .trim()
-  .split("\n")
-  .map((value) => Number.parseInt(value, 10))
-  .filter(Number.isInteger);
+function descendants(rootPid: number): number[] {
+  const found: number[] = [];
+  const pending = [rootPid];
+  while (pending.length > 0) {
+    const parent = pending.shift();
+    if (parent === undefined) continue;
+    const children = Bun.spawnSync(["pgrep", "-P", String(parent)])
+      .stdout.toString()
+      .trim()
+      .split("\n")
+      .map((value) => Number.parseInt(value, 10))
+      .filter(Number.isInteger);
+    found.push(...children);
+    pending.push(...children);
+  }
+  return found;
+}
+const children = descendants(app.pid);
 for (const child of children) {
   const identity = processIdentity(child);
   recordNativeProcess(
@@ -185,14 +211,62 @@ for (const child of children) {
   );
   if (!identity.command.includes("preview")) throw new Error("unexpected release app child");
 }
-let statusRejected = false;
-try {
-  await fetch(`http://127.0.0.1:${fixture.descriptor.webdriverPort}/status`, {
-    signal: AbortSignal.timeout(500),
-  });
-} catch {
-  statusRejected = true;
+const processTreePids = [app.pid, ...children];
+const ownedListeners: OwnedListener[] = processTreePids.flatMap((pid) => {
+  const result = Bun.spawnSync([
+    "lsof",
+    "-nP",
+    "-a",
+    "-p",
+    String(pid),
+    "-iTCP",
+    "-sTCP:LISTEN",
+    "-Fn",
+  ]);
+  return parseOwnedListeners(pid, result.stdout.toString());
+});
+async function probeWebdriver(port: number): Promise<WebdriverProbe> {
+  const request = async (path: string, init?: RequestInit): Promise<boolean> => {
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+        ...init,
+        signal: AbortSignal.timeout(750),
+      });
+      const body = await response.text();
+      return isWebdriverProtocolResponse(response.headers.get("content-type"), body);
+    } catch {
+      return false;
+    }
+  };
+  return {
+    port,
+    statusProtocolAccepted: await request("/status"),
+    sessionProtocolAccepted: await request("/session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ capabilities: { alwaysMatch: {}, firstMatch: [{}] } }),
+    }),
+  };
 }
+const probedPorts = [
+  ...new Set([
+    fixture.descriptor.webdriverPort,
+    4445,
+    ...ownedListeners.map((listener) => listener.port),
+  ]),
+];
+const webdriverProbes = await Promise.all(probedPorts.map(probeWebdriver));
+const requestedProbe = webdriverProbes.find(
+  (probe) => probe.port === fixture.descriptor.webdriverPort,
+);
+const defaultProbe = webdriverProbes.find((probe) => probe.port === 4445);
+if (!requestedProbe || !defaultProbe)
+  throw new Error("required WebDriver probes were not recorded");
+const listenerPolicy = evaluateProductionListeners(
+  ownedListeners,
+  webdriverProbes,
+  fixture.descriptor.webdriverPort,
+);
 const candidate = {
   status: "development_candidate",
   finalizer: "H08R exact signed/installed lineage",
@@ -204,8 +278,14 @@ const candidate = {
   dynamic: {
     hostileHarnessEnvironmentSupplied: true,
     webdriverPort: fixture.descriptor.webdriverPort,
-    statusRejected,
-    sessionRejected: statusRejected,
+    statusRejected: !requestedProbe.statusProtocolAccepted,
+    sessionRejected: !requestedProbe.sessionProtocolAccepted,
+    defaultPort: 4445,
+    defaultPortProbes: defaultProbe,
+    processTreePids,
+    ownedListeners,
+    webdriverProbes,
+    listenerPolicy,
   },
   control: {
     id: controlId,
@@ -213,8 +293,23 @@ const candidate = {
     mutationManifestHash: controlPlan.manifestHash,
   },
 };
+const evidenceBase = process.env.VEAN_HARNESS_EVIDENCE_PATH
+  ? dirname(process.env.VEAN_HARNESS_EVIDENCE_PATH)
+  : join(repo, ".vean/harness/native-runs");
+const artifactDir = join(evidenceBase, "claim-test-instrumentation-absent-candidate", invocationId);
+mkdirSync(artifactDir, { recursive: true });
+const candidatePath = join(artifactDir, "candidate.json");
+writeFileSync(candidatePath, `${JSON.stringify(candidate, null, 2)}\n`);
+if (scanSecret(artifactDir, fixture.authorityToken).length > 0)
+  throw new Error("authority leaked into instrumentation candidate");
 const ok =
-  Object.values(staticChecks).every(Boolean) && binaryExcludesDriverSymbols && statusRejected;
+  Object.values(staticChecks).every(Boolean) &&
+  binaryExcludesDriverSymbols &&
+  !requestedProbe.statusProtocolAccepted &&
+  !requestedProbe.sessionProtocolAccepted &&
+  !defaultProbe.statusProtocolAccepted &&
+  !defaultProbe.sessionProtocolAccepted &&
+  listenerPolicy.allOwnedListenersRejectAutomation;
 if (!ok) {
   if (negativePhase) writeControlFailure("SENSITIVITY_TEST_INSTRUMENTATION_ABSENT", controlId);
   throw new Error(
@@ -223,19 +318,6 @@ if (!ok) {
 }
 if (negativePhase)
   throw new Error("instrumentation-absence mutant unexpectedly satisfied the candidate oracle");
-const evidenceBase = process.env.VEAN_HARNESS_EVIDENCE_PATH
-  ? dirname(process.env.VEAN_HARNESS_EVIDENCE_PATH)
-  : join(repo, ".vean/harness/native-runs");
-const invocationId = (process.env.VEAN_HARNESS_CLAIM_RUN_ID ?? fixture.descriptor.runId).replace(
-  /[^A-Za-z0-9_.-]/g,
-  "_",
-);
-const artifactDir = join(evidenceBase, "claim-test-instrumentation-absent-candidate", invocationId);
-mkdirSync(artifactDir, { recursive: true });
-const candidatePath = join(artifactDir, "candidate.json");
-writeFileSync(candidatePath, `${JSON.stringify(candidate, null, 2)}\n`);
-if (scanSecret(artifactDir, fixture.authorityToken).length > 0)
-  throw new Error("authority leaked into instrumentation candidate");
 const cleanup = await fixture.close();
 if (hashFile(canary) !== developerHash) throw new Error("developer canary changed");
 console.log(JSON.stringify({ ok, ...candidate, cleanup, artifactPath: candidatePath }));

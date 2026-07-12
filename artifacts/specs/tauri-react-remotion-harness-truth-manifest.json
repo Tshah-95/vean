@@ -828,6 +828,8 @@
       "oracle_implementation_paths": [
         "package.json",
         "scripts/verify-tauri-instrumentation.ts",
+        "scripts/harness/tauri-instrumentation-policy.ts",
+        "tests/tauri-instrumentation-policy.test.ts",
         "app/src-tauri/Cargo.toml",
         "app/src-tauri/src/lib.rs",
         "app/src-tauri/capabilities/default.json",
