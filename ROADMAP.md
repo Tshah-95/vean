@@ -295,7 +295,7 @@ bridge wire, with the Move-1 op-invariants gate re-verified green (221/221).
 This is the product-runtime spine. Move 2 proved the individual surfaces work;
 Move 3 makes them scale without drift: define an action once, validate it once,
 run policy once, and expose it through Commander CLI, MCP, deterministic LSP code
-actions, and the future Tauri app.
+actions, and the Tauri app.
 
 This is also where vean becomes comfortable as a daily local tool. Project setup,
 media routing, active timeline selection, render/still outputs, transcripts,

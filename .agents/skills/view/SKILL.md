@@ -23,6 +23,12 @@ This is the deliberate opposite of `drive`:
 `/view` **is** the explicit ask that the "no screen takeover" rule carves out an
 exception for. Bringing the window forward is exactly what was requested.
 
+This exception is human-only and is never test evidence. Agents must not drive
+the foreground window after launch. Browser verification uses
+`bun run drive verify`; native menus, file dialogs, focus, and window lifecycle use
+`bun run vm:macos:verify-native` in the hidden Tart guest. Never use host
+computer-use for native verification.
+
 ## The one fact that makes this correct
 
 `vean open` is worktree-sensitive **only if you run it from this checkout's
@@ -38,9 +44,9 @@ bun src/cli.ts open …        # import.meta.dir → THIS worktree's src/ and ap
 Two more traps this skill exists to avoid:
 
 - **Bare `vean open` (no flags) opens the *installed* `/Applications/vean.app`** —
-  a stale, already-shipped snapshot that ignores your uncommitted `viewer/`
+  a potentially stale installed snapshot that ignores your uncommitted `viewer/`
   changes and isn't tied to this worktree. Wrong for "see my latest changes."
-- The `--dev` path serves the **live HMR viewer from this checkout**; the shipped
+- The `--dev` path serves the **live HMR viewer from this checkout**; the installed
   app always serves the built `viewer/dist`. For "the change I just made," you
   want `--dev` (native) or `--view browser` (the default browser path is also live
   HMR).

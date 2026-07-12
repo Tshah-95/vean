@@ -10,9 +10,9 @@ consequences **before a single frame renders**.
 
 vean is **not only an app.** Its core is the headless editing engine the app
 sits on: files in, files out, no network, no secrets. Product surfaces (the
-Commander CLI, LSP, MCP, and the future local Tauri Mac app) share local
+Commander CLI, LSP, MCP, and the local Tauri Mac app) share local
 coordination state in a gitignored `.vean/vean.db` SQLite database. The render is
-delegated to `melt` (MLT/FFmpeg) as a separate process; the Mac app may bundle
+delegated to `melt` (MLT/FFmpeg) as a separate process; the Mac app can bundle
 pinned renderer sidecars, while the source/CLI/Homebrew artifact treats them as
 system dependencies. vean owns the part nobody else does: a *typed, validated,
 diagnosable, agent-authorable* representation of an edit.
@@ -91,7 +91,7 @@ The timeline core stays file-in/file-out. Product coordination state lives in
   short status update.
 
 CLI is the canonical command surface for this state. LSP remains ambient and
-independent. MCP and the future app are adapters backed by the same action
+independent. MCP and the Tauri app are adapters backed by the same action
 runtime, not the source of truth.
 
 ## Action runtime contract
@@ -206,12 +206,13 @@ lacks (a data document) is exactly the thing we build on the MLT side.
   typed keyframe model round-trips these byte-faithfully.
 - **Determinism.** Same IR → byte-identical XML. Golden tests guard it.
 
-## Status: scaffolded, building in phases
+## Status: implemented in phases, with release work still open
 
-This is **infrastructure stood up early**, building behind verification gates —
-see [ROADMAP.md](ROADMAP.md). Nothing stacks on an unverified phase. The Move-0
-seed is studio's `src/mlt` toolkit, ported here with the `@/brand` coupling
-stripped (colors become plain hex/named — vean is standalone).
+The headless core, action runtime, React/Remotion viewer, and local Tauri app are
+implemented behind verification gates — see [ROADMAP.md](ROADMAP.md). Packaging,
+release lineage, and the remaining roadmap breadth are not implied complete. The
+Move-0 seed was studio's `src/mlt` toolkit, ported here with the `@/brand`
+coupling stripped (colors became plain hex/named — vean is standalone).
 
 ## Conventions
 
@@ -293,8 +294,8 @@ parallel session safety rules above, never reverts unrelated work, and never use
 | parallelize research, review, implementation, or verification | _(none — PM thread delegates directly)_ | fresh agent threads; disjoint code scopes; PM integrates + verifies |
 | add or expose a product action | _(none yet — see DESIGN-MOVE3)_ | `src/actions/`, CLI/MCP/LSP/Tauri adapters, tests |
 | improve project/media ergonomics | _(none yet — see DESIGN-MOVE3)_ | `src/actions/`, `src/state/`, Commander CLI, media catalog migrations |
-| build the local Mac app | _(none yet — Move 4)_ | `app/` (Tauri), action IPC, bundled renderer sidecars |
-| prove a material UI change works — drive the running app, screenshot/record a clip, verify the effect visually + structurally | `drive` (`.agents/skills/drive/SKILL.md`) | `bun run drive up` + `agent-browser` against the loopback viewer (live HMR by default — your current `viewer/` code; `--prod` serves the dist snapshot the shipped app renders); clips to `$TMPDIR`, referenced back in chat |
+| maintain the local Mac app | _(none yet — see Move 4)_ | `app/` (Tauri), action IPC, bundled renderer sidecars |
+| prove a material UI change works in the loopback editor | `drive` (`.agents/skills/drive/SKILL.md`) | `bun run drive verify` — the packaged H04 runner drives Vite and production-dist in headless Playwright/Chromium and verifies persisted `.mlt` truth |
 | bring up the app so the HUMAN can click around this worktree's latest code (the sanctioned foreground-window path) | `view` (`.agents/skills/view/SKILL.md`) | `bun src/cli.ts open [project] --dev` (native Tauri dev window, live HMR of this checkout) or `--view browser` (instant, identical UI); launch backgrounded, report branch+project, step back — don't drive it (that's `drive`) |
 
 ### Keeping the resolver healthy
@@ -326,7 +327,7 @@ drizzle/       ← committed local-state SQL migrations for `.vean/vean.db`
 skills/        ← Claude Code plugin skill shims (symlink back to .agents where shared)
 .lsp.json      ← Claude Code plugin LSP registration for .mlt / vean-lsp
 .mcp.json      ← Claude Code plugin MCP registration for vean-mcp
-app/           ← the local Tauri Mac app (Move 4, TBD)
+app/           ← the implemented local Tauri Mac app (Move 4; package/release work remains)
 ROADMAP.md     ← the phases + their verification gates (the plan of record)
 BUILD-MONITOR.md ← 15-minute checkpoint/review protocol for active agent builds
 LICENSING.md   ← why AGPL-3.0 + CLA, and the no-linking nuance
@@ -334,7 +335,8 @@ LICENSING.md   ← why AGPL-3.0 + CLA, and the no-linking nuance
 
 ## Quick reference
 
-Mostly **planned** — implemented per Move. See [ROADMAP.md](ROADMAP.md).
+Commands below are implemented unless their row says otherwise. See
+[ROADMAP.md](ROADMAP.md) for unfinished product and release work.
 
 | Task | Command | Lands in |
 |---|---|---|
@@ -356,8 +358,11 @@ Mostly **planned** — implemented per Move. See [ROADMAP.md](ROADMAP.md).
 | Inspect/run action registry | `vean action list` · `vean action run <id> --input-json '{}'` | Move 3 |
 | Add/scan/find media | `vean media root add <path>` · `vean media scan` · `vean media find <query>` | Move 3 |
 | Resolve a route alias | `vean route resolve media:raw` | Move 3 |
-| Verify local app scaffold | `bun run app:doctor` · `bun run app:doctor -- --native` | Move 4 seed |
-| Drive the app to prove a UI change (headless) | `bun run drive up` (live HMR; `--prod` for the dist snapshot) → `agent-browser --session "$(bun scripts/drive.ts name)" open "$(bun run drive url)"` → `bun run drive down` | now |
+| Verify local app structure/build prerequisites | `bun run app:doctor` · `bun run app:doctor -- --native` | Move 4 |
+| Verify owned code + component/browser behavior | `bun run verify:harness --profile developer --json` | now |
+| Drive the loopback editor (headless H04) | `bun run drive verify` (equivalent to `bun run verify:browser`) | now |
+| Verify the actual Tauri/WKWebView development app | `bun run verify:tauri --provider auto` · `bun run verify:tauri-release-negative` | now |
+| Verify native menus/dialogs without touching the host desktop | `bun run vm:macos:status` · `bun run vm:macos:doctor-guest` · `bun run vm:macos:verify-native` · `bun run vm:macos:collect-evidence` | now; hidden Tart guest only |
 | Bring up the app so the human can click around (`/view`) | `bun src/cli.ts open [project] --dev` (native dev window, this worktree's live viewer) · `bun src/cli.ts open [project] --view browser` (instant browser tab) | now |
 
 ## System deps (not bun packages)
@@ -365,6 +370,6 @@ Mostly **planned** — implemented per Move. See [ROADMAP.md](ROADMAP.md).
 `mlt` (provides `melt`) and `ffmpeg`. Mac: `brew install mlt ffmpeg`. Linux:
 `apt install melt ffmpeg`. Native Tauri app builds also need Rust/Cargo
 (`brew install rust` on macOS). Optional, for the Remotion producer: a Node/Bun
-Remotion install (peer, user-provided). Optional, for the `drive` skill (proving
-UI changes in a real browser): `agent-browser` (`brew install agent-browser`) — a
-Playwright/Chromium automation CLI; the harness degrades to nothing without it.
+Remotion install (peer, user-provided). The canonical browser harness ships its
+own pinned Playwright/Chromium dependency; `agent-browser` is optional for ad-hoc
+headless inspection and is not part of H04's completion oracle.

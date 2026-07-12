@@ -5,7 +5,7 @@
     {
       "id": "drive",
       "title": "Drive the vean app to prove a UI change works",
-      "description": "Drive the vean app to PROVE a UI change works — open the real editor in a headless (or headed) browser, click/inspect the thing you changed, record a screenshot/video clip into the temp dir, and reference it back in chat as proof. Use whenever you make a material UI change to viewer/ or the preview server and want to demonstrate the effect (not just assert it), confirm a feature behaves as imagined, or show before/after. Headless vs headed is indifferent — pick whichever proves it.",
+      "description": "Prove a vean UI change in the real loopback editor without taking over the desktop. Use the packaged H04 Playwright/Chromium runner for completion evidence; use the optional agent-browser path only for ad-hoc headless inspection. Native shell automation routes to the hidden Tart guest, never the host login session.",
       "version": "1.0.0",
       "path": ".agents/skills/drive/SKILL.md",
       "tags": ["ui", "verification", "viewer"],
