@@ -66,7 +66,11 @@ describe("preview release policy", () => {
     const release = contentSecurityPolicy("release");
     expect(new Set([dev, test, release]).size).toBe(3);
     expect(dev).toContain("'unsafe-eval'");
+    // Vite dev injects the react-refresh preamble as an INLINE script; without
+    // 'unsafe-inline' in script-src the viewer mounts nothing (blank window).
+    expect(dev).toMatch(/script-src [^;]*'unsafe-inline'/);
     expect(release).not.toContain("'unsafe-eval'");
+    expect(release).not.toMatch(/script-src [^;]*'unsafe-inline'/);
     expect(release).toContain("form-action 'none'");
     expect(release).toContain("connect-src 'self'");
   });

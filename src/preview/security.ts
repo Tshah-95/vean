@@ -86,7 +86,11 @@ const DEV_CSP = [
   "default-src 'self'",
   "object-src 'none'",
   "frame-ancestors 'none'",
-  "script-src 'self' 'unsafe-eval'",
+  // 'unsafe-inline' + 'unsafe-eval' are for the Vite dev server only: HMR needs
+  // eval, and @vitejs/plugin-react injects its react-refresh preamble as an
+  // INLINE module script — blocking it aborts every component module ("can't
+  // detect preamble") and the viewer mounts nothing. Release stays inline-free.
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "media-src 'self' blob:",
