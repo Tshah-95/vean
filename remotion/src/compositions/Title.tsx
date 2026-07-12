@@ -1,4 +1,5 @@
 import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
+import { FONT_STACK, theme } from "../lib/theme";
 // Title — a centered title card: a kicker line over a big title, both springing up
 // on a TRANSPARENT background (alpha preserved so it composites over footage on an
 // upper MLT track, exactly like LowerThird).
@@ -6,28 +7,17 @@ import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } fr
 // This is the SECOND registered composition, and it exists to prove the P0 unlock:
 // it was added purely by dropping this file into `compositions/` — the viewer's
 // dynamic registry (a Vite glob, `viewer/src/remotion/registry.ts`) discovers it by
-// filename with NO edit to the registry. It follows the going-forward convention:
-// a `default` export (the component) + a named `defaults` export (the default props).
-import { z } from "zod";
-import { FONT_STACK, theme } from "../lib/theme";
+// filename with NO edit to the registry. Runtime metadata lives in Title.config.ts
+// so this module exports only a component and remains compatible with React Fast
+// Refresh when an author edits it under the live Vite viewer.
+import type { TitleProps } from "./Title.config";
+import { titleDefaults } from "./Title.config";
 
-export const schema = z.object({
-  title: z.string(),
-  /** Small kicker line above the title (rendered uppercase, letter-spaced). */
-  kicker: z.string(),
-  /** Accent color for the kicker (hex). */
-  accent: z.string(),
-});
-
-export type TitleProps = z.infer<typeof schema>;
-
-export const defaults: TitleProps = {
-  title: "vean",
-  kicker: "the agent-native title card",
-  accent: theme.accent,
-};
-
-const Title: React.FC<TitleProps> = ({ title, kicker, accent }) => {
+const Title: React.FC<Partial<TitleProps>> = ({
+  title = titleDefaults.title,
+  kicker = titleDefaults.kicker,
+  accent = titleDefaults.accent,
+}) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 

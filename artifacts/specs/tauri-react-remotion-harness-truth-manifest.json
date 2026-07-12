@@ -103,7 +103,7 @@
       "worker_lane_owner": "H04",
       "verifier_owner": "browser-e2e",
       "current_status": "open",
-      "oracle_exists": false,
+      "oracle_exists": true,
       "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/browser.json",
       "negative_control": {
@@ -118,7 +118,15 @@
         "restoration_predicate": "restored_hash == before_hash and baseline oracle returns verified",
         "evidence_paths": ["artifacts/test-runs/<run-id>/negative-controls/nc-browser-editor.json"]
       },
-      "oracle_implementation_paths": ["package.json"]
+      "oracle_implementation_paths": [
+        "scripts/verify-browser.ts",
+        "scripts/harness/browser-control.ts",
+        "scripts/harness/browser-domain-truth.ts",
+        "e2e/browser/editor.spec.ts",
+        "viewer/src/api.ts",
+        "viewer/src/useTimelineEditor.ts",
+        "src/preview/server.ts"
+      ]
     },
     {
       "claim_id": "claim-ci-enforcement",

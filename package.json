@@ -89,6 +89,7 @@
     "verify:tauri-release-negative": "bun scripts/verify-tauri-instrumentation.ts",
     "verify:tauri-cleanup-failure": "bun scripts/verify-tauri.ts --simulate-session-failure",
     "verify:component": "bun scripts/verify-component.ts",
+    "verify:browser": "bun scripts/verify-browser.ts",
     "doctor:tauri-driver": "bun scripts/doctor-tauri-driver.ts",
     "doctor:macos-driver": "bun scripts/doctor-macos-driver.ts",
     "typecheck:macos-harness": "tsc -p tsconfig.macos-harness.json --noEmit",

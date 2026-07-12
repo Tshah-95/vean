@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { copyFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { isBrowserControlId, prepareBrowserControl } from "./browser-control";
 import { isComponentControlId, prepareComponentControl } from "./component-control";
 import { controlRoot } from "./evidence";
 import { nativeMacosControlId, prepareNativeMacosControl } from "./native-macos-control";
@@ -14,6 +15,8 @@ if (!controlId || !/^nc-[a-z0-9-]+$/.test(controlId))
   throw new Error("valid --control is required");
 if (controlId === nativeMacosControlId) {
   prepareNativeMacosControl(!process.argv.includes("--restore"));
+} else if (isBrowserControlId(controlId)) {
+  prepareBrowserControl(controlId, !process.argv.includes("--restore"));
 } else if (isComponentControlId(controlId)) {
   prepareComponentControl(controlId, !process.argv.includes("--restore"));
 }

@@ -21,6 +21,7 @@
 //   bun scripts/drive.ts name  [--name <s>]   # echo the resolved name (= slug) for agent-browser
 //   bun scripts/drive.ts down  [--name <s>]   # stop one sidecar, clear the session
 //   bun scripts/drive.ts down --all           # reap EVERY drive sidecar (safety net)
+//   bun scripts/drive.ts verify               # canonical hermetic H04 browser E2E
 //
 // Concurrency safety (learned the hard way: a loop calling `up` orphaned 33
 // detached servers). `up` is idempotent AND race-safe: an exclusive spawn LOCK
@@ -35,7 +36,7 @@
 // `open` navigates away from the first). An explicit `--name` still wins. The
 // name maps 1:1 to the `agent-browser --session <name>` you drive with; distinct
 // names give independent concurrent sessions.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   appendFileSync,
   closeSync,
@@ -473,9 +474,18 @@ async function main(): Promise<void> {
       return status(flags);
     case "name":
       return name(flags);
+    case "verify": {
+      const result = spawnSync("bun", [join(REPO, "scripts/verify-browser.ts")], {
+        cwd: REPO,
+        stdio: "inherit",
+        env: process.env,
+      });
+      process.exit(result.status ?? 1);
+      return;
+    }
     default:
       process.stderr.write(
-        "usage: bun scripts/drive.ts <up|down|url|status|name> " +
+        "usage: bun scripts/drive.ts <up|down|url|status|name|verify> " +
           "[--project <path>] [--timeline <route>] [--port <n>] [--name <s>] [--all]\n",
       );
       process.exit(cmd ? 1 : 0);

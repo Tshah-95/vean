@@ -114,6 +114,13 @@ explicit `--name` to override (it wins everywhere), and run several at once with
 distinct `--name`s. `bun scripts/drive.ts status` reports which tree+session
 you're looking at (`slug`, `name`, `port`, `url`).
 
+For the repeatable acceptance suite, run `bun run drive verify` (equivalent to
+`bun run verify:browser`). It is always headless, creates an H02-isolated project,
+drives both the Vite/HMR and freshly built production-dist paths, migrates every
+legacy live-viewer scenario, and rejects a UI-only edit unless the current `.mlt`
+hash, independently reparsed IR, action envelope, diagnostics, and touched URI all
+agree. Use ad-hoc `up`/`down` for exploration; use `verify` for a completion claim.
+
 Everything else is raw `agent-browser` (see the `agent-browser` skill for the full
 command set: `snapshot`, `find`, `click`, `fill`, `get`, `is`, `diff`, `wait`,
 `network`, `set viewport`, …).

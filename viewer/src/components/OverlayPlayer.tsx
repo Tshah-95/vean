@@ -14,7 +14,7 @@
 // hardcoded to LowerThird, and the overlay is ALWAYS alpha-composited over the
 // footage below (the transparent background reveals the footage compositor's canvas).
 import { Player, type PlayerRef } from "@remotion/player";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useClock, useClockInstance } from "../ClockProvider";
 import { keepPlayerPaused } from "../remotion/pausePlayer";
 import { resolveComposition } from "../remotion/registry";
@@ -53,6 +53,7 @@ export function OverlayPlayer({
   present = true,
 }: OverlayPlayerProps) {
   const playerRef = useRef<PlayerRef>(null);
+  const [hmrRevision, setHmrRevision] = useState(0);
   const clock = useClock();
   const clockInstance = useClockInstance();
 
@@ -68,12 +69,29 @@ export function OverlayPlayer({
   const lastCompId = useRef(compositionId);
   if (compositionId) lastCompId.current = compositionId;
   const effectiveCompId = compositionId ?? lastCompId.current;
-  const resolved = useMemo(() => resolveComposition(effectiveCompId), [effectiveCompId]);
+  // Read the registry on every render. During ordinary playback its component and
+  // defaults identities are stable. During Vite HMR an eager glob can replace the
+  // changed module while `effectiveCompId` stays the same; keying resolution only on
+  // the id would preserve the stale pre-edit module forever.
+  const resolved = resolveComposition(effectiveCompId);
+  const resolvedDefaults = resolved.defaults;
+
+  // Remotion's Player owns an internal render root, so React Fast Refresh can update
+  // an imported composition without forcing an already-mounted static frame to draw.
+  // Remount only that render target after Vite applies an update. The master clock is
+  // outside the Player, so the user's exact playhead survives the refresh.
+  useEffect(() => {
+    const hot = import.meta.hot;
+    if (!hot) return;
+    const refreshPlayer = () => setHmrRevision((revision) => revision + 1);
+    hot.on("vite:afterUpdate", refreshPlayer);
+    return () => hot.off("vite:afterUpdate", refreshPlayer);
+  }, []);
   // The props the Player renders with: the clip's props layered OVER the
   // composition's own defaults, so a clip that omits a field still renders.
   const playerProps = useMemo(
-    () => ({ ...resolved.defaults, ...(inputProps ?? {}) }),
-    [resolved, inputProps],
+    () => ({ ...resolvedDefaults, ...(inputProps ?? {}) }),
+    [resolvedDefaults, inputProps],
   );
 
   // Integer composition fps (the profile is integer-fps in Move 5).
@@ -83,6 +101,9 @@ export function OverlayPlayer({
   // the composition-LOCAL frame == masterFrame − startFrame (so the comp animates from
   // its own 0 when the clip enters), clamped into [0, duration).
   useEffect(() => {
+    // A Player remount starts at frame zero even though the master frame did not
+    // change; consuming the HMR revision intentionally re-runs this exact seek.
+    void hmrRevision;
     const player = playerRef.current;
     if (!player) return;
     const local = Math.max(
@@ -96,7 +117,7 @@ export function OverlayPlayer({
     } catch {
       player.seekTo(local);
     }
-  }, [clock.currentFrame, durationInFrames, startFrame]);
+  }, [clock.currentFrame, durationInFrames, startFrame, hmrRevision]);
 
   // Keep the Player paused — the master RAF loop owns playback; the Player is a
   // pure render target driven by seekTo. (If it were play()ing it would advance
@@ -168,7 +189,7 @@ export function OverlayPlayer({
       <Player
         // Key on the comp id so a comp CHANGE remounts the Player fresh — clearing the
         // Player's internal error state, so switching AWAY from a broken comp recovers.
-        key={resolved.id}
+        key={`${resolved.id}:${hmrRevision}`}
         ref={playerRef}
         component={resolved.component as never}
         durationInFrames={Math.max(1, durationInFrames)}
