@@ -125,6 +125,7 @@ function Harness({ calls, forceConflict = false }: { calls: Call[]; forceConflic
   const [selectedId, select] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [author, setAuthor] = useState<string | null>(null);
+  const [redoAuthor, setRedoAuthor] = useState<string | null>(null);
   const [lastEvent, setLastEvent] = useState<TimelineEditor["lastEvent"]>(null);
   const editor = useMemo<TimelineEditor>(() => {
     const commit: TimelineEditor["commit"] = async (invocation, opts) => {
@@ -137,24 +138,30 @@ function Harness({ calls, forceConflict = false }: { calls: Call[]; forceConflic
       const next = revision + 1;
       setRevision(forceConflict ? next + 1 : next);
       setAuthor(forceConflict ? "agent:concurrent" : (opts?.author ?? "human"));
+      setRedoAuthor(null);
       setLastEvent({ kind: "commit", revision: next, dirty: true });
       return result(timeline, next, opts?.author ?? "human");
     };
     const undo: TimelineEditor["undo"] = async (opts) => {
       calls.push({ kind: "undo", opts });
       if (author && (opts?.author ?? "human") !== author) return null;
+      const owner = author;
       const next = revision + 1;
       setRevision(next);
       setAuthor(null);
+      setRedoAuthor(owner);
       setLastEvent({ kind: "undo", revision: next, dirty: true });
-      return result(timeline, next, null);
+      return { ...result(timeline, next, null), nextRedoAuthor: owner };
     };
     const redo: TimelineEditor["redo"] = async (opts) => {
       calls.push({ kind: "redo", opts });
+      if (redoAuthor && (opts?.author ?? "human") !== redoAuthor) return null;
       const next = revision + 1;
       setRevision(next);
+      setAuthor(redoAuthor);
+      setRedoAuthor(null);
       setLastEvent({ kind: "redo", revision: next, dirty: true });
-      return result(timeline, next, author);
+      return result(timeline, next, redoAuthor);
     };
     return {
       timeline,
@@ -179,9 +186,10 @@ function Harness({ calls, forceConflict = false }: { calls: Call[]; forceConflic
       lastError: null,
       busy: false,
       nextUndoAuthor: author,
+      nextRedoAuthor: redoAuthor,
       lastEvent,
     };
-  }, [author, calls, forceConflict, lastEvent, revision, selectedId]);
+  }, [author, calls, forceConflict, lastEvent, redoAuthor, revision, selectedId]);
 
   return (
     <ClockProvider>
@@ -329,7 +337,9 @@ describe("approved timeline-a11y-v1 contract", () => {
     await expect.element(alpha).toHaveAttribute("data-edit-target", "head");
     await userEvent.keyboard("{Enter}");
     await expect.element(alpha).toHaveAttribute("data-edit-mode", "false");
-    expect(calls.every((call) => call.opts?.author === "human")).toBe(true);
+    expect(calls.every((call) => call.opts?.author?.startsWith("human:timeline-keyboard:"))).toBe(
+      true,
+    );
   });
 
   test("a11y.timeline.commit-cancel-coalesce", async () => {

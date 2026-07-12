@@ -16,7 +16,7 @@ import { TimelineStrip } from "./components/TimelineStrip";
 import { Transport } from "./components/Transport";
 import { installDecodeBridge } from "./decode/debugBridge";
 import type { TimelineResponse } from "./types";
-import { useTimelineEditor } from "./useTimelineEditor";
+import { humanHistoryOptions, useTimelineEditor } from "./useTimelineEditor";
 
 function isTextEntry(target: EventTarget | null): boolean {
   return (
@@ -220,12 +220,12 @@ function Stage({
       const meta = e.metaKey || e.ctrlKey;
       if (meta && (e.key === "z" || e.key === "Z")) {
         e.preventDefault();
-        if (e.shiftKey) editor.redo();
-        else editor.undo();
+        if (e.shiftKey) editor.redo(humanHistoryOptions(editor.nextRedoAuthor));
+        else editor.undo(humanHistoryOptions(editor.nextUndoAuthor));
       } else if (meta && (e.key === "y" || e.key === "Y")) {
         // Windows-style redo.
         e.preventDefault();
-        editor.redo();
+        editor.redo(humanHistoryOptions(editor.nextRedoAuthor));
       } else if (meta && (e.key === "s" || e.key === "S")) {
         e.preventDefault();
         editor.save();

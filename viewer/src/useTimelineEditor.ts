@@ -56,7 +56,14 @@ export interface TimelineEditor {
   /** Author on top of the shared session history. Used to keep cancellation from
    *  reverting a concurrent agent edit. */
   nextUndoAuthor: string | null;
+  nextRedoAuthor: string | null;
   lastEvent: { kind: "commit" | "undo" | "redo" | "save"; revision: number; dirty: boolean } | null;
+}
+
+/** Let normal human undo/redo continue across a committed keyboard transaction,
+ * while never borrowing an agent/session identity. */
+export function humanHistoryOptions(author: string | null): EditAuthorOpts | undefined {
+  return author?.startsWith("human:timeline-keyboard:") ? { author } : undefined;
 }
 
 /** The number of timeline frames a track occupies (sum of its item playtimes). */
@@ -112,6 +119,7 @@ export function useTimelineEditor(
   const [lastError, setLastError] = useState<{ kind: string; detail: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [nextUndoAuthor, setNextUndoAuthor] = useState<string | null>(null);
+  const [nextRedoAuthor, setNextRedoAuthor] = useState<string | null>(null);
   const [lastEvent, setLastEvent] = useState<TimelineEditor["lastEvent"]>(null);
   const savedTimer = useRef<number | null>(null);
   // One network mutation at a time. Browser key-repeat, pointer input, and the
@@ -144,6 +152,7 @@ export function useTimelineEditor(
     setDirty(false);
     setLastError(null);
     setNextUndoAuthor(null);
+    setNextRedoAuthor(null);
     setLastEvent(null);
   }, [serverTimeline]);
 
@@ -158,6 +167,7 @@ export function useTimelineEditor(
     setCanRedo(res.canRedo);
     setDirty(res.dirty);
     setNextUndoAuthor(res.nextUndoAuthor ?? null);
+    setNextRedoAuthor(res.nextRedoAuthor ?? null);
     setLastError(null);
   }, []);
 
@@ -268,6 +278,7 @@ export function useTimelineEditor(
     lastError,
     busy,
     nextUndoAuthor,
+    nextRedoAuthor,
     lastEvent,
   };
 }

@@ -43,7 +43,7 @@ import {
 } from "../timelineKeyboard";
 import type { Diagnostic, PlacedItem, Track } from "../types";
 import { placeItems } from "../types";
-import type { TimelineEditor } from "../useTimelineEditor";
+import { type TimelineEditor, humanHistoryOptions } from "../useTimelineEditor";
 import { ClipBlock } from "./ClipBlock";
 import { Playhead } from "./Playhead";
 
@@ -465,10 +465,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         } else if (event.key === "Enter") {
           event.preventDefault();
           event.stopPropagation();
-          // Keyboard bursts remain ordinary human edits after Enter, so Cmd+Z and
-          // the toolbar can undo them. Exact Escape cancellation is protected by
-          // both the captured revision and the server's human-vs-agent boundary.
-          const author = "human";
+          const author = `human:timeline-keyboard:${crypto.randomUUID()}`;
           transactionRef.current = {
             author,
             clipId: id,
@@ -864,7 +861,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         </button>
         <button
           type="button"
-          onClick={() => void editor.undo()}
+          onClick={() => void editor.undo(humanHistoryOptions(editor.nextUndoAuthor))}
           disabled={!editor.canUndo}
           style={zoomBtn}
           aria-label="Undo"
@@ -874,7 +871,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         </button>
         <button
           type="button"
-          onClick={() => void editor.redo()}
+          onClick={() => void editor.redo(humanHistoryOptions(editor.nextRedoAuthor))}
           disabled={!editor.canRedo}
           style={zoomBtn}
           aria-label="Redo"
