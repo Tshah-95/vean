@@ -181,8 +181,8 @@
       "canonical_artifact_paths": ["viewer/src/components/"],
       "worker_lane_owner": "H03",
       "verifier_owner": "accessibility",
-      "current_status": "open",
-      "oracle_exists": false,
+      "current_status": "verified",
+      "oracle_exists": true,
       "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/component.json",
       "negative_control": {
@@ -638,8 +638,8 @@
       "canonical_artifact_paths": ["viewer/test/"],
       "worker_lane_owner": "H03",
       "verifier_owner": "browser-component",
-      "current_status": "open",
-      "oracle_exists": false,
+      "current_status": "verified",
+      "oracle_exists": true,
       "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/component.json",
       "negative_control": {
