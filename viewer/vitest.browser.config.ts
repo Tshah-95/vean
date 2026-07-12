@@ -11,7 +11,9 @@ if (!Number.isInteger(port) || port < 1024 || port > 65535) {
 }
 
 const invocationPath = resolve("test-results/component-browser/invocation.json");
+const parityPath = resolve("test-results/component-browser/parity.json");
 rmSync(invocationPath, { force: true });
+rmSync(parityPath, { force: true });
 
 function invocationRecorder(): Plugin {
   return {
@@ -58,6 +60,52 @@ function invocationRecorder(): Plugin {
           }
           mkdirSync(dirname(invocationPath), { recursive: true });
           writeFileSync(invocationPath, `${body}\n`, { mode: 0o600 });
+          response.statusCode = 204;
+          response.end();
+        });
+      });
+      server.middlewares.use("/__vean_component_parity", (request, response) => {
+        if (
+          request.method !== "POST" ||
+          request.headers.host !== `127.0.0.1:${port}` ||
+          request.headers["content-type"] !== "application/json"
+        ) {
+          response.statusCode = 403;
+          response.end("forbidden");
+          return;
+        }
+        let body = "";
+        request.on("data", (chunk) => {
+          body += String(chunk);
+          if (body.length > 32_768) request.destroy();
+        });
+        request.on("end", () => {
+          const value = JSON.parse(body) as {
+            scenarioId?: unknown;
+            invocations?: Array<{ op?: unknown; args?: Record<string, unknown> }>;
+          };
+          const expectedOps = ["move", "slip", "slide", "trimIn", "trimOut", "roll", "move"];
+          if (
+            value.scenarioId !== "a11y.timeline.pointer-keyboard-parity" ||
+            value.invocations?.length !== expectedOps.length ||
+            value.invocations.some((invocation, index) => invocation.op !== expectedOps[index]) ||
+            value.invocations.some((invocation) => {
+              const args = invocation.args;
+              return (
+                !args ||
+                (args.uuid !== undefined &&
+                  args.uuid !== "{7c1a0e2a-0001-4abc-9d00-000000000001}") ||
+                (args.leftUuid !== undefined &&
+                  args.leftUuid !== "{7c1a0e2a-0001-4abc-9d00-000000000001}")
+              );
+            })
+          ) {
+            response.statusCode = 422;
+            response.end("invalid parity envelope");
+            return;
+          }
+          mkdirSync(dirname(parityPath), { recursive: true });
+          writeFileSync(parityPath, `${body}\n`, { mode: 0o600 });
           response.statusCode = 204;
           response.end();
         });

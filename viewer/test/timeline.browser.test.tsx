@@ -7,6 +7,7 @@ import { ClockProvider, useClockInstance } from "../src/ClockProvider";
 import { PreviewProvider } from "../src/PreviewProvider";
 import type { EditAuthorOpts } from "../src/api";
 import { TimelineStrip } from "../src/components/TimelineStrip";
+import { type Gesture, buildInvocation } from "../src/timelineGestures";
 import type { OpInvocation, SessionEditResult, Timeline } from "../src/types";
 import type { TimelineEditor } from "../src/useTimelineEditor";
 
@@ -121,12 +122,24 @@ function result(ir: Timeline, revision: number, author: string | null): SessionE
   };
 }
 
-function Harness({ calls, forceConflict = false }: { calls: Call[]; forceConflict?: boolean }) {
+function Harness({
+  calls,
+  forceConflict = false,
+  allowRemoval = false,
+  failCommits = false,
+}: {
+  calls: Call[];
+  forceConflict?: boolean;
+  allowRemoval?: boolean;
+  failCommits?: boolean;
+}) {
+  const [workingTimeline, setWorkingTimeline] = useState(timeline);
   const [selectedId, select] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [author, setAuthor] = useState<string | null>(null);
   const [redoAuthor, setRedoAuthor] = useState<string | null>(null);
   const [lastEvent, setLastEvent] = useState<TimelineEditor["lastEvent"]>(null);
+  const [lastError, setLastError] = useState<TimelineEditor["lastError"]>(null);
   const editor = useMemo<TimelineEditor>(() => {
     const commit: TimelineEditor["commit"] = async (invocation, opts) => {
       if (
@@ -135,6 +148,10 @@ function Harness({ calls, forceConflict = false }: { calls: Call[]; forceConflic
         throw new Error(`unregistered fixture action: ${invocation.op}`);
       }
       calls.push({ kind: "commit", invocation, opts });
+      if (failCommits) {
+        setLastError({ kind: "fixture-edit-rejected", detail: "canonical edit refused" });
+        return null;
+      }
       const next = revision + 1;
       setRevision(forceConflict ? next + 1 : next);
       setAuthor(forceConflict ? "agent:concurrent" : (opts?.author ?? "human"));
@@ -164,7 +181,7 @@ function Harness({ calls, forceConflict = false }: { calls: Call[]; forceConflic
       return result(timeline, next, redoAuthor);
     };
     return {
-      timeline,
+      timeline: workingTimeline,
       revision,
       totalFrames: 60,
       route: "timeline:fixture",
@@ -183,21 +200,47 @@ function Harness({ calls, forceConflict = false }: { calls: Call[]; forceConflic
       canRedo: lastEvent?.kind === "undo",
       dirty: revision > 0,
       justSaved: false,
-      lastError: null,
+      lastError,
       busy: false,
       nextUndoAuthor: author,
       nextRedoAuthor: redoAuthor,
       lastEvent,
     };
-  }, [author, calls, forceConflict, lastEvent, redoAuthor, revision, selectedId]);
+  }, [
+    author,
+    calls,
+    failCommits,
+    forceConflict,
+    lastError,
+    lastEvent,
+    redoAuthor,
+    revision,
+    selectedId,
+    workingTimeline,
+  ]);
 
   return (
-    <ClockProvider>
-      <TimelineClockConfiguration />
-      <PreviewProvider>
-        <TimelineStrip editor={editor} />
-      </PreviewProvider>
-    </ClockProvider>
+    <>
+      <ClockProvider>
+        <TimelineClockConfiguration />
+        <PreviewProvider>
+          <TimelineStrip editor={editor} />
+        </PreviewProvider>
+      </ClockProvider>
+      {allowRemoval ? (
+        <button
+          type="button"
+          onClick={() =>
+            setWorkingTimeline({
+              ...workingTimeline,
+              tracks: { video: [], audio: [] },
+            })
+          }
+        >
+          Remove all fixture clips
+        </button>
+      ) : null}
+    </>
   );
 }
 
@@ -207,8 +250,11 @@ function TimelineClockConfiguration() {
   return null;
 }
 
-async function renderHarness(calls: Call[], forceConflict = false) {
-  return page.render(<Harness calls={calls} forceConflict={forceConflict} />);
+async function renderHarness(
+  calls: Call[],
+  options: { forceConflict?: boolean; allowRemoval?: boolean; failCommits?: boolean } = {},
+) {
+  return page.render(<Harness calls={calls} {...options} />);
 }
 
 describe("approved timeline-a11y-v1 contract", () => {
@@ -282,6 +328,13 @@ describe("approved timeline-a11y-v1 contract", () => {
     await expect.element(page.getByRole("status")).toHaveTextContent("Playing");
     await userEvent.keyboard("b");
     await vi.waitFor(() => expect(calls.at(-1)?.invocation?.op).toBe("split"));
+    alpha.element().focus();
+    await userEvent.keyboard("{Control>}z{/Control}");
+    await vi.waitFor(() => expect(calls.some((call) => call.kind === "undo")).toBe(true));
+    await userEvent.keyboard("{Control>}{Shift>}z{/Shift}{/Control}");
+    await vi.waitFor(() => expect(calls.some((call) => call.kind === "redo")).toBe(true));
+    await userEvent.keyboard("{Control>}s{/Control}");
+    await vi.waitFor(() => expect(calls.some((call) => call.kind === "save")).toBe(true));
   });
 
   test("a11y.timeline.edit-target-cycle", async () => {
@@ -370,24 +423,55 @@ describe("approved timeline-a11y-v1 contract", () => {
       );
       await expect.element(alpha).toHaveAttribute("data-edit-mode", "false");
     };
+    await runEdit("{ArrowRight}");
     await runEdit("{Alt>}{ArrowRight}{/Alt}");
     await runEdit("{Control>}{ArrowRight}{/Control}");
     await runEdit("{Tab}{Alt>}{ArrowRight}{/Alt}");
+    await runEdit("{Tab}{Tab}{ArrowLeft}");
     await runEdit("{Tab}{Tab}{Control>}{ArrowRight}{/Control}");
-    expect(calls.map((call) => call.invocation)).toEqual([
-      { op: "slip", args: { uuid: ALPHA_ID, delta: -1 } },
-      { op: "slide", args: { uuid: ALPHA_ID, delta: 1 } },
-      { op: "trimIn", args: { uuid: ALPHA_ID, delta: 1, rippleAllTracks: true } },
-      {
-        op: "roll",
-        args: {
-          track: { trackId: "playlist0" },
-          leftUuid: ALPHA_ID,
-          rightUuid: "clip-b",
-          delta: 1,
+    await runEdit("{ArrowDown}");
+
+    const alphaItem = timeline.tracks.video[0]?.items[0];
+    const betaItem = timeline.tracks.video[0]?.items[1];
+    if (alphaItem?.kind !== "clip" || betaItem?.kind !== "clip") throw new Error("fixture drift");
+    const baseGesture = {
+      uuid: ALPHA_ID,
+      trackId: "playlist0",
+      placed: { item: alphaItem, start: 0, length: 30 },
+      neighbours: { left: null, right: null },
+      ripple: false,
+    } satisfies Omit<Gesture, "tool">;
+    const pointerInvocations = [
+      buildInvocation({ ...baseGesture, tool: "move" }, 1, false, "playlist0"),
+      buildInvocation({ ...baseGesture, tool: "slip" }, 1, false, "playlist0"),
+      buildInvocation({ ...baseGesture, tool: "slide" }, 1, false, "playlist0"),
+      buildInvocation({ ...baseGesture, tool: "trimIn", ripple: true, extendRoom: 0 }, 1, true),
+      buildInvocation({ ...baseGesture, tool: "trimOut", extendRoom: 0 }, -1, false),
+      buildInvocation(
+        {
+          ...baseGesture,
+          tool: "roll",
+          neighbours: {
+            left: { item: alphaItem, start: 0, length: 30 },
+            right: { item: betaItem, start: 30, length: 30 },
+          },
         },
-      },
-    ]);
+        1,
+        false,
+      ),
+      buildInvocation({ ...baseGesture, tool: "move" }, 0, false, "v2"),
+    ];
+    const keyboardInvocations = calls.map((call) => call.invocation);
+    expect(keyboardInvocations).toEqual(pointerInvocations);
+    const parityRecorded = await fetch("/__vean_component_parity", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        scenarioId: "a11y.timeline.pointer-keyboard-parity",
+        invocations: keyboardInvocations,
+      }),
+    });
+    expect(parityRecorded.status).toBe(204);
   });
 
   test("a11y.timeline.body-operations", async () => {
@@ -413,6 +497,12 @@ describe("approved timeline-a11y-v1 contract", () => {
     alpha.element().focus();
     await userEvent.keyboard("{Enter}{Tab}{Tab}{Control>}{ArrowRight}{/Control}{Enter}");
     await vi.waitFor(() => expect(calls.at(-1)?.invocation?.op).toBe("roll"));
+    const before = calls.length;
+    alpha.element().focus();
+    await userEvent.keyboard("{Enter}{Tab}{Control>}{ArrowRight}{/Control}");
+    await expect.element(page.getByRole("status")).toHaveTextContent(/Roll unavailable/);
+    expect(calls).toHaveLength(before);
+    await userEvent.keyboard("{Enter}");
   });
 
   test("a11y.timeline.compatible-track-move", async () => {
@@ -444,6 +534,17 @@ describe("approved timeline-a11y-v1 contract", () => {
     await expect
       .element(page.getByRole("button", { name: "Toggle snapping" }))
       .toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "Zoom out" }).click();
+    await page.getByRole("button", { name: "Zoom out" }).click();
+    const gamma = page.getByRole("option", { name: /Gamma, Video track V2/ });
+    gamma.element().focus();
+    await userEvent.keyboard("{Enter}{ArrowRight}{Enter}");
+    await vi.waitFor(() =>
+      expect(calls.at(-1)?.invocation).toMatchObject({
+        op: "move",
+        args: { uuid: "clip-c", toPosition: 10 },
+      }),
+    );
   });
 
   test("a11y.timeline.browse-vertical", async () => {
@@ -464,7 +565,7 @@ describe("approved timeline-a11y-v1 contract", () => {
 
   test("a11y.timeline.announcements", async () => {
     const calls: Call[] = [];
-    await renderHarness(calls, true);
+    await renderHarness(calls, { forceConflict: true });
     const alpha = page.getByRole("option", { name: /Alpha, Video track V1/ });
     alpha.element().focus();
     await userEvent.keyboard("{Enter}{ArrowRight}");
@@ -475,6 +576,18 @@ describe("approved timeline-a11y-v1 contract", () => {
       .toHaveTextContent(/Cancel refused: the timeline changed outside/);
     expect(calls.filter((call) => call.kind === "undo")).toEqual([]);
     await expect.element(alpha).toHaveAttribute("data-edit-mode", "true");
+    await cleanup();
+
+    const failedCalls: Call[] = [];
+    await renderHarness(failedCalls, { failCommits: true });
+    const failedAlpha = page.getByRole("option", { name: /Alpha, Video track V1/ });
+    failedAlpha.element().focus();
+    await userEvent.keyboard("{Enter}{ArrowRight}{Enter}");
+    await expect
+      .element(page.getByRole("status"))
+      .toHaveTextContent("fixture-edit-rejected: canonical edit refused");
+    await expect.element(failedAlpha).toHaveAttribute("data-edit-mode", "true");
+    await expect.element(failedAlpha).toHaveFocus();
   });
 
   test("a11y.timeline.focus-restoration", async () => {
@@ -488,6 +601,13 @@ describe("approved timeline-a11y-v1 contract", () => {
     await vi.waitFor(() => expect(calls.filter((call) => call.kind === "undo")).toHaveLength(1));
     await expect.element(alpha).toHaveFocus();
     await expect.element(alpha).toHaveAttribute("data-edit-mode", "false");
+    await cleanup();
+
+    await renderHarness([], { allowRemoval: true });
+    const removable = page.getByRole("option", { name: /Alpha, Video track V1/ });
+    removable.element().focus();
+    await page.getByRole("button", { name: "Remove all fixture clips" }).click();
+    await expect.element(page.getByRole("region", { name: "Timeline editor" })).toHaveFocus();
   });
 
   test("component.strict-mode.cleanup", async () => {

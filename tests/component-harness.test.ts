@@ -71,8 +71,23 @@ describe("H03 real-browser component harness contract", () => {
       "beforeHash === afterHash",
       "cleanup.detected.length",
       "PLAYWRIGHT_BROWSERS_PATH",
+      "pointer-keyboard-parity-truth.json",
+      "browser-pointer-keyboard-parity.json",
+      "inverse_restored_exact_ir: true",
+      "sourceCorpusUnchanged: true",
+      "developerCanaryUnchanged: true",
     ]) {
       expect(verifier).toContain(needle);
     }
+    expect(verifier).toContain('["move", "slip", "slide", "trimIn", "trimOut", "roll", "move"]');
+  });
+
+  it("records parity through a fixed browser endpoint with no arbitrary file authority", () => {
+    const config = read("viewer/vitest.browser.config.ts");
+    expect(config).toContain('"/__vean_component_parity"');
+    expect(config).toContain('"a11y.timeline.pointer-keyboard-parity"');
+    expect(config).toContain('resolve("test-results/component-browser/parity.json")');
+    expect(config).not.toContain("body.path");
+    expect(config).not.toContain("body.file");
   });
 });

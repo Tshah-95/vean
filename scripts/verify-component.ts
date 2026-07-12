@@ -2,9 +2,19 @@
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
+import { clip, timeline, videoTrack } from "../src/ir/builder";
 import { fromMlt } from "../src/ir/parse";
+import { VERTICAL } from "../src/ir/profile";
+import { toMlt } from "../src/ir/serialize";
 import type { Item, Timeline } from "../src/ir/types";
-import { SessionStore, applyOp, markSaved, serializeSession } from "../src/preview/session";
+import type { OpInvocation } from "../src/ops";
+import {
+  SessionStore,
+  applyOp,
+  markSaved,
+  serializeSession,
+  undoSession,
+} from "../src/preview/session";
 import {
   type ComponentControlId,
   isComponentControlId,
@@ -83,6 +93,7 @@ const sourceSha = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: repo })
 const canary = join(repo, ".vean/harness/developer-state-canary");
 mkdirSync(dirname(canary), { recursive: true });
 if (!Bun.file(canary).size) writeFileSync(canary, "poisoned-developer-state\n", { mode: 0o600 });
+const developerCanaryHash = hashFile(canary);
 const fixture = await createFixture({ sourceSha, developerCanary: canary });
 const evidenceBase = process.env.VEAN_HARNESS_EVIDENCE_PATH
   ? dirname(process.env.VEAN_HARNESS_EVIDENCE_PATH)
@@ -151,7 +162,24 @@ try {
   const invocationPath = join(artifactDir, "browser-invocation.json");
   copyFileSync(invocationSource, invocationPath);
 
+  const paritySource = join(repo, "viewer/test-results/component-browser/parity.json");
+  const parity = JSON.parse(readFileSync(paritySource, "utf8")) as {
+    scenarioId?: string;
+    invocations?: OpInvocation[];
+  };
+  const expectedParityOps = ["move", "slip", "slide", "trimIn", "trimOut", "roll", "move"];
+  if (
+    parity.scenarioId !== "a11y.timeline.pointer-keyboard-parity" ||
+    parity.invocations?.length !== expectedParityOps.length ||
+    parity.invocations.some((invocation, index) => invocation.op !== expectedParityOps[index])
+  ) {
+    throw new Error("browser parity recorder did not capture every approved edit family");
+  }
+  const parityPath = join(artifactDir, "browser-pointer-keyboard-parity.json");
+  copyFileSync(paritySource, parityPath);
+
   const sourceTimeline = join(repo, "corpus/shotcut-single.mlt");
+  const sourceTimelineHash = hashFile(sourceTimeline);
   const savedTimeline = join(fixture.descriptor.projectRoot, "component-keyboard.mlt");
   copyFileSync(sourceTimeline, savedTimeline);
   const beforeHash = hashFile(savedTimeline);
@@ -202,6 +230,29 @@ try {
     )}\n`,
   );
 
+  const parityTruthPath = join(artifactDir, "pointer-keyboard-parity-truth.json");
+  const parityTruth = proveParityPersistence(
+    artifactDir,
+    parity.invocations,
+    String(recorded.invocation?.args?.uuid),
+  );
+  writeFileSync(
+    parityTruthPath,
+    `${JSON.stringify(
+      {
+        scenario_id: parity.scenarioId,
+        browser_parity_hash: hashPath(parityPath),
+        edit_families: parityTruth,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+
+  if (hashFile(canary) !== developerCanaryHash || hashFile(sourceTimeline) !== sourceTimelineHash) {
+    throw new Error("component verification mutated developer state or the source corpus fixture");
+  }
+
   const screenshotSource = join(repo, "viewer/test-results/component-browser/accessibility.png");
   const screenshotPath = join(artifactDir, "accessibility.png");
   copyFileSync(screenshotSource, screenshotPath);
@@ -215,6 +266,11 @@ try {
     interactionContractHash: approvedContractHash,
     invocationHash: hashPath(invocationPath),
     independentMltTruthHash: hashPath(truthPath),
+    parityInvocationHash: hashPath(parityPath),
+    parityMltTruthHash: hashPath(parityTruthPath),
+    parityFamilies: parityTruth.map((entry) => entry.family),
+    sourceCorpusUnchanged: true,
+    developerCanaryUnchanged: true,
     screenshotHash: hashPath(screenshotPath),
     tracePolicy: "retain-on-failure",
     cleanupFindings: [] as unknown[],
@@ -245,7 +301,15 @@ try {
       join(repo, "viewer/src/useTimelineEditor.ts"),
     ],
     generatedPaths: [],
-    artifactPaths: [browserLogPath, invocationPath, truthPath, screenshotPath, resultPath],
+    artifactPaths: [
+      browserLogPath,
+      invocationPath,
+      parityPath,
+      truthPath,
+      parityTruthPath,
+      screenshotPath,
+      resultPath,
+    ],
     result,
     controlPlan: {
       control_id: control.control_id,
@@ -279,4 +343,73 @@ function locate(timeline: Timeline, uuid: string) {
     }
   }
   return null;
+}
+
+function proveParityPersistence(
+  artifactDir: string,
+  invocations: OpInvocation[],
+  targetUuid: string,
+) {
+  const mediaDir = join(artifactDir, "parity-media");
+  mkdirSync(mediaDir, { recursive: true });
+  const media = ["left.mov", "alpha.mov", "right.mov", "overlay.mov"].map((name) =>
+    join(mediaDir, name),
+  );
+  for (const path of media) writeFileSync(path, "component parity fixture\n");
+
+  const fixtureIr = timeline(VERTICAL, {
+    video: [
+      videoTrack(
+        clip(media[0] as string, { id: "left", in: 10, out: 39, length: 100 }),
+        clip(media[1] as string, { id: targetUuid, in: 10, out: 39, length: 100 }),
+        clip(media[2] as string, { id: "clip-b", in: 10, out: 39, length: 100 }),
+      ),
+      // Ends before Alpha's frame-30 ripple seam. That makes ripple trim lossless
+      // while still giving the cross-track move a real destination to overwrite.
+      videoTrack(clip(media[3] as string, { id: "overlay", dur: 15, length: 100 })),
+    ],
+  });
+  // Browser fixture track IDs are part of the keyboard invocation contract. The
+  // serializer chooses positional playlist IDs, so rename the second playlist in
+  // this isolated input document before parsing it into the session engine.
+  const baselineXml = toMlt(fixtureIr).replaceAll("playlist1", "v2");
+
+  return invocations.map((invocation, index) => {
+    const family = `${index + 1}-${invocation.op}${index === 6 ? "-cross-track" : ""}`;
+    const timelinePath = join(artifactDir, `parity-${family}.mlt`);
+    writeFileSync(timelinePath, baselineXml);
+    const beforeHash = hashFile(timelinePath);
+    const store = new SessionStore();
+    const session = store.get(timelinePath, (path) => readFileSync(path, "utf8"));
+    const beforeIr = JSON.stringify(session.ir);
+    const outcome = applyOp(session, invocation);
+    if (!outcome.ok) {
+      throw new Error(`parity ${family} failed: ${outcome.kind}: ${outcome.detail}`);
+    }
+    const inverse = session.undoStack.at(-1)?.invocation ?? null;
+    writeFileSync(timelinePath, serializeSession(session));
+    markSaved(session);
+    const afterHash = hashFile(timelinePath);
+    const reparsed = fromMlt(readFileSync(timelinePath, "utf8"));
+    const placement = locate(reparsed, targetUuid);
+    if (beforeHash === afterHash || !placement || !inverse) {
+      throw new Error(`parity ${family} did not produce persisted, reparsable timeline truth`);
+    }
+    const undone = undoSession(session);
+    if (!undone.ok || JSON.stringify(session.ir) !== beforeIr) {
+      throw new Error(`parity ${family} inverse did not restore the exact starting IR`);
+    }
+    return {
+      family,
+      invocation,
+      touched_timeline_uri: timelinePath,
+      before_mlt_hash: beforeHash,
+      after_mlt_hash: afterHash,
+      parsed_ir: placement,
+      consequences: outcome.consequences,
+      diagnostics: outcome.diagnostics,
+      inverse,
+      inverse_restored_exact_ir: true,
+    };
+  });
 }

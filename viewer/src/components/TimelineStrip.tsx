@@ -136,6 +136,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
   const [announcement, setAnnouncement] = useState("");
   const [editMode, setEditMode] = useState<{ clipId: string; target: EditTarget } | null>(null);
   const optionRefs = useRef(new Map<string, HTMLDivElement>());
+  const regionRef = useRef<HTMLElement>(null);
   const previousClipIds = useRef<string[]>([]);
   const editorRef = useRef(editor);
   editorRef.current = editor;
@@ -144,6 +145,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
     clipId: string;
     expectedRevision: number;
     undoCount: number;
+    failed: boolean;
   } | null>(null);
   const lastBoundaryRef = useRef<string | null>(null);
   const burstRef = useRef<{
@@ -153,6 +155,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
     meta: boolean;
     timer: number | null;
   } | null>(null);
+  const flushPromiseRef = useRef<Promise<boolean> | null>(null);
 
   // Measure before paint so the initial fit uses the real pane width (no scale flash).
   useLayoutEffect(() => {
@@ -275,7 +278,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
   // dragged clip's own edges so it doesn't snap to itself.
   const snapCandidates = useMemo(() => {
     const set = new Set<number>([0]);
-    const draggedUuid = drag?.gesture.uuid;
+    const draggedUuid = drag?.gesture.uuid ?? editMode?.clipId;
     for (const track of [...timeline.tracks.video, ...timeline.tracks.audio]) {
       for (const p of placeItems(track)) {
         if (p.item.kind !== "clip") continue;
@@ -286,7 +289,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
     }
     set.add(clock.getSnapshot().currentFrame);
     return [...set];
-  }, [timeline, drag, clock]);
+  }, [timeline, drag, editMode?.clipId, clock]);
 
   const clips = useMemo(() => selectableClips(timeline), [timeline]);
   const entryId =
@@ -313,7 +316,10 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         .find((id) => currentIds.includes(id));
       const destination = following ?? previous ?? currentIds[0];
       if (destination) focusClip(destination);
-      else editor.select(null);
+      else {
+        editor.select(null);
+        window.requestAnimationFrame(() => regionRef.current?.focus());
+      }
     }
     previousClipIds.current = currentIds;
   }, [clips, editor.select, focusClip, selectedId]);
@@ -327,61 +333,74 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
     setAnnouncement(clipAccessibleName(clip, editorRef.current.timeline, blocking));
   }, []);
 
-  const flushBurst = useCallback(async (): Promise<boolean> => {
-    const burst = burstRef.current;
-    burstRef.current = null;
-    if (!burst) return true;
-    if (burst.timer != null) window.clearTimeout(burst.timer);
-    const transaction = transactionRef.current;
-    const mode = editMode;
-    if (!transaction || !mode || transaction.clipId !== mode.clipId) return false;
-    const result = keyboardInvocation({
-      timeline: editorRef.current.timeline,
-      clipId: mode.clipId,
-      target: mode.target,
-      dx: burst.dx,
-      alt: burst.alt,
-      meta: burst.meta,
-      snapEnabled,
-      pxPerFrame,
-      snapCandidates,
-    });
-    if (!result) {
-      setAnnouncement("The selected clip is no longer available");
-      return false;
-    }
-    if (!result.invocation) {
-      const limitation = result.limitation ?? "No timeline change";
-      if (lastBoundaryRef.current !== limitation) setAnnouncement(limitation);
-      lastBoundaryRef.current = limitation;
+  const flushBurst = useCallback((): Promise<boolean> => {
+    if (flushPromiseRef.current) return flushPromiseRef.current;
+    const work = (async (): Promise<boolean> => {
+      const burst = burstRef.current;
+      burstRef.current = null;
+      if (!burst) return transactionRef.current?.failed !== true;
+      if (burst.timer != null) window.clearTimeout(burst.timer);
+      const transaction = transactionRef.current;
+      const mode = editMode;
+      if (!transaction || !mode || transaction.clipId !== mode.clipId) return false;
+      const result = keyboardInvocation({
+        timeline: editorRef.current.timeline,
+        clipId: mode.clipId,
+        target: mode.target,
+        dx: burst.dx,
+        alt: burst.alt,
+        meta: burst.meta,
+        snapEnabled,
+        pxPerFrame,
+        snapCandidates,
+      });
+      if (!result) {
+        transaction.failed = true;
+        setAnnouncement("The selected clip is no longer available");
+        return false;
+      }
+      if (!result.invocation) {
+        transaction.failed = false;
+        const limitation = result.limitation ?? "No timeline change";
+        if (lastBoundaryRef.current !== limitation) setAnnouncement(limitation);
+        lastBoundaryRef.current = limitation;
+        return true;
+      }
+      const response = await editorRef.current.commit(result.invocation, {
+        author: transaction.author,
+      });
+      if (!response) {
+        transaction.failed = true;
+        const error = editorRef.current.lastError;
+        setAnnouncement(error ? `${error.kind}: ${error.detail}` : "Timeline edit failed");
+        return false;
+      }
+      transaction.expectedRevision = response.revision;
+      transaction.undoCount++;
+      transaction.failed = false;
+      lastBoundaryRef.current = null;
+      const direction = result.appliedDx > 0 ? "+" : "";
+      const updated = findClip(response.ir, mode.clipId);
+      const item = updated?.placed.item;
+      const resultingRange =
+        updated && item?.kind === "clip"
+          ? `, ${trackLabel(updated.track, response.ir)}, timeline ${updated.placed.start} to ${updated.placed.start + updated.placed.length - 1}, source ${item.in} to ${item.out}`
+          : "";
+      setAnnouncement(
+        `${result.tool} ${direction}${result.appliedDx} frames${resultingRange}${result.snappedTo == null ? "" : `, snapped to frame ${result.snappedTo}`}${burst.alt ? ", ripple modifier" : ""}${burst.meta ? ", roll or slide modifier" : ""}`,
+      );
       return true;
-    }
-    const response = await editorRef.current.commit(result.invocation, {
-      author: transaction.author,
+    })();
+    flushPromiseRef.current = work;
+    void work.finally(() => {
+      if (flushPromiseRef.current === work) flushPromiseRef.current = null;
     });
-    if (!response) {
-      const error = editorRef.current.lastError;
-      setAnnouncement(error ? `${error.kind}: ${error.detail}` : "Timeline edit failed");
-      return false;
-    }
-    transaction.expectedRevision = response.revision;
-    transaction.undoCount++;
-    lastBoundaryRef.current = null;
-    const direction = result.appliedDx > 0 ? "+" : "";
-    const updated = findClip(response.ir, mode.clipId);
-    const item = updated?.placed.item;
-    const resultingRange =
-      updated && item?.kind === "clip"
-        ? `, ${trackLabel(updated.track, response.ir)}, timeline ${updated.placed.start} to ${updated.placed.start + updated.placed.length - 1}, source ${item.in} to ${item.out}`
-        : "";
-    setAnnouncement(
-      `${result.tool} ${direction}${result.appliedDx} frames${resultingRange}${result.snappedTo == null ? "" : `, snapped to frame ${result.snappedTo}`}${burst.alt ? ", ripple modifier" : ""}${burst.meta ? ", roll or slide modifier" : ""}`,
-    );
-    return true;
+    return work;
   }, [editMode, pxPerFrame, snapCandidates, snapEnabled]);
 
   const scheduleBurst = useCallback(
     (key: "ArrowLeft" | "ArrowRight", step: number, alt: boolean, meta: boolean) => {
+      if (transactionRef.current) transactionRef.current.failed = false;
       const existing = burstRef.current;
       if (existing && (existing.key !== key || existing.alt !== alt || existing.meta !== meta)) {
         void flushBurst();
@@ -408,7 +427,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
     const mode = editMode;
     const transaction = transactionRef.current;
     if (!mode || !transaction) return;
-    await flushBurst();
+    if (!(await flushBurst())) return;
     if (editorRef.current.revision !== transaction.expectedRevision) {
       setAnnouncement("Cancel refused: the timeline changed outside this keyboard edit session");
       return;
@@ -446,6 +465,28 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
   const onClipKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>, id: string) => {
       const meta = event.metaKey || event.ctrlKey;
+      if (meta && (event.key === "z" || event.key === "Z")) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.shiftKey) {
+          void editorRef.current.redo(humanHistoryOptions(editorRef.current.nextRedoAuthor));
+        } else {
+          void editorRef.current.undo(humanHistoryOptions(editorRef.current.nextUndoAuthor));
+        }
+        return;
+      }
+      if (meta && (event.key === "y" || event.key === "Y")) {
+        event.preventDefault();
+        event.stopPropagation();
+        void editorRef.current.redo(humanHistoryOptions(editorRef.current.nextRedoAuthor));
+        return;
+      }
+      if (meta && (event.key === "s" || event.key === "S")) {
+        event.preventDefault();
+        event.stopPropagation();
+        void editorRef.current.save();
+        return;
+      }
       if (!editMode) {
         if (
           event.key === "ArrowLeft" ||
@@ -471,6 +512,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
             clipId: id,
             expectedRevision: editorRef.current.revision,
             undoCount: 0,
+            failed: false,
           };
           setEditMode({ clipId: id, target: "body" });
           setAnnouncement(
@@ -517,7 +559,8 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
       ) {
         event.preventDefault();
         event.stopPropagation();
-        void flushBurst().then(async () => {
+        void flushBurst().then(async (flushed) => {
+          if (!flushed) return;
           const transaction = transactionRef.current;
           const invocation = adjacentTrackMove(
             editorRef.current.timeline,
@@ -539,7 +582,8 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
       } else if (event.key === "Enter") {
         event.preventDefault();
         event.stopPropagation();
-        void flushBurst().then(() => {
+        void flushBurst().then((flushed) => {
+          if (!flushed) return;
           setAnnouncement("Keyboard edit committed");
           leaveEditMode(id);
         });
@@ -817,6 +861,8 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
 
   return (
     <section
+      ref={regionRef}
+      tabIndex={-1}
       aria-label="Timeline editor"
       aria-describedby="timeline-keyboard-help"
       style={{ display: "flex", flexDirection: "column", background: "#0a0b0f" }}
