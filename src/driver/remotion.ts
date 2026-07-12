@@ -20,8 +20,12 @@
 // shows only the graphic and the footage underneath vanishes. The produced
 // pix_fmt is yuva444p12le (ProRes 4444 is 12-bit native; the 10le request
 // coerces to 12le) — it HAS an alpha plane, which is the thing that matters.
-import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { runtimeChildEnvironment } from "../runtime/environment";
+import { packageMode, resolveRuntimeResourcePath, runtimeResourceRoot } from "../runtime/layout";
+import { resolveBin } from "./melt";
 
 /** The repo root (two levels up from `src/driver/`). */
 function repoRoot(): string {
@@ -31,7 +35,10 @@ function repoRoot(): string {
 
 /** The default Remotion entry — `<repo>/remotion/src/index.ts`. */
 export function defaultRemotionEntry(): string {
-  return join(repoRoot(), "remotion", "src", "index.ts");
+  const packaged = runtimeResourceRoot("remotion");
+  return packaged
+    ? resolveRuntimeResourcePath("remotion/src/index.ts")
+    : join(repoRoot(), "remotion", "src", "index.ts");
 }
 
 /** Resolve the Remotion binary: the env override, then the workspace's pinned
@@ -39,6 +46,7 @@ export function defaultRemotionEntry(): string {
  *  the workspace pin is the license-/version-correct one. Returns `null` if no
  *  binary is found, so the caller can return a typed remediation. */
 export function resolveRemotionBin(override?: string): string | null {
+  if (packageMode()) return resolveRuntimeResourcePath("node/bin/node");
   if (override) return override;
   const env = process.env.VEAN_REMOTION_BIN;
   if (env) return env;
@@ -52,6 +60,13 @@ export function resolveRemotionBin(override?: string): string | null {
  *  bundled workspace when the project has none. The binary is the resolved
  *  workspace's own pinned install (or the env override). */
 export function remotionWorkspaceForRepo(repo: string): { entry: string; bin: string | null } {
+  if (packageMode()) {
+    const manifest = join(repo, "vean.remotion-workspace.json");
+    if (existsSync(manifest)) {
+      return { entry: validateRemotionWorkspace(repo), bin: resolveRemotionBin() };
+    }
+    return { entry: defaultRemotionEntry(), bin: resolveRemotionBin() };
+  }
   const projectEntry = join(repo, "remotion", "src", "index.ts");
   if (existsSync(projectEntry)) {
     const projectBin = join(repo, "remotion", "node_modules", ".bin", "remotion");
@@ -61,6 +76,88 @@ export function remotionWorkspaceForRepo(repo: string): { entry: string; bin: st
     };
   }
   return { entry: defaultRemotionEntry(), bin: resolveRemotionBin() };
+}
+
+function workspaceFiles(root: string): string[] {
+  const result: string[] = [];
+  const visit = (dir: string) => {
+    for (const name of readdirSync(dir).sort()) {
+      if (name === ".git" || name === "out") continue;
+      const path = join(dir, name);
+      const stat = lstatSync(path);
+      if (stat.isSymbolicLink()) {
+        const resolved = realpathSync(path);
+        if (!resolved.startsWith(`${root}/`)) throw new Error(`escaping link: ${path}`);
+      } else if (stat.isDirectory()) visit(path);
+      else if (stat.isFile()) result.push(path);
+    }
+  };
+  visit(root);
+  return result;
+}
+
+export function remotionWorkspaceDependencyHash(workspace: string): string {
+  const root = realpathSync(workspace);
+  const hash = createHash("sha256");
+  for (const path of workspaceFiles(root)) {
+    if (path.endsWith("vean.remotion-workspace.json")) continue;
+    hash.update(path.slice(root.length + 1));
+    hash.update("\0");
+    hash.update(readFileSync(path));
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
+export function validateRemotionWorkspace(projectRoot: string): string {
+  try {
+    const root = realpathSync(projectRoot);
+    const manifestPath = join(root, "vean.remotion-workspace.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<string, unknown>;
+    if (manifest.schema_version !== "vean.remotion-workspace/1") throw new Error("schema");
+    if (
+      manifest.node !== "24.15.0" ||
+      manifest.remotion !== "4.0.484" ||
+      manifest.react !== "19.2.7"
+    ) {
+      throw new Error("version");
+    }
+    if (typeof manifest.entry !== "string" || !manifest.entry) throw new Error("entry");
+    const entry = realpathSync(join(root, manifest.entry));
+    if (!entry.startsWith(`${root}/`) || !statSync(entry).isFile())
+      throw new Error("entry containment");
+    const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
+      scripts?: Record<string, string>;
+      dependencies?: Record<string, string>;
+    };
+    if (
+      packageJson.dependencies?.remotion !== "4.0.484" ||
+      packageJson.dependencies?.react !== "19.2.7"
+    ) {
+      throw new Error("dependency versions");
+    }
+    for (const key of ["preinstall", "install", "postinstall", "prepare", "prepublish"]) {
+      if (packageJson.scripts?.[key]) throw new Error(`lifecycle script ${key}`);
+    }
+    if (existsSync(join(root, "node_modules", ".bin")))
+      throw new Error("project-local executable directory");
+    for (const path of workspaceFiles(root).filter((path) => /\.[cm]?[jt]sx?$/.test(path))) {
+      const source = readFileSync(path, "utf8");
+      if (/\b(?:import|export)\s*(?:\(|[^;]*?from\s*)["']https?:\/\//.test(source)) {
+        throw new Error(`network import ${path}`);
+      }
+    }
+    const dependencyHash = remotionWorkspaceDependencyHash(root);
+    if (manifest.dependency_tree_sha256 !== dependencyHash) throw new Error("dependency hash");
+    return entry;
+  } catch (error) {
+    throw new RemotionError(
+      "remotion-workspace",
+      [],
+      2,
+      `E_REMOTION_WORKSPACE_UNSUPPORTED: ${String(error)}`,
+    );
+  }
 }
 
 export type RemotionRenderOpts = {
@@ -122,6 +219,7 @@ async function spawnCapture(
     stdout: "pipe",
     stderr: "pipe",
     ...(cwd ? { cwd } : {}),
+    env: runtimeChildEnvironment(),
   });
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),
@@ -161,6 +259,37 @@ export function buildRenderArgs(
   return args;
 }
 
+export function buildPackagedRenderCommand(
+  entry: string,
+  compositionId: string,
+  outPath: string,
+  opts: { props?: Record<string, unknown>; frameRange?: [number, number] } = {},
+): { bin: string; args: string[]; cwd: string } {
+  const root = runtimeResourceRoot("remotion");
+  if (!root)
+    throw new RemotionError(
+      "remotion",
+      [],
+      2,
+      "E_RUNTIME_RESOURCE_MISSING: packaged Remotion root",
+    );
+  const runtimeRoot = resolve(root, "..");
+  const bin = resolveRuntimeResourcePath("node/bin/node");
+  const cli = resolveRuntimeResourcePath("remotion/node_modules/@remotion/cli/remotion-cli.js");
+  const browser = resolveRuntimeResourcePath("browser/chrome-headless-shell");
+  const ffmpeg = resolveRuntimeResourcePath("remotion/binaries/ffmpeg");
+  resolveRuntimeResourcePath("remotion/binaries/ffprobe");
+  const args = [
+    cli,
+    ...buildRenderArgs(entry, compositionId, resolve(outPath), opts),
+    `--browser-executable=${browser}`,
+    `--binaries-directory=${dirname(ffmpeg)}`,
+    "--chrome-mode=headless-shell",
+    "--log=error",
+  ];
+  return { bin, args, cwd: join(runtimeRoot, "remotion") };
+}
+
 /** ffprobe the pixel format of a produced clip — the alpha check. Reuses the
  *  same ffprobe call shape as the melt driver. Throws `RemotionError` on a
  *  nonzero ffprobe exit. */
@@ -176,8 +305,9 @@ export async function probePixFmt(path: string): Promise<string> {
     "default=nw=1",
     path,
   ];
-  const { code, stdout, stderr } = await spawnCapture("ffprobe", args);
-  if (code !== 0) throw new RemotionError("ffprobe", args, code, stderr);
+  const bin = resolveBin("ffprobe");
+  const { code, stdout, stderr } = await spawnCapture(bin, args);
+  if (code !== 0) throw new RemotionError(bin, args, code, stderr);
   return stdout.trim().replace(/^pix_fmt=/, "");
 }
 
@@ -211,16 +341,22 @@ export async function renderComposition(
   if (!existsSync(entry)) {
     throw new RemotionError("remotion", [entry], 2, `remotion entry not found: ${entry}`);
   }
-  const args = buildRenderArgs(entry, compositionId, resolve(outPath), {
+  const renderOpts = {
     props: opts.props,
     frameRange: opts.frameRange,
-  });
+  };
+  const packagedCommand = packageMode()
+    ? buildPackagedRenderCommand(entry, compositionId, resolve(outPath), renderOpts)
+    : null;
+  const args =
+    packagedCommand?.args ?? buildRenderArgs(entry, compositionId, resolve(outPath), renderOpts);
   // Run from the workspace root (entry is <workspace>/src/index.ts) so Remotion
   // resolves its root — and therefore public/ (staticFile) — against the
   // workspace, not wherever vean happened to be invoked.
-  const workspaceDir = resolve(dirname(entry), "..");
-  const { code, stderr } = await spawnCapture(bin, args, workspaceDir);
-  if (code !== 0) throw new RemotionError(bin, args, code, stderr);
+  const commandBin = packagedCommand?.bin ?? bin;
+  const workspaceDir = packagedCommand?.cwd ?? resolve(dirname(entry), "..");
+  const { code, stderr } = await spawnCapture(commandBin, args, workspaceDir);
+  if (code !== 0) throw new RemotionError(commandBin, args, code, stderr);
 
   const pixFmt = await probePixFmt(outPath);
   return {

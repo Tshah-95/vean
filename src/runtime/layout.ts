@@ -97,6 +97,13 @@ export function currentRuntimeLayout(): RuntimeLayout | null {
   return activeLayout;
 }
 
+export function resetRuntimeLayoutForTests(): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new RuntimeLayoutError("E_RUNTIME_LAYOUT_INVALID", "runtime reset is test-only");
+  }
+  activeLayout = null;
+}
+
 export function runtimeMode(): RuntimeLayout["mode"] {
   return activeLayout?.mode ?? "development";
 }
@@ -282,6 +289,27 @@ export function resolveRuntimeResource(id: string): string {
       id,
     );
   const verified = openVerifiedRuntimeResource(activeLayout, id);
+  verified.close();
+  return verified.path;
+}
+
+export function resolveRuntimeResourcePath(relativePath: string): string {
+  if (!activeLayout) {
+    throw new RuntimeLayoutError(
+      "E_RUNTIME_RESOURCE_MISSING",
+      "runtime layout is not configured",
+      relativePath,
+    );
+  }
+  const resource = activeLayout.resources.find((entry) => entry.relative_path === relativePath);
+  if (!resource) {
+    throw new RuntimeLayoutError(
+      "E_RUNTIME_RESOURCE_MISSING",
+      "resource path is not inventoried",
+      relativePath,
+    );
+  }
+  const verified = openVerifiedRuntimeResource(activeLayout, resource.id);
   verified.close();
   return verified.path;
 }

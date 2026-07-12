@@ -48,7 +48,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 // ───────────────────────────── config ──────────────────────────────────────
 
@@ -89,6 +89,10 @@ const LICENSES_DIR = join(OUT_DIR, "licenses");
 // ───────────────────────────── tiny utils ──────────────────────────────────
 
 const flags = new Set(process.argv.slice(2));
+const flagValue = (name: string): string | undefined => {
+  const index = process.argv.indexOf(name);
+  return index >= 0 ? process.argv[index + 1] : undefined;
+};
 const log = (m: string) => console.log(m);
 const step = (m: string) => console.log(`\n\x1b[1m▶ ${m}\x1b[0m`);
 const ok = (m: string) => console.log(`  \x1b[32m✓\x1b[0m ${m}`);
@@ -701,6 +705,21 @@ function clean(): void {
   ok("removed bin/ lib/ share/ licenses/ MANIFEST.json (kept README.md)");
 }
 
+function stageForPackage(targetRoot: string): void {
+  const target = resolve(targetRoot, "sidecars");
+  rmSync(target, { recursive: true, force: true });
+  cpSync(OUT_DIR, target, { recursive: true, dereference: true });
+  for (const marker of [
+    join(target, "lib", "mlt", ".vean-runtime"),
+    join(target, "share", "mlt", ".vean-runtime"),
+    join(target, "share", "mlt", "profiles", ".vean-runtime"),
+    join(target, "share", "mlt", "presets", ".vean-runtime"),
+  ]) {
+    writeFileSync(marker, "vean packaged MLT directory marker\n");
+  }
+  ok(`staged package sidecars → ${target}`);
+}
+
 function main(): void {
   if (process.platform !== "darwin") {
     die("bundle-sidecars currently supports macOS only (install_name_tool/codesign).");
@@ -741,6 +760,8 @@ function main(): void {
   );
 
   if (!flags.has("--no-verify")) verify(tools.triple);
+  const stage = flagValue("--stage");
+  if (stage) stageForPackage(resolve(stage));
   ok(`\x1b[32mDONE\x1b[0m in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 }
 
