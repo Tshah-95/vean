@@ -7,6 +7,8 @@
     "scripts/doctor-macos-driver.ts",
     "scripts/verify-macos.ts",
     "scripts/harness/macos-driver.ts",
+    "scripts/harness/macos-evidence-contract.ts",
+    "scripts/harness/macos-runner-policy.ts",
     "scripts/harness/native-macos-control.ts",
     "scripts/harness/macos-domain-truth.ts",
     "scripts/harness/macos-ledger-monitor.ts",

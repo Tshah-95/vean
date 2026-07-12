@@ -16,7 +16,10 @@ import {
   runTimed,
   waitForAppium,
 } from "./harness/macos-driver";
+import { enforceMacosRunnerPolicy } from "./harness/macos-runner-policy";
 import { recordProcess } from "./harness/process-ledger";
+
+enforceMacosRunnerPolicy();
 
 const repo = resolve(import.meta.dirname, "..");
 const json = process.argv.includes("--json");

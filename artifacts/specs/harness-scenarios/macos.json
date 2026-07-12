@@ -3,6 +3,17 @@
   "suite": "native-macos-shell-development",
   "maxInstances": 1,
   "authority": "Appium 3 / Mac2 / XCTest native accessibility tree",
+  "runner_policy": {
+    "class": "dedicated macOS GUI login session/runner",
+    "shared_or_actively_used_desktop_allowed": false,
+    "required_environment": {
+      "VEAN_ALLOW_INTERACTIVE_MACOS_AUTOMATION": "1",
+      "VEAN_MACOS_RUNNER_CLASS": "dedicated"
+    },
+    "default_failure": "E_INTERACTIVE_DESKTOP_OPT_IN",
+    "preflight_boundary": "before fixture, build, Appium, WDA, Xcode, or Vean launch",
+    "applies_to": ["H06 development Mac2 smoke", "H08R post-sign Mac2 smoke"]
+  },
   "interaction_contract": {
     "version": "timeline-a11y-v1",
     "path": "artifacts/specs/timeline-keyboard-accessibility-contract-v1.md",

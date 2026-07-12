@@ -1,18 +1,92 @@
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { $, browser, expect } from "@wdio/globals";
 import { describe, it } from "mocha";
 import { bundleIdentifier, childPids, processIdentity } from "../tauri/runtime";
 import {
+  NATIVE_ELEMENT_TYPE,
+  NATIVE_PANEL_ROOT_TYPES,
   appProcess,
+  focusedEnabledTextFieldPredicate,
   nativeInventory,
+  nativeInventoryFromSource,
+  nativePredicate,
   readMacosContext,
   semanticElement,
   writeMacosResult,
 } from "./runtime";
 
-const MENU_BAR_ITEM = "XCUIElementTypeMenuBarItem";
-const MENU_ITEM = "XCUIElementTypeMenuItem";
-const BUTTON = "XCUIElementTypeButton";
+const MENU_BAR_ITEM = NATIVE_ELEMENT_TYPE.MenuBarItem;
+const MENU_ITEM = NATIVE_ELEMENT_TYPE.MenuItem;
+const BUTTON = NATIVE_ELEMENT_TYPE.Button;
+
+async function goToFolderLocationField() {
+  const matchedRoots: Array<{
+    rootType: number;
+    rootIndex: number;
+    field: WebdriverIO.Element;
+  }> = [];
+  const rootInventory: Array<{
+    rootType: number;
+    roots: number;
+    displayedRoots: number;
+    focusedEnabledTextFields: number[];
+  }> = [];
+
+  for (const rootType of NATIVE_PANEL_ROOT_TYPES) {
+    const roots = await browser.$$(nativePredicate(rootType));
+    const inventory = {
+      rootType,
+      roots: await roots.length,
+      displayedRoots: 0,
+      focusedEnabledTextFields: [] as number[],
+    };
+    let rootIndex = 0;
+    for await (const root of roots) {
+      if (await root.isDisplayed()) {
+        inventory.displayedRoots += 1;
+        const fields = await root.$$(focusedEnabledTextFieldPredicate());
+        const fieldCount = await fields.length;
+        inventory.focusedEnabledTextFields.push(fieldCount);
+        if (fieldCount === 1) {
+          const field = await fields[0]?.getElement();
+          if (field) matchedRoots.push({ rootType, rootIndex, field });
+        }
+      }
+      rootIndex += 1;
+    }
+    rootInventory.push(inventory);
+  }
+
+  return { matchedRoots, rootInventory };
+}
+
+async function writeGoToFolderDiagnostic(
+  context: ReturnType<typeof readMacosContext>,
+  rootInventory: unknown,
+): Promise<void> {
+  const source = await browser.getPageSource();
+  const native = nativeInventoryFromSource(source);
+  writeFileSync(join(context.artifactDir, "go-to-folder-page-source.xml"), source, {
+    mode: 0o600,
+  });
+  writeFileSync(
+    join(context.artifactDir, "go-to-folder-inventory.json"),
+    `${JSON.stringify(
+      {
+        native: {
+          windows: native.windows,
+          dialogs: native.dialogs,
+          sheets: native.sheets,
+        },
+        panelRoots: rootInventory,
+      },
+      null,
+      2,
+    )}\n`,
+    { mode: 0o600 },
+  );
+}
 
 describe("Vean AppKit-owned shell", () => {
   it("drives native menus, file panels, focus, window close, and quit semantically", async () => {
@@ -23,7 +97,7 @@ describe("Vean AppKit-owned shell", () => {
     if (initial.windows !== 1)
       throw new Error(`expected one native window, got ${initial.windows}`);
     const window = await $(
-      "-ios predicate string:elementType == XCUIElementTypeWindow AND (title == 'vean' OR label == 'vean')",
+      nativePredicate(NATIVE_ELEMENT_TYPE.Window, "title == 'vean' OR label == 'vean'"),
     );
     await window.waitForExist();
     await expect(window).toBeDisplayed();
@@ -38,7 +112,10 @@ describe("Vean AppKit-owned shell", () => {
     const file = await semanticElement(MENU_BAR_ITEM, "File");
     await file.click();
     let openProject = await $(
-      `-ios predicate string:elementType == ${MENU_ITEM} AND (title == '${context.expectedMenuLabel}' OR label == '${context.expectedMenuLabel}')`,
+      nativePredicate(
+        MENU_ITEM,
+        `title == '${context.expectedMenuLabel}' OR label == '${context.expectedMenuLabel}'`,
+      ),
     );
     if (!(await openProject.isExisting())) {
       throw new Error(
@@ -67,19 +144,31 @@ describe("Vean AppKit-owned shell", () => {
     }
 
     await browser.keys(["Shift", "Command", "g"]);
-    await browser.waitUntil(
-      async () => {
-        const fields = browser.$$("-ios predicate string:elementType == XCUIElementTypeTextField");
-        return (await fields.length) === 1;
-      },
-      {
-        timeout: 15_000,
-        timeoutMsg: "Go-to-folder sheet did not expose exactly one semantic text field",
-      },
-    );
-    const fields = browser.$$("-ios predicate string:elementType == XCUIElementTypeTextField");
-    const location = await fields[0];
-    if (!location) throw new Error("Go-to-folder text field disappeared");
+    let location: WebdriverIO.Element | undefined;
+    let lastRootInventory: unknown = [];
+    await browser
+      .waitUntil(
+        async () => {
+          const lookup = await goToFolderLocationField();
+          lastRootInventory = lookup.rootInventory;
+          if (lookup.matchedRoots.length !== 1) return false;
+          location = lookup.matchedRoots[0]?.field;
+          return location !== undefined;
+        },
+        {
+          timeout: 15_000,
+          timeoutMsg:
+            "Go-to-folder native sheet/panel did not expose exactly one focused, enabled semantic text field",
+        },
+      )
+      .catch(async (error) => {
+        await writeGoToFolderDiagnostic(context, lastRootInventory);
+        throw error;
+      });
+    if (!location) {
+      await writeGoToFolderDiagnostic(context, lastRootInventory);
+      throw new Error("Go-to-folder semantic text field disappeared");
+    }
     await location.setValue(context.projectRoot);
     await browser.keys(["Enter"]);
     const open = await semanticElement(BUTTON, "Open", 15_000);
@@ -111,11 +200,13 @@ describe("Vean AppKit-owned shell", () => {
     await browser.saveScreenshot(screenshotPath);
 
     const closeButton = await window.$(
-      "-ios predicate string:elementType == XCUIElementTypeButton AND (title CONTAINS[c] 'close' OR label CONTAINS[c] 'close')",
+      nativePredicate(NATIVE_ELEMENT_TYPE.Button, "identifier == '_XCUI:CloseWindow'"),
     );
     await closeButton.waitForExist();
     const closeName =
-      (await closeButton.getAttribute("title")) || (await closeButton.getAttribute("label"));
+      (await closeButton.getAttribute("identifier")) ||
+      (await closeButton.getAttribute("title")) ||
+      (await closeButton.getAttribute("label"));
     await closeButton.click();
     await browser.waitUntil(async () => (await nativeInventory()).windows === 0, {
       timeout: 15_000,
@@ -162,7 +253,7 @@ describe("Vean AppKit-owned shell", () => {
     const appMenu = await semanticElement(MENU_BAR_ITEM, "vean");
     await appMenu.click();
     const quit = await $(
-      `-ios predicate string:elementType == ${MENU_ITEM} AND (title BEGINSWITH 'Quit' OR label BEGINSWITH 'Quit')`,
+      nativePredicate(MENU_ITEM, "title BEGINSWITH 'Quit' OR label BEGINSWITH 'Quit'"),
     );
     await quit.waitForExist();
     const quitName = (await quit.getAttribute("title")) || (await quit.getAttribute("label"));

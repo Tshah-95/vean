@@ -129,6 +129,12 @@ oracle execution, evidence refresh, and completion status.
 - Worktree: `lane/harness-h06-macos`
 - Starts: H05 or H05F actual-app branch merged
 - Owns: Appium Mac2 config, doctor, menu/dialog/window/accessibility scenarios
+- Runner contract: H06 Mac2 commands run only in a dedicated macOS GUI login
+  session/runner with no human desktop activity. Both
+  `VEAN_ALLOW_INTERACTIVE_MACOS_AUTOMATION=1` and
+  `VEAN_MACOS_RUNNER_CLASS=dedicated` are required; otherwise doctor and verify
+  fail closed with `E_INTERACTIVE_DESKTOP_OPT_IN` before fixture, build, driver,
+  or app launch. `--policy-only` validates this gate without claiming a Mac2 run.
 - Escalate: hosted runner cannot obtain required permissions; propose a prepared
   Mac lane with exact operational cost
 - Ready when: thin native suite runs serially and cleans app/dialog state.
@@ -174,6 +180,9 @@ oracle execution, evidence refresh, and completion status.
 - Owns: signing/notary/staple, updater E2E, final post-sign package/Mac2 smoke,
   installed-WKWebView policy proof, manual keyboard/VoiceOver assessment,
   immutable lineage
+- Runner contract: the H08R post-sign Mac2 smoke inherits H06's dedicated
+  macOS GUI session requirement and exact two-variable opt-in. It must never run
+  on a shared or actively used desktop.
 - Escalate: Apple/updater key custody, release authority, assessor availability
 - Ready when: all results reference one source-to-final lineage; vN to vN+1 and
   tamper/interruption/replay/downgrade cases pass; actual installed WKWebView

@@ -1,3 +1,5 @@
+import type { MacosRunnerPolicy } from "./macos-runner-policy";
+
 export type MacosShellTruthInput = {
   expected: {
     sourceSha: string;
@@ -30,6 +32,7 @@ export type MacosShellTruthInput = {
   };
   cleanupDetected: unknown[];
   developerStateUnchanged: boolean;
+  runnerPolicy: MacosRunnerPolicy;
 };
 
 function truthy(value: unknown): boolean {
@@ -58,6 +61,11 @@ export function evaluateMacosShellTruth(input: MacosShellTruthInput): Record<str
   const appPath = capabilities?.["appium:appPath"] ?? capabilities?.appPath;
   const ids = input.observed.scenarios?.map((candidate) => candidate.id).filter(Boolean) ?? [];
   return {
+    dedicatedRunnerPolicy:
+      input.runnerPolicy.ok === true &&
+      input.runnerPolicy.policy_predicate_met === true &&
+      input.runnerPolicy.observed.interactiveAutomationOptIn === true &&
+      input.runnerPolicy.observed.runnerClass === "dedicated",
     nativeResult: input.observed.ok === true,
     sourceAndFixture:
       input.observed.sourceSha === input.expected.sourceSha &&
@@ -103,6 +111,7 @@ export function evaluateMacosShellTruth(input: MacosShellTruthInput): Record<str
       Boolean(sidecar?.command?.includes("src/cli.ts preview")) &&
       Boolean(sidecar?.command?.includes(`--repo ${input.expected.projectRoot}`)),
     honestWindowLifecycle:
+      close?.closeAccessibleName === "_XCUI:CloseWindow" &&
       close?.windowsAfterClose === 0 &&
       close?.reopenSupportedByProduct === false &&
       close?.automationTerminateAfterClose === true &&

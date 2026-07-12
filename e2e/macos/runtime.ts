@@ -56,16 +56,40 @@ export function writeMacosResult(context: MacosRunContext, result: unknown): voi
 }
 
 export async function semanticElement(
-  elementType: string,
+  elementType: number,
   accessibleName: string,
   timeout = 15_000,
 ) {
   const escaped = accessibleName.replaceAll("\\", "\\\\").replaceAll("'", "\\'");
   const element = await $(
-    `-ios predicate string:elementType == ${elementType} AND (title == '${escaped}' OR label == '${escaped}')`,
+    nativePredicate(elementType, `title == '${escaped}' OR label == '${escaped}'`),
   );
   await element.waitForExist({ timeout });
   return element;
+}
+
+export const NATIVE_ELEMENT_TYPE = {
+  Window: 4,
+  Sheet: 5,
+  Dialog: 8,
+  Button: 9,
+  TextField: 49,
+  MenuItem: 54,
+  MenuBarItem: 56,
+} as const;
+
+export function nativePredicate(elementType: number, condition?: string): string {
+  if (!Number.isInteger(elementType)) throw new Error("native element type must be an integer");
+  return `-ios predicate string:elementType == ${elementType}${condition ? ` AND (${condition})` : ""}`;
+}
+
+export const NATIVE_PANEL_ROOT_TYPES = [
+  NATIVE_ELEMENT_TYPE.Sheet,
+  NATIVE_ELEMENT_TYPE.Dialog,
+] as const;
+
+export function focusedEnabledTextFieldPredicate(): string {
+  return nativePredicate(NATIVE_ELEMENT_TYPE.TextField, "focused == true AND enabled == true");
 }
 
 export async function nativeInventory(): Promise<{
@@ -75,11 +99,28 @@ export async function nativeInventory(): Promise<{
   sheets: number;
 }> {
   const source = await browser.getPageSource();
-  const count = (name: string) => source.split(`type=\"${name}\"`).length - 1;
+  return nativeInventoryFromSource(source);
+}
+
+export function nativeInventoryFromSource(source: string): {
+  source: string;
+  windows: number;
+  dialogs: number;
+  sheets: number;
+} {
   return {
     source,
-    windows: count("XCUIElementTypeWindow"),
-    dialogs: count("XCUIElementTypeDialog"),
-    sheets: count("XCUIElementTypeSheet"),
+    windows: countNativeElements(source, "XCUIElementTypeWindow"),
+    dialogs: countNativeElements(source, "XCUIElementTypeDialog"),
+    sheets: countNativeElements(source, "XCUIElementTypeSheet"),
   };
+}
+
+export type NativeElementName =
+  | "XCUIElementTypeWindow"
+  | "XCUIElementTypeDialog"
+  | "XCUIElementTypeSheet";
+
+export function countNativeElements(source: string, name: NativeElementName): number {
+  return source.match(new RegExp(`<${name}(?:\\s|>)`, "g"))?.length ?? 0;
 }

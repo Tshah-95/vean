@@ -6,6 +6,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -28,9 +29,13 @@ import {
   runTimed,
   waitForAppium,
 } from "./harness/macos-driver";
+import { nativeMacosOracleImplementationPaths } from "./harness/macos-evidence-contract";
+import { enforceMacosRunnerPolicy } from "./harness/macos-runner-policy";
 import { nativeMacosControlId, prepareNativeMacosControl } from "./harness/native-macos-control";
 import { recordProcess } from "./harness/process-ledger";
 import { runSelfUnderSupervisor } from "./harness/supervisor";
+
+const runnerPolicy = enforceMacosRunnerPolicy();
 
 const repo = resolve(import.meta.dirname, "..");
 if (process.platform !== "darwin") throw new Error("H06 native shell proof requires macOS");
@@ -55,6 +60,7 @@ mkdirSync(dirname(canary), { recursive: true });
 if (!Bun.file(canary).size) writeFileSync(canary, "poisoned-developer-state\n", { mode: 0o600 });
 const developerHash = hashFile(canary);
 const fixture = await createFixture({ sourceSha, developerCanary: canary });
+rmSync(fixture.descriptor.database, { force: true });
 const fixtureAppiumHome = join(fixture.root, "appium-home");
 const invocationId = (process.env.VEAN_HARNESS_CLAIM_RUN_ID ?? fixture.descriptor.runId).replace(
   /[^A-Za-z0-9_.-]/g,
@@ -424,6 +430,7 @@ const predicate = evaluateMacosShellTruth({
   observed: native,
   cleanupDetected: cleanup?.detected ?? ["cleanup missing"],
   developerStateUnchanged: hashFile(canary) === developerHash,
+  runnerPolicy,
 });
 if (!Object.values(predicate).every(Boolean)) {
   throw new Error(`native macOS predicate failed: ${JSON.stringify(predicate)}`);
@@ -444,7 +451,15 @@ const environment = {
     process.env.DISPLAY || process.env.TERM_PROGRAM || process.env.SSH_TTY === undefined,
   ),
 };
-const oracle = { ok: true, predicate, environment, cleanup, native, artifactDir: durableDir };
+const oracle = {
+  ok: true,
+  predicate,
+  runnerPolicy,
+  environment,
+  cleanup,
+  native,
+  artifactDir: durableDir,
+};
 const oraclePath = join(durableDir, "oracle.json");
 writeFileSync(oraclePath, `${JSON.stringify(oracle, null, 2)}\n`);
 writeVerifiedEvidence({
@@ -456,21 +471,7 @@ writeVerifiedEvidence({
   controlId: nativeMacosControlId,
   fixturePath: contextPath,
   commandPath: join(repo, "scripts/verify-macos.ts"),
-  implementationPaths: [
-    join(repo, "package.json"),
-    join(repo, "bun.lock"),
-    join(repo, "scripts/verify-macos.ts"),
-    join(repo, "scripts/doctor-macos-driver.ts"),
-    join(repo, "scripts/harness/macos-driver.ts"),
-    join(repo, "scripts/harness/macos-domain-truth.ts"),
-    join(repo, "scripts/harness/macos-ledger-monitor.ts"),
-    join(repo, "scripts/harness/native-macos-control.ts"),
-    join(repo, "wdio.macos.conf.ts"),
-    join(repo, "e2e/macos/runtime.ts"),
-    join(repo, "e2e/macos/native-shell.spec.ts"),
-    join(repo, "artifacts/specs/harness-scenarios/macos.json"),
-    join(repo, "app/src-tauri/src/lib.rs"),
-  ],
+  implementationPaths: nativeMacosOracleImplementationPaths.map((path) => join(repo, path)),
   generatedPaths: [
     nativeResultPath,
     join(durableDir, "native-shell.png"),
