@@ -4,14 +4,18 @@ import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export const VM_NAME = "vean-macos-dev";
 export const VM_CPU = 8;
@@ -23,13 +27,35 @@ export const REPOSITORY_URL = "https://github.com/Tshah-95/vean.git";
 export const GUEST_REPOSITORY = "/Users/admin/Github/vean-runner";
 export const DEFAULT_SSH_KEY = join(homedir(), ".ssh/vean_tart_ed25519");
 export const DEFAULT_KNOWN_HOSTS = join(homedir(), ".ssh/known_hosts.vean-tart");
-export const HEADLESS_RUN_ARGS = [
-  "run",
-  "--no-graphics",
-  "--no-audio",
-  "--no-clipboard",
-  VM_NAME,
-] as const;
+export const DEFAULT_STATE_DIR = join(homedir(), ".local/state/vean-vm");
+export const HEADLESS_RUN_ARGS = ["run", "--no-graphics", "--no-audio", "--no-clipboard"] as const;
+
+export type VmShare = {
+  name: string;
+  hostPath: string;
+};
+
+export type ShareConfig = {
+  version: 1;
+  shares: VmShare[];
+};
+
+export type LaunchPlan = {
+  version: 1;
+  vm: string;
+  args: string[];
+  shares: VmShare[];
+  shareConfigSha256: string;
+};
+
+type LaunchRecord = LaunchPlan & {
+  pid: number;
+  startedAt: string;
+};
+
+export type LaunchAssessment =
+  | { ok: true; status: "current" }
+  | { ok: false; status: "unknown" | "stale"; reason: string };
 
 type VmInfo = {
   OS: string;
@@ -48,6 +74,202 @@ type CommandResult = {
 
 function fail(message: string): never {
   throw new Error(message);
+}
+
+function stateDir(): string {
+  return resolve(process.env.VEAN_VM_STATE_DIR ?? DEFAULT_STATE_DIR);
+}
+
+function shareConfigPath(): string {
+  return join(stateDir(), "shares.json");
+}
+
+function launchRecordPath(): string {
+  return join(stateDir(), `${VM_NAME}.launch.json`);
+}
+
+function ensureStateDir(): string {
+  const directory = stateDir();
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  chmodSync(directory, 0o700);
+  return directory;
+}
+
+function writePrivateJson(path: string, value: unknown): void {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  chmodSync(dirname(path), 0o700);
+  const temporary = `${path}.tmp-${process.pid}`;
+  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(temporary, 0o600);
+  renameSync(temporary, path);
+  chmodSync(path, 0o600);
+}
+
+function isInside(candidate: string, root: string): boolean {
+  const child = relative(root, candidate);
+  return child === "" || (!child.startsWith(`..${sep}`) && child !== "..");
+}
+
+export function validateShareName(value: string): string {
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(value)) {
+    fail(
+      `invalid share name ${JSON.stringify(value)}; use a lowercase slug (letters, digits, hyphens; maximum 63 characters)`,
+    );
+  }
+  return value;
+}
+
+export function validateSharePath(value: string, home = homedir()): string {
+  if (!isAbsolute(value)) fail(`share path must be absolute: ${JSON.stringify(value)}`);
+  let canonical: string;
+  try {
+    canonical = realpathSync(value);
+  } catch {
+    fail(`share path must be an existing real directory: ${JSON.stringify(value)}`);
+  }
+  if (!lstatSync(canonical).isDirectory()) {
+    fail(`share path must be an existing real directory: ${JSON.stringify(value)}`);
+  }
+  if (canonical.includes(":")) {
+    fail(
+      `share path cannot contain ':' because Tart uses it as a mount-field delimiter: ${canonical}`,
+    );
+  }
+
+  const canonicalHome = realpathSync(home);
+  const forbiddenSystemRoots = ["/", "/Users", "/etc", "/private/etc", "/var/root"];
+  if (forbiddenSystemRoots.includes(canonical) || canonical === canonicalHome) {
+    fail(`refusing broad or sensitive share root: ${canonical}`);
+  }
+
+  const relativeToHome = relative(canonicalHome, canonical);
+  const firstHomeSegment = relativeToHome.split(sep)[0] ?? "";
+  if (isInside(canonical, canonicalHome) && firstHomeSegment.startsWith(".")) {
+    fail(`refusing sensitive dot-config path: ${canonical}`);
+  }
+  const sensitiveRoots = [
+    join(canonicalHome, "Library/Keychains"),
+    join(canonicalHome, "Library/Application Support"),
+  ];
+  if (sensitiveRoots.some((root) => isInside(canonical, root))) {
+    fail(`refusing sensitive host path: ${canonical}`);
+  }
+
+  if (existsSync(join(canonical, ".git"))) {
+    fail(`refusing Git repository root as a share: ${canonical}`);
+  }
+  return canonical;
+}
+
+export function parseShareSpecs(specs: readonly string[], home = homedir()): VmShare[] {
+  const seen = new Set<string>();
+  return specs.map((spec) => {
+    const separator = spec.indexOf("=");
+    if (separator <= 0 || separator === spec.length - 1) {
+      fail(`invalid share ${JSON.stringify(spec)}; expected name=/absolute/host/path`);
+    }
+    const name = validateShareName(spec.slice(0, separator));
+    if (seen.has(name)) fail(`duplicate share name: ${name}`);
+    seen.add(name);
+    return { name, hostPath: validateSharePath(spec.slice(separator + 1), home) };
+  });
+}
+
+function normalizeShareConfig(value: unknown): ShareConfig {
+  if (!value || typeof value !== "object") fail("invalid VM share configuration");
+  const input = value as { version?: unknown; shares?: unknown };
+  if (input.version !== 1 || !Array.isArray(input.shares)) {
+    fail("unsupported or invalid VM share configuration");
+  }
+  const seen = new Set<string>();
+  const shares = input.shares.map((entry) => {
+    if (!entry || typeof entry !== "object") fail("invalid VM share entry");
+    const share = entry as { name?: unknown; hostPath?: unknown };
+    if (typeof share.name !== "string" || typeof share.hostPath !== "string") {
+      fail("invalid VM share entry");
+    }
+    const name = validateShareName(share.name);
+    if (seen.has(name)) fail(`duplicate share name: ${name}`);
+    seen.add(name);
+    return { name, hostPath: validateSharePath(share.hostPath) };
+  });
+  return { version: 1, shares };
+}
+
+export function readShareConfig(path = shareConfigPath()): ShareConfig {
+  if (!existsSync(path)) return { version: 1, shares: [] };
+  const mode = statSync(path).mode & 0o777;
+  if (mode !== 0o600) fail(`VM share configuration must have mode 0600: ${path}`);
+  return normalizeShareConfig(JSON.parse(readFileSync(path, "utf8")));
+}
+
+export function writeShareConfig(
+  specs: readonly string[],
+  path = shareConfigPath(),
+  home = homedir(),
+): ShareConfig {
+  const config: ShareConfig = { version: 1, shares: parseShareSpecs(specs, home) };
+  writePrivateJson(path, config);
+  return config;
+}
+
+function shareConfigDigest(config: ShareConfig): string {
+  return createHash("sha256").update(JSON.stringify(config)).digest("hex");
+}
+
+export function buildLaunchPlan(shares: readonly VmShare[]): LaunchPlan {
+  const config: ShareConfig = { version: 1, shares: [...shares] };
+  return {
+    version: 1,
+    vm: VM_NAME,
+    args: [
+      ...HEADLESS_RUN_ARGS,
+      ...shares.map(({ name, hostPath }) => `--dir=${name}:${hostPath}:ro`),
+      VM_NAME,
+    ],
+    shares: [...shares],
+    shareConfigSha256: shareConfigDigest(config),
+  };
+}
+
+export function assessLaunchRecord(
+  expected: LaunchPlan,
+  recorded: unknown,
+  pidAlive = true,
+): LaunchAssessment {
+  if (!recorded || typeof recorded !== "object") {
+    return { ok: false, status: "unknown", reason: "no valid launch record exists" };
+  }
+  const candidate = recorded as Partial<LaunchRecord>;
+  if (
+    candidate.version !== 1 ||
+    candidate.vm !== VM_NAME ||
+    !Array.isArray(candidate.args) ||
+    !Array.isArray(candidate.shares) ||
+    typeof candidate.shareConfigSha256 !== "string" ||
+    !Number.isInteger(candidate.pid) ||
+    typeof candidate.startedAt !== "string"
+  ) {
+    return { ok: false, status: "unknown", reason: "launch record is malformed" };
+  }
+  if (!pidAlive) {
+    return { ok: false, status: "unknown", reason: "recorded Tart process is not alive" };
+  }
+  const actualPlan: LaunchPlan = {
+    version: 1,
+    vm: candidate.vm,
+    args: candidate.args,
+    shares: candidate.shares as VmShare[],
+    shareConfigSha256: candidate.shareConfigSha256,
+  };
+  if (JSON.stringify(actualPlan) !== JSON.stringify(expected)) {
+    return {
+      ok: false,
+      status: "stale",
+      reason: "running VM launch arguments do not match the current share configuration",
+    };
+  }
+  return { ok: true, status: "current" };
 }
 
 function run(
@@ -94,8 +316,8 @@ export function validateSourceRef(value: string): string {
   return value;
 }
 
-export function tartRunPlan(): readonly string[] {
-  return ["tart", ...HEADLESS_RUN_ARGS];
+export function tartRunPlan(shares: readonly VmShare[] = []): readonly string[] {
+  return ["tart", ...buildLaunchPlan(shares).args];
 }
 
 export function guestExecPlan(command: string): readonly string[] {
@@ -263,11 +485,13 @@ export function guestDoctorPlan(sourceRef = "main"): readonly string[] {
     'export PATH="$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.local/share/mise/shims:/opt/homebrew/opt/libxml2/bin:/opt/homebrew/bin:$PATH"',
     'test "$(bun --version)" = 1.3.14',
     'test "$(node --version)" = v24.15.0',
-    'rustup run 1.95.0 rustc --version | grep -q "^rustc 1.95.0"',
+    'rust_version="$(rustup run 1.95.0 rustc --version)"',
+    'case "$rust_version" in "rustc 1.95.0 "*) ;; *) printf "unexpected rustc version: %s\\n" "$rust_version" >&2; exit 1 ;; esac',
     'test "$(sw_vers -productVersion)" = 26.4',
     'test "$(sw_vers -buildVersion)" = 25E246',
     'test "$(sysctl -n hw.model)" = VirtualMac2,1',
-    'xcodebuild -version | grep -q "^Xcode 26.5$"',
+    'xcode_version="$(xcodebuild -version)"',
+    'case "$xcode_version" in "Xcode 26.5"$\'\\n\'*) ;; *) printf "unexpected Xcode version: %s\\n" "$xcode_version" >&2; exit 1 ;; esac',
     "command -v melt",
     "command -v ffmpeg",
     "command -v xmllint",
@@ -307,11 +531,50 @@ function assertConfigured(info = getVmInfo()): VmInfo {
   return info;
 }
 
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function currentLaunchAssessment(): LaunchAssessment {
+  const expected = buildLaunchPlan(readShareConfig().shares);
+  const path = launchRecordPath();
+  if (!existsSync(path)) return assessLaunchRecord(expected, undefined);
+  try {
+    if ((statSync(path).mode & 0o777) !== 0o600) {
+      return {
+        ok: false,
+        status: "unknown",
+        reason: "launch record permissions are not mode 0600",
+      };
+    }
+    const recorded = JSON.parse(readFileSync(path, "utf8")) as Partial<LaunchRecord>;
+    const pid = typeof recorded.pid === "number" ? recorded.pid : -1;
+    return assessLaunchRecord(expected, recorded, pid > 0 && processIsAlive(pid));
+  } catch {
+    return assessLaunchRecord(expected, undefined);
+  }
+}
+
+function assertLaunchCurrent(): void {
+  const assessment = currentLaunchAssessment();
+  if (!assessment.ok) {
+    fail(
+      `${VM_NAME} is running with ${assessment.status} launch/share configuration (${assessment.reason}); stop and restart it before using the guest`,
+    );
+  }
+}
+
 function assertRunning(): VmInfo {
   const info = assertConfigured();
   if (!info.Running || info.State !== "running") {
     fail(`${VM_NAME} is not running; use bun run vm:macos:start`);
   }
+  assertLaunchCurrent();
   resolveGuestConnection();
   return info;
 }
@@ -326,7 +589,13 @@ function doctor(hostOnly: boolean): void {
   const version = run("tart", ["--version"]).stdout.trim();
   if (!/^2\./.test(version)) fail(`unsupported Tart version ${version}; expected 2.x`);
   const report: Record<string, unknown> = { ok: true, tart: version, host: process.platform };
-  if (!hostOnly) report.vm = assertConfigured();
+  if (!hostOnly) {
+    const info = assertConfigured();
+    if (info.Running) assertLaunchCurrent();
+    report.vm = info;
+    report.launch = info.Running ? currentLaunchAssessment() : { status: "stopped" };
+    report.shares = readShareConfig().shares;
+  }
   print(report);
 }
 
@@ -355,6 +624,21 @@ function configure(image: string): void {
   print({ ok: true, vm: assertConfigured(), adopted: true });
 }
 
+function configureShares(specs: readonly string[]): void {
+  const path = shareConfigPath();
+  const config = writeShareConfig(specs, path);
+  const info = listVmNames().includes(VM_NAME) ? getVmInfo() : undefined;
+  const restartRequired = Boolean(info?.Running);
+  print({
+    ok: true,
+    config: path,
+    mode: "0600",
+    shares: config.shares,
+    restartRequired,
+    ...(restartRequired ? { action: "stop and restart the VM to apply these shares" } : {}),
+  });
+}
+
 function start(): void {
   const info = assertConfigured();
   if (info.Running) {
@@ -365,19 +649,34 @@ function start(): void {
   if (info.State !== "stopped") {
     fail(`refusing to start ${VM_NAME} from unexpected Tart state ${info.State}`);
   }
-  const stateDir = join(homedir(), ".local/state/vean-vm");
-  mkdirSync(stateDir, { recursive: true });
-  const logPath = join(stateDir, `${VM_NAME}.log`);
+  const directory = ensureStateDir();
+  const config = readShareConfig();
+  const plan = buildLaunchPlan(config.shares);
+  const logPath = join(directory, `${VM_NAME}.log`);
   const log = openSync(logPath, "a");
-  const child = spawn("tart", [...HEADLESS_RUN_ARGS], {
+  const child = spawn("tart", plan.args, {
     detached: true,
     stdio: ["ignore", log, log],
   });
   child.unref();
-  writeFileSync(join(stateDir, `${VM_NAME}.pid`), `${child.pid}\n`, { mode: 0o600 });
+  writeFileSync(join(directory, `${VM_NAME}.pid`), `${child.pid}\n`, { mode: 0o600 });
+  const record: LaunchRecord = {
+    ...plan,
+    pid: child.pid ?? fail("Tart runner did not return a process id"),
+    startedAt: new Date().toISOString(),
+  };
+  writePrivateJson(launchRecordPath(), record);
   tart(["ip", VM_NAME, "--resolver", "dhcp", "--wait", "300"]);
   assertRunning();
-  print({ ok: true, vm: VM_NAME, pid: child.pid, logPath, headless: true });
+  print({
+    ok: true,
+    vm: VM_NAME,
+    pid: child.pid,
+    logPath,
+    headless: true,
+    shares: config.shares,
+    launchRecord: launchRecordPath(),
+  });
 }
 
 function hostKeyMaterial(line: string): string | null {
@@ -491,8 +790,12 @@ function status(): void {
     info.CPU === VM_CPU &&
     info.Memory === VM_MEMORY_MB &&
     info.Disk === VM_DISK_GB;
-  print({ ok: configured, vm: VM_NAME, configured, info });
-  if (!configured) process.exitCode = 1;
+  const launch = info.Running
+    ? currentLaunchAssessment()
+    : ({ ok: true, status: "stopped" } as const);
+  const ok = configured && launch.ok;
+  print({ ok, vm: VM_NAME, configured, info, launch, shares: readShareConfig().shares });
+  if (!ok) process.exitCode = 1;
 }
 
 function runGuestScript(scriptPath: string, args: readonly string[]): void {
@@ -527,6 +830,39 @@ function doctorGuest(sourceRef: string): void {
   if (!command) fail("guest doctor plan is empty");
   runGuestCommand(command);
   print({ ok: true, vm: VM_NAME, guestReady: true, sourceRef });
+}
+
+export function verifySharesGuestCommand(shares: readonly VmShare[]): string {
+  const commands = ["set -euo pipefail"];
+  for (const { name } of shares) {
+    validateShareName(name);
+    const guestPath = `/Volumes/My Shared Files/${name}`;
+    commands.push(`share=${shellQuote(guestPath)}`);
+    commands.push('test -d "$share"');
+    commands.push('probe="$share/.vean-readonly-probe-$$"');
+    commands.push(
+      'if /usr/bin/touch "$probe" 2>/dev/null; then /bin/rm -f "$probe"; printf "share unexpectedly writable: %s\\n" "$share" >&2; exit 1; fi',
+    );
+  }
+  return commands.join("; ");
+}
+
+function verifyShares(): void {
+  assertRunning();
+  const shares = readShareConfig().shares;
+  if (shares.length === 0) {
+    fail("no read-only VM shares are configured; use bun run vm:macos:configure-shares");
+  }
+  runGuestCommand(verifySharesGuestCommand(shares));
+  print({
+    ok: true,
+    vm: VM_NAME,
+    verifiedReadOnly: true,
+    shares: shares.map(({ name }) => ({
+      name,
+      guestPath: `/Volumes/My Shared Files/${name}`,
+    })),
+  });
 }
 
 function collectEvidence(destination?: string): void {
@@ -565,12 +901,14 @@ function stop(): void {
   if (after.Running || after.State !== "stopped") {
     fail(`Tart did not stop ${VM_NAME} cleanly (state=${after.State})`);
   }
+  rmSync(launchRecordPath(), { force: true });
+  rmSync(join(stateDir(), `${VM_NAME}.pid`), { force: true });
   print({ ok: true, vm: VM_NAME, stopped: true });
 }
 
 function usage(): never {
   fail(
-    "usage: macos-vm.ts <doctor|configure|start|setup-ssh|status|bootstrap|doctor-guest|verify-native|collect-evidence|stop> [options]",
+    "usage: macos-vm.ts <doctor|configure|configure-shares|start|setup-ssh|status|bootstrap|doctor-guest|verify-shares|verify-native|collect-evidence|stop> [options]",
   );
 }
 
@@ -590,6 +928,9 @@ if (import.meta.main) {
         configure(imageIndex >= 0 ? (argv[imageIndex + 1] ?? usage()) : DEFAULT_IMAGE);
         break;
       }
+      case "configure-shares":
+        configureShares(argv);
+        break;
       case "start":
         start();
         break;
@@ -604,6 +945,9 @@ if (import.meta.main) {
         break;
       case "doctor-guest":
         doctorGuest(sourceRef);
+        break;
+      case "verify-shares":
+        verifyShares();
         break;
       case "verify-native":
         verifyNative(sourceRef, passthrough);

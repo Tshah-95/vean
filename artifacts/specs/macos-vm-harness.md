@@ -10,10 +10,12 @@ MB RAM, and a 200 GB sparse disk.
 ```sh
 bun run vm:macos:doctor -- --host-only
 bun run vm:macos:configure
+bun run vm:macos:configure-shares -- project-media=/absolute/path/to/media reference-assets=/absolute/path/to/assets
 bun run vm:macos:start
 bun run vm:macos:setup-ssh
 bun run vm:macos:bootstrap
 bun run vm:macos:doctor-guest
+bun run vm:macos:verify-shares
 ```
 
 `configure` clones the macOS Tahoe/Xcode image pinned at digest
@@ -78,6 +80,54 @@ a hard failure.
 `collect-evidence` copies only `.vean/harness/native-runs` through the selected
 guest transport into a mode-0600 archive under `.vean/vm-harness/evidence/` on the host.
 No shared writable repository or authenticated VM image is created.
+
+## Projects, media, and generated assets
+
+Code and project state always live on the guest APFS disk. Bootstrap creates a
+clean clone at `/Users/admin/Github/vean-runner`; clone a test project into the
+guest as a separate directory. Do not mount a host Git repository as the guest
+working copy. This preserves the clean-clone signal and prevents a guest test
+from changing host source, indexes, SQLite state, or build artifacts.
+
+Large immutable inputs can be exposed with read-only VirtioFS shares:
+
+```sh
+bun run vm:macos:configure-shares -- project-media=/absolute/path/to/media
+bun run vm:macos:stop
+bun run vm:macos:start
+bun run vm:macos:verify-shares
+```
+
+Each share appears at `/Volumes/My Shared Files/<name>`. Names are lowercase
+slugs. Paths are canonicalized and must be existing directories. The harness
+refuses duplicate/traversal names, Git repository roots, the home directory,
+sensitive dot-configuration trees, and broad system roots. The host-local
+configuration is mode 0600 under `~/.local/state/vean-vm/`; no personal path is
+committed. There is no writable-share option. `verify-shares` checks every
+mount exists and proves a write fails.
+
+Changing share configuration while the VM runs deliberately makes `start`,
+`status`, `doctor`, and guest commands fail until the VM is stopped and
+restarted. The exact Tart argument vector and share digest are recorded beside
+the configuration, so a VM started outside this harness is treated as unknown,
+not as if its media were mounted.
+
+Use this storage split for actual editing tests:
+
+- source code, the project clone, `.vean/vean.db`, dependency caches, render
+  caches, proxies, stills, and final renders: guest-local and writable;
+- camera originals, stock libraries, and stable fixture packs: read-only shared
+  folders;
+- small deterministic test assets: committed OSS-safe fixtures in the guest
+  clone, so CI and a fresh clone get identical inputs.
+
+For a project that already stores absolute host paths, do not recreate or
+mutate the host directory layout. Point project routes at the guest mount, for
+example `vean route set media:raw '/Volumes/My Shared Files/project-media'`,
+register it with `vean media root add`, and run `vean media relink --search`
+when catalog entries need reconnecting. If a third-party `.mlt` cannot use
+routes, make an explicit guest-local compatibility mapping to the read-only
+mount and document it with the test project; never make the host share writable.
 
 The guest is functional evidence for native behavior, not final physical-Mac
 GPU, codec, timing, camera, USB, Secure Enclave, or performance truth.
