@@ -44,6 +44,18 @@ export function listenerPid(port: number): number {
   return pid;
 }
 
+export function childPids(parentPid: number): number[] {
+  const result = execFileSync("pgrep", ["-P", String(parentPid)], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  return result
+    .trim()
+    .split("\n")
+    .map((value) => Number.parseInt(value, 10))
+    .filter(Number.isInteger);
+}
+
 export function processIdentity(pid: number): {
   pid: number;
   parentPid: number;

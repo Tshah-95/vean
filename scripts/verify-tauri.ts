@@ -11,7 +11,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { listenerPid, processIdentity } from "../e2e/tauri/runtime";
 import { fromMlt } from "../src/ir/parse";
 import type { Timeline } from "../src/ir/types";
 import {
@@ -250,6 +249,14 @@ type NativeResult = {
   sourceSha?: string;
   binary?: { observedPath?: string; observedHash?: string };
   process?: { pid?: number; observedBundleId?: string };
+  sidecar?: {
+    pid?: number;
+    parentPid?: number;
+    processGroup?: number;
+    processMarker?: string;
+    command?: string;
+  };
+  preview?: { port?: number; listenerPid?: number };
   window?: { finalUrl?: string };
   runtime?: { webkitVersion?: string };
   driver?: { port?: number; listenerPid?: number; sessionId?: string };
@@ -283,31 +290,12 @@ const afterTimelineHash = hashFile(timelinePath);
 const savePath = native.saveEnvelope?.path;
 const appPid = native.process?.pid;
 if (!Number.isInteger(appPid)) throw new Error("native evidence omitted the app PID");
-const directChildren = Bun.spawnSync(["pgrep", "-P", String(appPid)])
-  .stdout.toString()
-  .trim()
-  .split("\n")
-  .map((value) => Number.parseInt(value, 10))
-  .filter(Number.isInteger);
 const sidecarCommandFragments = [
   "src/cli.ts preview",
   "--no-open --prod",
   `--port ${fixture.descriptor.previewPort}`,
   `--repo ${fixture.descriptor.projectRoot}`,
 ];
-const sidecarCandidates = directChildren
-  .map(processIdentity)
-  .filter((identity) =>
-    sidecarCommandFragments.every((fragment) => identity.command.includes(fragment)),
-  );
-if (sidecarCandidates.length !== 1) {
-  throw new Error(
-    `expected one independently derived preview child: ${JSON.stringify(sidecarCandidates)}`,
-  );
-}
-const sidecar = sidecarCandidates[0];
-if (!sidecar) throw new Error("preview sidecar identity missing");
-const observedPreviewListenerPid = listenerPid(fixture.descriptor.previewPort);
 const identityPredicate = evaluateTauriIdentity({
   expectedBinaryPath: binaryPath,
   expectedBinaryHash: controlConfig.binaryHashOverride ?? binaryHash,
@@ -321,13 +309,13 @@ const identityPredicate = evaluateTauriIdentity({
   appPid: native.process?.pid,
   expectedPreviewPort: fixture.descriptor.previewPort + controlConfig.previewPortOffset,
   observedPreviewPort: fixture.descriptor.previewPort,
-  previewListenerPid: observedPreviewListenerPid,
-  sidecarPid: sidecar.pid,
-  sidecarParentPid: sidecar.parentPid,
-  sidecarProcessGroup: sidecar.processGroup,
-  sidecarProcessMarker: sidecar.processMarker,
+  previewListenerPid: native.preview?.listenerPid,
+  sidecarPid: native.sidecar?.pid,
+  sidecarParentPid: native.sidecar?.parentPid,
+  sidecarProcessGroup: native.sidecar?.processGroup,
+  sidecarProcessMarker: native.sidecar?.processMarker,
   expectedSidecarProcessMarker: `vean-sidecar-${appPid}-${fixture.descriptor.previewPort}`,
-  sidecarCommand: sidecar.command,
+  sidecarCommand: native.sidecar?.command,
   expectedSidecarCommandFragments: sidecarCommandFragments,
   expectedFinalUrl: controlConfig.finalUrlOverride ?? expectedFinalUrl,
   observedFinalUrl: native.window?.finalUrl,

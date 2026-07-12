@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { $, browser, expect } from "@wdio/globals";
 import {
   bundleIdentifier,
+  childPids,
   listenerPid,
   processIdentity,
   readContext,
@@ -88,13 +89,28 @@ describe("Vean's final localhost WKWebView", () => {
     await browser.saveScreenshot(screenshotPath);
 
     const appPid = listenerPid(context.webdriverPort);
-    const sidecarPid = listenerPid(context.previewPort);
+    const previewListenerPid = listenerPid(context.previewPort);
     const app = processIdentity(appPid);
-    const sidecar = processIdentity(sidecarPid);
+    const expectedSidecarCommandFragments = [
+      "src/cli.ts preview",
+      "--no-open --prod",
+      `--port ${context.previewPort}`,
+      `--repo ${context.projectRoot}`,
+    ];
+    const sidecarCandidates = childPids(appPid)
+      .map(processIdentity)
+      .filter((identity) =>
+        expectedSidecarCommandFragments.every((fragment) => identity.command.includes(fragment)),
+      );
+    if (sidecarCandidates.length !== 1) {
+      throw new Error(`expected one preview child, got ${JSON.stringify(sidecarCandidates)}`);
+    }
+    const sidecar = sidecarCandidates[0];
+    if (!sidecar) throw new Error("independently derived preview sidecar is missing");
     const appRecord = recordNativeProcess(context, appPid, `vean-h05-${context.runId}`);
     const sidecarRecord = recordNativeProcess(
       context,
-      sidecarPid,
+      sidecar.pid,
       `vean-sidecar-${appPid}-${context.previewPort}`,
     );
     const url = await browser.getUrl();
@@ -119,6 +135,7 @@ describe("Vean's final localhost WKWebView", () => {
         expectedBundleId: context.bundleId,
       },
       sidecar: { ...sidecar, ledgerProcessGroup: sidecarRecord.pgid },
+      preview: { port: context.previewPort, listenerPid: previewListenerPid },
       window: { label: "main", handles: windowHandles, finalUrl: url },
       runtime: {
         userAgent,
@@ -143,7 +160,11 @@ describe("Vean's final localhost WKWebView", () => {
     if (url !== context.expectedFinalUrl) {
       throw new Error(`unexpected final WKWebView URL: ${url}`);
     }
-    if (appPid === sidecarPid || windowHandles.length !== 1) {
+    if (
+      appPid === sidecar.pid ||
+      previewListenerPid !== sidecar.pid ||
+      windowHandles.length !== 1
+    ) {
       throw new Error("native process/window identity predicate failed");
     }
     writeNativeResult(context, result);
