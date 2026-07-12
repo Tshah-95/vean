@@ -1,0 +1,67 @@
+{
+  "program": "harness-contract-fixture",
+  "contract_version": "1.0.0",
+  "evidence_envelope_required_fields": [
+    "git_sha",
+    "git_tree_hash",
+    "git_status_clean",
+    "lockfile_hashes",
+    "generated_asset_hashes",
+    "oracle_implementation_hashes",
+    "command_implementation_path",
+    "command_implementation_hash",
+    "fixture_path",
+    "fixture_hash",
+    "scenario_ledger_hash",
+    "executable_app_dmg_update_hashes",
+    "platform_image_runtime_versions",
+    "start_timestamp",
+    "end_timestamp",
+    "run_id",
+    "parent_run_ids",
+    "parent_artifact_hashes"
+  ],
+  "aggregate_profiles": {
+    "developer": {
+      "contract_version": "1.0.0",
+      "required_claims": ["claim-demo"],
+      "implicit_skips_allowed": false
+    },
+    "macos": {
+      "contract_version": "1.0.0",
+      "inherits": "developer",
+      "required_claims": ["claim-demo"],
+      "implicit_skips_allowed": false
+    },
+    "release-candidate": {
+      "contract_version": "1.0.0",
+      "inherits": "macos",
+      "required_claims": ["claim-demo"],
+      "implicit_skips_allowed": false
+    },
+    "release": {
+      "contract_version": "1.0.0",
+      "inherits": "release-candidate",
+      "required_claims": ["claim-demo"],
+      "implicit_skips_allowed": false
+    }
+  },
+  "claims": [
+    {
+      "claim_id": "claim-demo",
+      "oracle_command": "bun fixture-oracle.ts",
+      "expected_predicate": "fixture passes",
+      "canonical_artifact_paths": ["fixture-oracle.ts"],
+      "oracle_implementation_paths": ["fixture-oracle.ts", "fixture-control.ts"],
+      "scenario_manifest": "scenario-ledger.json",
+      "negative_control": {
+        "control_id": "nc-demo",
+        "setup_command": "bun fixture-control.ts setup",
+        "cleanup_command": "bun fixture-control.ts cleanup",
+        "expected_oracle_exit": 1,
+        "expected_status": "failed",
+        "expected_reason_code": "SENSITIVITY_DEMO"
+      }
+    }
+  ]
+}

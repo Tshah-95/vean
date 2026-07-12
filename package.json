@@ -62,6 +62,8 @@
     "verify:live-hmr": "bun scripts/verify-live-hmr.ts",
     "verify:live-multi": "bun scripts/verify-live-multi.ts",
     "verify:live-error": "bun scripts/verify-live-error.ts",
+    "verify:harness": "bun scripts/verify-harness.ts",
+    "verify:all": "bun scripts/verify-harness.ts",
     "lsp": "bun src/bridge/lsp/server.ts",
     "mcp": "bun src/bridge/mcp/server.ts",
     "move2:e2e": "bun scripts/move2-e2e.ts",

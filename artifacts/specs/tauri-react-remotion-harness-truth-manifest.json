@@ -1,16 +1,14 @@
 {
   "program": "tauri-react-remotion-harness",
+  "contract_version": "1.0.0",
   "generated_at": "2026-07-11T23:03:59Z",
-  "status": "planned_verified_amended",
+  "status": "execution_h00_ready_downstream_open",
   "execution_gate": "H00 must implement the independent meta contract, immutable evidence envelope, structured sensitivity controls, scenario ledgers, and profile evaluator before downstream launch. H09A then lands CI bootstrap; H01/H02 may launch. H05 has an executable H05F fallback.",
   "source_of_truth": {
-    "product_invariants": [
-      "AGENTS.md",
-      "ROADMAP.md"
-    ],
+    "product_invariants": ["AGENTS.md", "ROADMAP.md"],
     "harness_claims": "artifacts/specs/tauri-react-remotion-harness-truth-manifest.json",
     "unit_registry": "artifacts/specs/tauri-react-remotion-harness-units.jsonl",
-    "runtime_evidence": "per-run structured evidence emitted by scripts/verify-harness.ts",
+    "runtime_evidence": ".vean/harness/<run-id> structured evidence emitted by scripts/verify-harness.ts",
     "scenario_manifests": "artifacts/specs/harness-scenarios/*.json",
     "release_lineage": "per-candidate immutable release BOM/lineage"
   },
@@ -20,7 +18,10 @@
     "git_status_clean",
     "lockfile_hashes",
     "generated_asset_hashes",
+    "oracle_implementation_hashes",
+    "command_implementation_path",
     "command_implementation_hash",
+    "fixture_path",
     "fixture_hash",
     "scenario_ledger_hash",
     "executable_app_dmg_update_hashes",
@@ -39,6 +40,7 @@
   },
   "aggregate_profiles": {
     "developer": {
+      "contract_version": "1.0.0",
       "required_claims": [
         "claim-static-owned-code",
         "claim-hermetic-runs",
@@ -47,20 +49,18 @@
         "claim-production-webview-policy",
         "claim-react-components",
         "claim-dom-accessibility",
-        "claim-browser-editor",
-        "claim-aggregate-composition"
+        "claim-browser-editor"
       ],
       "implicit_skips_allowed": false
     },
     "macos": {
+      "contract_version": "1.0.0",
       "inherits": "developer",
-      "required_claims": [
-        "claim-tauri-wkwebview",
-        "claim-native-macos-shell"
-      ],
+      "required_claims": ["claim-tauri-wkwebview", "claim-native-macos-shell"],
       "implicit_skips_allowed": false
     },
     "release-candidate": {
+      "contract_version": "1.0.0",
       "inherits": "macos",
       "required_claims": [
         "claim-live-media",
@@ -74,6 +74,7 @@
       "implicit_skips_allowed": false
     },
     "release": {
+      "contract_version": "1.0.0",
       "inherits": "release-candidate",
       "required_claims": [
         "claim-signed-release",
@@ -88,66 +89,20 @@
       "implicit_skips_allowed": false
     }
   },
-  "lane_terminal_states": [
-    "merged",
-    "equivalent",
-    "no_delta",
-    "discarded_with_reason"
-  ],
-  "claim_terminal_states": [
-    "verified",
-    "blocked_with_user_decision"
-  ],
+  "lane_terminal_states": ["merged", "equivalent", "no_delta", "discarded_with_reason"],
+  "claim_terminal_states": ["verified", "blocked_with_user_decision"],
   "claims": [
-    {
-      "claim_id": "claim-aggregate-composition",
-      "claim": "Each aggregate profile has explicit required claims, propagates failures, and rejects implicit skips.",
-      "oracle_command": "bun run verify:all --profile developer --json",
-      "expected_predicate": "profile membership/version is exact; child run IDs are current; every required child is verified",
-      "canonical_artifact_paths": [
-        "scripts/verify-harness.ts"
-      ],
-      "worker_lane_owner": "H00",
-      "verifier_owner": "check-contract",
-      "dispatch_class": "control-plane",
-      "current_status": "open",
-      "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
-      "scenario_manifest": null,
-      "negative_control": {
-        "control_id": "nc-aggregate-composition",
-        "setup_command": "bun run harness:mutate --control nc-aggregate-composition",
-        "mutation_or_fixture_hash": "required: recorded before_hash != mutated_hash and exact mutation manifest hash",
-        "oracle_command": "bun run verify:all --profile developer --json",
-        "expected_oracle_exit": 1,
-        "expected_status": "failed",
-        "expected_reason_code": "SENSITIVITY_AGGREGATE_COMPOSITION",
-        "cleanup_command": "bun run harness:mutate --restore nc-aggregate-composition",
-        "restoration_predicate": "restored_hash == before_hash and baseline oracle returns verified",
-        "evidence_paths": [
-          "artifacts/test-runs/<run-id>/negative-controls/nc-aggregate-composition.json"
-        ]
-      }
-    },
     {
       "claim_id": "claim-browser-editor",
       "claim": "The real preview server/editor passes action, diagnostic, HMR, prod-dist, and failure-isolation flows in Chrome.",
       "oracle_command": "bun run verify:browser",
       "expected_predicate": "required browser scenario ledger is complete and every mutation matches action ID/input/envelope, touched URI, independent persisted .mlt hash/parsed IR, diagnostics, DOM, and cleanup",
-      "canonical_artifact_paths": [
-        "e2e/browser/"
-      ],
+      "canonical_artifact_paths": ["e2e/browser/"],
       "worker_lane_owner": "H04",
       "verifier_owner": "browser-e2e",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/browser.json",
       "negative_control": {
         "control_id": "nc-browser-editor",
@@ -159,60 +114,48 @@
         "expected_reason_code": "SENSITIVITY_BROWSER_EDITOR",
         "cleanup_command": "bun run harness:mutate --restore nc-browser-editor",
         "restoration_predicate": "restored_hash == before_hash and baseline oracle returns verified",
-        "evidence_paths": [
-          "artifacts/test-runs/<run-id>/negative-controls/nc-browser-editor.json"
-        ]
-      }
+        "evidence_paths": ["artifacts/test-runs/<run-id>/negative-controls/nc-browser-editor.json"]
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-ci-enforcement",
       "claim": "CI policy maps claims to required jobs and actual current-main/release-lineage executions satisfy the policy.",
-      "oracle_command": "bun run verify:harness --profile release --require-ci --json",
+      "oracle_command": "bun run verify:ci-enforcement --json",
       "expected_predicate": "workflow/job/trigger/branch/platform/required policy matches workflow hash and GitHub check runs for exact current SHA/release lineage are successful, non-skipped, and current",
-      "canonical_artifact_paths": [
-        ".github/workflows/"
-      ],
+      "canonical_artifact_paths": [".github/workflows/"],
       "worker_lane_owner": "H09",
       "verifier_owner": "ci",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/ci.json",
       "negative_control": {
         "control_id": "nc-ci-enforcement",
         "setup_command": "bun run harness:mutate --control nc-ci-enforcement",
         "mutation_or_fixture_hash": "required: recorded before_hash != mutated_hash and exact mutation manifest hash",
-        "oracle_command": "bun run verify:harness --profile release --require-ci --json",
+        "oracle_command": "bun run verify:ci-enforcement --json",
         "expected_oracle_exit": 1,
         "expected_status": "failed",
         "expected_reason_code": "SENSITIVITY_CI_ENFORCEMENT",
         "cleanup_command": "bun run harness:mutate --restore nc-ci-enforcement",
         "restoration_predicate": "restored_hash == before_hash and baseline oracle returns verified",
-        "evidence_paths": [
-          "artifacts/test-runs/<run-id>/negative-controls/nc-ci-enforcement.json"
-        ]
-      }
+        "evidence_paths": ["artifacts/test-runs/<run-id>/negative-controls/nc-ci-enforcement.json"]
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-ci-mapping",
       "claim": "Every claim has an explicit workflow/job/trigger/runner/secret/required-status policy.",
       "oracle_command": "bun run test tests/harness-ci-mapping.test.ts",
       "expected_predicate": "zero unmapped claims, stale commands, permissive triggers, continue-on-error, implicit manual waivers, or secret-boundary violations",
-      "canonical_artifact_paths": [
-        ".github/workflows/"
-      ],
+      "canonical_artifact_paths": [".github/workflows/"],
       "worker_lane_owner": "H09",
       "verifier_owner": "topology",
       "dispatch_class": "ci",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/ci.json",
       "negative_control": {
         "control_id": "nc-ci-mapping",
@@ -224,27 +167,21 @@
         "expected_reason_code": "SENSITIVITY_CI_MAPPING",
         "cleanup_command": "bun run harness:mutate --restore nc-ci-mapping",
         "restoration_predicate": "restored_hash == before_hash and baseline oracle returns verified",
-        "evidence_paths": [
-          "artifacts/test-runs/<run-id>/negative-controls/nc-ci-mapping.json"
-        ]
-      }
+        "evidence_paths": ["artifacts/test-runs/<run-id>/negative-controls/nc-ci-mapping.json"]
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-dom-accessibility",
       "claim": "Machine-detectable viewer semantics, keyboard, focus, and automated accessibility contracts pass against the approved interaction contract.",
       "oracle_command": "bun run verify:component --suite accessibility",
       "expected_predicate": "approved ledger has zero blocking semantic/axe/keyboard/focus failures; no manual VoiceOver claim is inferred",
-      "canonical_artifact_paths": [
-        "viewer/src/components/"
-      ],
+      "canonical_artifact_paths": ["viewer/src/components/"],
       "worker_lane_owner": "H03",
       "verifier_owner": "accessibility",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/component.json",
       "negative_control": {
         "control_id": "nc-dom-accessibility",
@@ -259,24 +196,20 @@
         "evidence_paths": [
           "artifacts/test-runs/<run-id>/negative-controls/nc-dom-accessibility.json"
         ]
-      }
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-failure-evidence",
       "claim": "Every failing integration tier retains structured logs, snapshots, screenshots, process state, and relevant media diffs.",
       "oracle_command": "bun run test tests/harness-evidence.test.ts",
       "expected_predicate": "each integration tier has a controlled reason-coded failure in its actual CI job and an independent retrieval validates the tier-specific evidence schema",
-      "canonical_artifact_paths": [
-        "scripts/ci/"
-      ],
+      "canonical_artifact_paths": ["scripts/ci/"],
       "worker_lane_owner": "H09",
       "verifier_owner": "ci-evidence",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/ci.json",
       "negative_control": {
         "control_id": "nc-failure-evidence",
@@ -291,24 +224,20 @@
         "evidence_paths": [
           "artifacts/test-runs/<run-id>/negative-controls/nc-failure-evidence.json"
         ]
-      }
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-guidance-current",
       "claim": "AGENTS, roadmap, skills, and commands describe one current tier model.",
       "oracle_command": "bun run test tests/skills-catalog.test.ts tests/harness-contract.test.ts",
       "expected_predicate": "zero stale command/tier references",
-      "canonical_artifact_paths": [
-        "AGENTS.md"
-      ],
+      "canonical_artifact_paths": ["AGENTS.md"],
       "worker_lane_owner": "H10",
       "verifier_owner": "guidance",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": null,
       "negative_control": {
         "control_id": "nc-guidance-current",
@@ -323,24 +252,20 @@
         "evidence_paths": [
           "artifacts/test-runs/<run-id>/negative-controls/nc-guidance-current.json"
         ]
-      }
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-hermetic-runs",
       "claim": "Automated runs use isolated HOME/project/DB/ports/artifacts.",
       "oracle_command": "bun run verify:fixture --json",
       "expected_predicate": "behavioral canaries, child environments, DB inodes, socket owners, API results, and unchanged developer-state hashes prove isolation",
-      "canonical_artifact_paths": [
-        "scripts/harness/"
-      ],
+      "canonical_artifact_paths": ["scripts/harness/"],
       "worker_lane_owner": "H02",
       "verifier_owner": "runtime-foundation",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": null,
       "negative_control": {
         "control_id": "nc-hermetic-runs",
@@ -352,29 +277,22 @@
         "expected_reason_code": "SENSITIVITY_HERMETIC_RUNS",
         "cleanup_command": "bun run harness:mutate --restore nc-hermetic-runs",
         "restoration_predicate": "restored_hash == before_hash and baseline oracle returns verified",
-        "evidence_paths": [
-          "artifacts/test-runs/<run-id>/negative-controls/nc-hermetic-runs.json"
-        ]
-      }
+        "evidence_paths": ["artifacts/test-runs/<run-id>/negative-controls/nc-hermetic-runs.json"]
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-live-export-semantic-parity",
       "claim": "Live Player and exported Remotion/MLT content agree semantically on composition, props, assets, and frame mapping at approved boundary frames.",
       "oracle_command": "bun run verify:media --suite live-export-parity",
       "expected_predicate": "one canonical corpus binds .mlt/IR frame, composition, props/assets/version hashes and approved semantic/perceptual markers across live, renderStill, and final MLT output",
-      "canonical_artifact_paths": [
-        "e2e/media/",
-        "artifacts/specs/media-golden-policy.json"
-      ],
+      "canonical_artifact_paths": ["e2e/media/", "artifacts/specs/media-golden-policy.json"],
       "worker_lane_owner": "H07",
       "verifier_owner": "media-domain",
       "dispatch_class": "media",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/media.json",
       "negative_control": {
         "control_id": "nc-live-export-semantic-parity",
@@ -389,24 +307,20 @@
         "evidence_paths": [
           "artifacts/test-runs/<run-id>/negative-controls/nc-live-export-semantic-parity.json"
         ]
-      }
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-live-media",
       "claim": "The declared live-media matrix behaves as specified on exact tested Chrome and WKWebView runtimes.",
       "oracle_command": "bun run verify:media --suite live",
       "expected_predicate": "every predeclared required cell reports supported/unsupported/fallback as approved using exact fixture bytes, engine/binary identity, decode timestamps/seek, nonblank content, and in-scope audio signal",
-      "canonical_artifact_paths": [
-        "e2e/media/"
-      ],
+      "canonical_artifact_paths": ["e2e/media/"],
       "worker_lane_owner": "H07",
       "verifier_owner": "media-runtime",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/media.json",
       "negative_control": {
         "control_id": "nc-live-media",
@@ -418,27 +332,21 @@
         "expected_reason_code": "SENSITIVITY_LIVE_MEDIA",
         "cleanup_command": "bun run harness:mutate --restore nc-live-media",
         "restoration_predicate": "restored_hash == before_hash and baseline oracle returns verified",
-        "evidence_paths": [
-          "artifacts/test-runs/<run-id>/negative-controls/nc-live-media.json"
-        ]
-      }
+        "evidence_paths": ["artifacts/test-runs/<run-id>/negative-controls/nc-live-media.json"]
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-loopback-authority",
       "claim": "Only the launch-authorized viewer can invoke mutating loopback routes.",
       "oracle_command": "bun run verify:fixture --suite loopback-authority",
       "expected_predicate": "black-box bound-server matrix rejects every unauthorized Host/Origin/token/content-type/replay case before body parsing and leaks no authority material",
-      "canonical_artifact_paths": [
-        "src/preview/server.ts"
-      ],
+      "canonical_artifact_paths": ["src/preview/server.ts"],
       "worker_lane_owner": "H02",
       "verifier_owner": "security",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": null,
       "negative_control": {
         "control_id": "nc-loopback-authority",
@@ -453,25 +361,21 @@
         "evidence_paths": [
           "artifacts/test-runs/<run-id>/negative-controls/nc-loopback-authority.json"
         ]
-      }
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-manual-accessibility",
       "claim": "Keyboard-only and VoiceOver workflows across AppKit/WKWebView are manually verified against the exact release package.",
       "oracle_command": "bun run verify:release --suite manual-accessibility --lineage <manifest>",
       "expected_predicate": "current package hash, assessor/date, OS/VoiceOver version, keyboard/VoiceOver/focus/reflow/reduced-motion/contrast/media checklist and findings are complete",
-      "canonical_artifact_paths": [
-        "artifacts/release-evidence/accessibility/"
-      ],
+      "canonical_artifact_paths": ["artifacts/release-evidence/accessibility/"],
       "worker_lane_owner": "H08R",
       "verifier_owner": "manual-accessibility",
       "dispatch_class": "release-manual",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/release.json",
       "negative_control": {
         "control_id": "nc-manual-accessibility",
@@ -486,24 +390,20 @@
         "evidence_paths": [
           "artifacts/test-runs/<run-id>/negative-controls/nc-manual-accessibility.json"
         ]
-      }
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-media-resilience",
       "claim": "The application releases all owned media handles and remains bounded/recoverable under the approved actual-runtime stress.",
       "oracle_command": "bun run verify:media --suite resilience",
       "expected_predicate": "owned-handle ledger closes after all lifecycle/fault cases and pinned stress meets queue/memory/latency/crash bounds with valid post-recovery content",
-      "canonical_artifact_paths": [
-        "e2e/media/"
-      ],
+      "canonical_artifact_paths": ["e2e/media/"],
       "worker_lane_owner": "H07",
       "verifier_owner": "media-resilience",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/media.json",
       "negative_control": {
         "control_id": "nc-media-resilience",
@@ -518,24 +418,20 @@
         "evidence_paths": [
           "artifacts/test-runs/<run-id>/negative-controls/nc-media-resilience.json"
         ]
-      }
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-native-macos-shell",
       "claim": "Native menus, file panels, windows, and machine-detectable shell accessibility pass in development and against the exact installed release candidate.",
       "oracle_command": "bun run verify:release --suite packaged-macos-smoke --lineage <manifest>",
       "expected_predicate": "dev H06 and package-bound H08R Mac2 ledgers pass with exact app hash, bundle ID, driver session, and focus restoration",
-      "canonical_artifact_paths": [
-        "e2e/macos/"
-      ],
+      "canonical_artifact_paths": ["e2e/macos/"],
       "worker_lane_owner": "H06",
       "verifier_owner": "native-ui",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "finalizer_owner": "H08R",
       "scenario_manifest": "artifacts/specs/harness-scenarios/macos.json",
       "negative_control": {
@@ -551,24 +447,20 @@
         "evidence_paths": [
           "artifacts/test-runs/<run-id>/negative-controls/nc-native-macos-shell.json"
         ]
-      }
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-performance-budget",
       "claim": "Browser-CI and optimized release-package performance meet separately approved, environment-scoped budgets.",
       "oracle_command": "bun run verify:media --suite performance --policy artifacts/specs/media-performance-policy.json",
       "expected_predicate": "approved policy hash, fixture, warmup, samples, estimator, environment, instrumentation overhead, absolute/regression thresholds, and p50/p95/max results all verify",
-      "canonical_artifact_paths": [
-        "viewer/src/components/FootageStage.tsx"
-      ],
+      "canonical_artifact_paths": ["viewer/src/components/FootageStage.tsx"],
       "worker_lane_owner": "H07",
       "verifier_owner": "performance",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/media.json",
       "negative_control": {
         "control_id": "nc-performance-budget",
@@ -583,24 +475,20 @@
         "evidence_paths": [
           "artifacts/test-runs/<run-id>/negative-controls/nc-performance-budget.json"
         ]
-      }
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-process-cleanup",
       "claim": "No harness child or descendant survives teardown/failure.",
       "oracle_command": "bun run verify:fixture --json --scenario teardown",
       "expected_predicate": "independent watchdog finds zero run markers, PGIDs, executable/start tuples, owned sockets, or open fixture files after all exit modes",
-      "canonical_artifact_paths": [
-        "app/src-tauri/src/"
-      ],
+      "canonical_artifact_paths": ["app/src-tauri/src/"],
       "worker_lane_owner": "H02",
       "verifier_owner": "runtime-foundation",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": null,
       "negative_control": {
         "control_id": "nc-process-cleanup",
@@ -612,30 +500,23 @@
         "expected_reason_code": "SENSITIVITY_PROCESS_CLEANUP",
         "cleanup_command": "bun run harness:mutate --restore nc-process-cleanup",
         "restoration_predicate": "restored_hash == before_hash and baseline oracle returns verified",
-        "evidence_paths": [
-          "artifacts/test-runs/<run-id>/negative-controls/nc-process-cleanup.json"
-        ]
-      }
+        "evidence_paths": ["artifacts/test-runs/<run-id>/negative-controls/nc-process-cleanup.json"]
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-production-webview-policy",
       "claim": "Release viewer CSP/navigation/resource policy is enforced in actual WKWebView and installed package.",
       "oracle_command": "bun run verify:webview-policy --profile release",
       "expected_predicate": "approved response/effective CSP and navigation matrix blocks external navigation/resource/eval/cross-origin authority without csp:null equivalence",
-      "canonical_artifact_paths": [
-        "src/preview/server.ts",
-        "app/src-tauri/tauri.conf.json"
-      ],
+      "canonical_artifact_paths": ["src/preview/server.ts", "app/src-tauri/tauri.conf.json"],
       "worker_lane_owner": "H02",
       "finalizer_owner": "H08R",
       "verifier_owner": "security",
       "dispatch_class": "security",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": null,
       "negative_control": {
         "control_id": "nc-production-webview-policy",
@@ -650,24 +531,20 @@
         "evidence_paths": [
           "artifacts/test-runs/<run-id>/negative-controls/nc-production-webview-policy.json"
         ]
-      }
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-react-components",
       "claim": "React component state and keyboard contracts pass in a real browser.",
       "oracle_command": "bun run verify:component",
       "expected_predicate": "executed component scenario IDs exactly equal approved ledger and timeline-dependent cases reference approved interaction-contract hash",
-      "canonical_artifact_paths": [
-        "viewer/test/"
-      ],
+      "canonical_artifact_paths": ["viewer/test/"],
       "worker_lane_owner": "H03",
       "verifier_owner": "browser-component",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/component.json",
       "negative_control": {
         "control_id": "nc-react-components",
@@ -682,32 +559,28 @@
         "evidence_paths": [
           "artifacts/test-runs/<run-id>/negative-controls/nc-react-components.json"
         ]
-      }
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-release-evidence-current",
       "claim": "Every release-required tier has a successful current run bound to the exact source SHA and release lineage hash.",
-      "oracle_command": "bun run verify:harness --profile release --require-current-runs --json",
+      "oracle_command": "bun run verify:release-evidence --json",
       "expected_predicate": "no skipped/cancelled/neutral/stale/wrong-SHA/wrong-DMG evidence; only limited environment doctor evidence may use approved age",
-      "canonical_artifact_paths": [
-        "artifacts/release-evidence/"
-      ],
+      "canonical_artifact_paths": ["artifacts/release-evidence/"],
       "worker_lane_owner": "H09",
       "finalizer_owner": "H08R",
       "verifier_owner": "release-truth",
       "dispatch_class": "release",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/ci.json",
       "negative_control": {
         "control_id": "nc-release-evidence-current",
         "setup_command": "bun run harness:mutate --control nc-release-evidence-current",
         "mutation_or_fixture_hash": "required: recorded before_hash != mutated_hash and exact mutation manifest hash",
-        "oracle_command": "bun run verify:harness --profile release --require-current-runs --json",
+        "oracle_command": "bun run verify:release-evidence --json",
         "expected_oracle_exit": 1,
         "expected_status": "failed",
         "expected_reason_code": "SENSITIVITY_RELEASE_EVIDENCE_CURRENT",
@@ -716,24 +589,20 @@
         "evidence_paths": [
           "artifacts/test-runs/<run-id>/negative-controls/nc-release-evidence-current.json"
         ]
-      }
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-render-fidelity",
       "claim": "Pinned Remotion and MLT/FFmpeg reference frames/artifacts match approved goldens.",
       "oracle_command": "bun run verify:media --suite render",
       "expected_predicate": "acceptance compares against separately generated, approved, versioned goldens/streams with exact fixture/tool/environment hashes and semantic annotations",
-      "canonical_artifact_paths": [
-        "corpus/harness/"
-      ],
+      "canonical_artifact_paths": ["corpus/harness/"],
       "worker_lane_owner": "H07",
       "verifier_owner": "media-render",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/media.json",
       "negative_control": {
         "control_id": "nc-render-fidelity",
@@ -745,27 +614,21 @@
         "expected_reason_code": "SENSITIVITY_RENDER_FIDELITY",
         "cleanup_command": "bun run harness:mutate --restore nc-render-fidelity",
         "restoration_predicate": "restored_hash == before_hash and baseline oracle returns verified",
-        "evidence_paths": [
-          "artifacts/test-runs/<run-id>/negative-controls/nc-render-fidelity.json"
-        ]
-      }
+        "evidence_paths": ["artifacts/test-runs/<run-id>/negative-controls/nc-render-fidelity.json"]
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-self-contained-package",
       "claim": "Installed app runs without external Bun, source checkout, Homebrew, or user state.",
       "oracle_command": "bun run verify:package --suite candidate-clean-machine --lineage <manifest>",
       "expected_predicate": "exact DMG candidate installs via LaunchServices on clean host/VM with checkout unmounted, quarantine applied, no Bun/Homebrew/caches, and passes path/network/state/media/render/quit/process evidence",
-      "canonical_artifact_paths": [
-        "e2e/package/"
-      ],
+      "canonical_artifact_paths": ["e2e/package/"],
       "worker_lane_owner": "H08",
       "verifier_owner": "package",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/package.json",
       "negative_control": {
         "control_id": "nc-self-contained-package",
@@ -780,24 +643,20 @@
         "evidence_paths": [
           "artifacts/test-runs/<run-id>/negative-controls/nc-self-contained-package.json"
         ]
-      }
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-signed-release",
       "claim": "Release bundle passes Developer ID, hardened runtime, notarization, staple, and provenance checks.",
       "oracle_command": "bun run verify:release --suite signing --lineage <manifest>",
       "expected_predicate": "one immutable release lineage binds source/core/assets/sidecars/signed app/notary/stapled DMG/updater hashes and final post-sign smoke",
-      "canonical_artifact_paths": [
-        "release/"
-      ],
+      "canonical_artifact_paths": ["release/"],
       "worker_lane_owner": "H08",
       "verifier_owner": "release",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/package.json",
       "negative_control": {
         "control_id": "nc-signed-release",
@@ -809,27 +668,21 @@
         "expected_reason_code": "SENSITIVITY_SIGNED_RELEASE",
         "cleanup_command": "bun run harness:mutate --restore nc-signed-release",
         "restoration_predicate": "restored_hash == before_hash and baseline oracle returns verified",
-        "evidence_paths": [
-          "artifacts/test-runs/<run-id>/negative-controls/nc-signed-release.json"
-        ]
-      }
+        "evidence_paths": ["artifacts/test-runs/<run-id>/negative-controls/nc-signed-release.json"]
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-static-owned-code",
       "claim": "All owned TS/TSX and platform-neutral plus macOS-target Rust code is statically gated on the correct toolchain.",
       "oracle_command": "bun run verify:fast --profile macos",
       "expected_predicate": "platform-neutral gates and macOS target/feature fmt-check-clippy-test records are verified",
-      "canonical_artifact_paths": [
-        "viewer/tsconfig.json"
-      ],
+      "canonical_artifact_paths": ["viewer/tsconfig.json"],
       "worker_lane_owner": "H01",
       "verifier_owner": "static-gate",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": null,
       "negative_control": {
         "control_id": "nc-static-owned-code",
@@ -844,29 +697,22 @@
         "evidence_paths": [
           "artifacts/test-runs/<run-id>/negative-controls/nc-static-owned-code.json"
         ]
-      }
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-tauri-wkwebview",
       "claim": "The actual Tauri process and final localhost WKWebView complete the declared lifecycle/media/action scenario through either the safe embedded provider or bounded black-box fallback.",
       "oracle_command": "bun run verify:tauri --provider auto",
       "expected_predicate": "one approved provider branch binds exact binary hash, PID/bundle/window, final URL, WebKit identity, run nonce, canonical action/document result, and cleanup",
-      "canonical_artifact_paths": [
-        "e2e/tauri/"
-      ],
+      "canonical_artifact_paths": ["e2e/tauri/"],
       "worker_lane_owner": "H05",
       "verifier_owner": "native-webview",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "finalizer_owner": "PM",
-      "evidence_alternatives": [
-        "embedded-safe:H05",
-        "blackbox-fallback:H05F"
-      ],
+      "evidence_alternatives": ["embedded-safe:H05", "blackbox-fallback:H05F"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/tauri.json",
       "negative_control": {
         "control_id": "nc-tauri-wkwebview",
@@ -878,27 +724,21 @@
         "expected_reason_code": "SENSITIVITY_TAURI_WKWEBVIEW",
         "cleanup_command": "bun run harness:mutate --restore nc-tauri-wkwebview",
         "restoration_predicate": "restored_hash == before_hash and baseline oracle returns verified",
-        "evidence_paths": [
-          "artifacts/test-runs/<run-id>/negative-controls/nc-tauri-wkwebview.json"
-        ]
-      }
+        "evidence_paths": ["artifacts/test-runs/<run-id>/negative-controls/nc-tauri-wkwebview.json"]
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-test-instrumentation-absent",
       "claim": "Production/release binaries contain no WDIO authority or listening automation server.",
       "oracle_command": "bun run verify:release --suite instrumentation-absence --lineage <manifest>",
       "expected_predicate": "static dependency/feature/capability/frontend/symbol inspection and dynamic full listener/session probe reject automation in the exact final signed app hash",
-      "canonical_artifact_paths": [
-        "app/src-tauri/"
-      ],
+      "canonical_artifact_paths": ["app/src-tauri/"],
       "worker_lane_owner": "H05",
       "verifier_owner": "security-release",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "finalizer_owner": "H08R",
       "scenario_manifest": "artifacts/specs/harness-scenarios/tauri.json",
       "negative_control": {
@@ -914,24 +754,20 @@
         "evidence_paths": [
           "artifacts/test-runs/<run-id>/negative-controls/nc-test-instrumentation-absent.json"
         ]
-      }
+      },
+      "oracle_implementation_paths": ["package.json"]
     },
     {
       "claim_id": "claim-updater",
       "claim": "The production updater completes an end-to-end signed vN to vN+1 update and fails atomically for tamper/interruption/replay/downgrade.",
       "oracle_command": "bun run verify:release --suite updater-e2e --lineage <manifest>",
       "expected_predicate": "exact installed vN checks/downloads/verifies/applies/relaunches vN+1 with preserved project state; all failure matrix cases leave vN runnable",
-      "canonical_artifact_paths": [
-        "release/"
-      ],
+      "canonical_artifact_paths": ["release/"],
       "worker_lane_owner": "H08R",
       "verifier_owner": "release",
       "current_status": "open",
       "oracle_exists": false,
-      "allowed_terminal_states": [
-        "verified",
-        "blocked_with_user_decision"
-      ],
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/release.json",
       "negative_control": {
         "control_id": "nc-updater",
@@ -943,10 +779,9 @@
         "expected_reason_code": "SENSITIVITY_UPDATER",
         "cleanup_command": "bun run harness:mutate --restore nc-updater",
         "restoration_predicate": "restored_hash == before_hash and baseline oracle returns verified",
-        "evidence_paths": [
-          "artifacts/test-runs/<run-id>/negative-controls/nc-updater.json"
-        ]
-      }
+        "evidence_paths": ["artifacts/test-runs/<run-id>/negative-controls/nc-updater.json"]
+      },
+      "oracle_implementation_paths": ["package.json"]
     }
   ]
 }

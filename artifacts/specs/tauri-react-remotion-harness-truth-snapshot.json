@@ -1,0 +1,29 @@
+{
+  "program": "tauri-react-remotion-harness",
+  "observed_at": "2026-07-12T00:10:00Z",
+  "target_branch": "main",
+  "target_branch_sha": "da7c9065bdb40357c1469fb3b7b01155d1d8da3b",
+  "canonical_oracle": {
+    "command": "bun run verify:harness --profile developer --json",
+    "exit_code": 1,
+    "result": "structured OPEN: eight developer claims remain unimplemented; H00 meta-contract passes 32 adversarial cases"
+  },
+  "active_lane": "H00",
+  "claims": [
+    {
+      "claim": "The harness evaluator independently rejects false or stale evidence and composes only explicit profile claims.",
+      "source_of_truth": "bun run test tests/harness-contract.test.ts",
+      "old_failure": "bun run verify:harness --profile developer --json (script absent)",
+      "new_gate": "bun run test tests/harness-contract.test.ts: 32/32 pass; typecheck and Biome pass",
+      "target_branch_sha": "da7c9065bdb40357c1469fb3b7b01155d1d8da3b",
+      "post_integration_result": "awaiting clean canonical commit and rerun"
+    }
+  ],
+  "roadmap_status": {
+    "H00": "ready_for_canonical_commit",
+    "H01": "open",
+    "H02": "open",
+    "H09A": "open",
+    "remaining_lanes": "open"
+  }
+}
