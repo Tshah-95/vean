@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import {
   mkdirSync,
   mkdtempSync,
@@ -14,21 +15,34 @@ import {
   GUEST_REPOSITORY,
   GUEST_SMOKE_PROJECT,
   HEADLESS_RUN_ARGS,
+  PROJECT_ARTIFACT_ALLOWLIST,
+  READY_STEPS,
   VM_NAME,
   assessLaunchRecord,
+  assessRemoteRef,
   buildLaunchPlan,
+  collectProjectArtifactsGuestCommand,
   expectPasswordScript,
   guestDoctorPlan,
   guestExecPlan,
+  guestProjectPath,
   nativeVerifyPlan,
   parseShareSpecs,
+  provisionArchiveGuestCommand,
+  provisionRemoteGuestCommand,
   readShareConfig,
+  remoteRefGuardCommand,
   seedSmokeProjectGuestCommand,
   sshGuestExecPlan,
+  sshHardeningGuestCommand,
   sshPasswordInstallPlan,
+  syncGuestCommand,
   tartRunPlan,
   validateGuestIp,
   validateHostKeyPin,
+  validateProjectArtifactIncludes,
+  validateProjectName,
+  validateRemoteRepositoryUrl,
   validateShareName,
   validateSharePath,
   validateSourceRef,
@@ -190,8 +204,15 @@ describe("macOS Tart VM harness policy", () => {
 
   it("marks missing, dead, or changed launch records unsafe while a VM is running", () => {
     const expected = buildLaunchPlan([{ name: "media", hostPath: "/tmp/media" }]);
-    const current = { ...expected, pid: 123, startedAt: "2026-07-12T00:00:00.000Z" };
-    expect(assessLaunchRecord(expected, current, true)).toEqual({
+    const processCommand =
+      "/opt/homebrew/bin/tart run --no-graphics --no-audio --no-clipboard vean-macos-dev";
+    const current = {
+      ...expected,
+      pid: 123,
+      processCommand,
+      startedAt: "2026-07-12T00:00:00.000Z",
+    };
+    expect(assessLaunchRecord(expected, current, true, processCommand)).toEqual({
       ok: true,
       status: "current",
     });
@@ -199,15 +220,145 @@ describe("macOS Tart VM harness policy", () => {
       ok: false,
       status: "unknown",
     });
-    expect(assessLaunchRecord(expected, current, false)).toMatchObject({
+    expect(assessLaunchRecord(expected, current, false, processCommand)).toMatchObject({
       ok: false,
       status: "unknown",
     });
+    expect(assessLaunchRecord(expected, current, true, `${processCommand} --reused`)).toMatchObject(
+      {
+        ok: false,
+        status: "unknown",
+      },
+    );
     const changed = buildLaunchPlan([{ name: "other-media", hostPath: "/tmp/media" }]);
-    expect(assessLaunchRecord(changed, current, true)).toMatchObject({
+    expect(assessLaunchRecord(changed, current, true, processCommand)).toMatchObject({
       ok: false,
       status: "stale",
     });
+  });
+
+  it("rejects stale origin state and checkout state against remote truth", () => {
+    const remote = "a".repeat(40);
+    expect(assessRemoteRef(remote, remote, remote)).toEqual({ ok: true, sha: remote });
+    expect(assessRemoteRef(remote, "b".repeat(40), remote)).toMatchObject({ ok: false });
+    expect(assessRemoteRef(remote, remote, "c".repeat(40))).toMatchObject({ ok: false });
+    expect(assessRemoteRef("main", remote)).toMatchObject({ ok: false });
+
+    const command = syncGuestCommand("main");
+    expect(command).toContain("git fetch --prune --tags origin");
+    expect(command).toContain("git ls-remote --exit-code origin");
+    expect(command).toContain("stale origin ref");
+    expect(command).toContain('git checkout --detach "$advertised"');
+    expect(command).toContain("bun install --frozen-lockfile");
+    for (const plan of [guestDoctorPlan("main"), nativeVerifyPlan("main")]) {
+      expect(plan.at(-1)).toContain("git ls-remote --exit-code origin");
+      expect(plan.at(-1)).toContain("checkout is not remote truth");
+    }
+    expect(seedSmokeProjectGuestCommand("main")).toContain("git ls-remote --exit-code origin");
+  });
+
+  it("fails the actual guard against a stale remote-tracking ref", () => {
+    const root = mkdtempSync(join(tmpdir(), "vean-stale-origin-"));
+    const remote = join(root, "remote.git");
+    const author = join(root, "author");
+    const guest = join(root, "guest");
+    const git = (args: string[], cwd = root) =>
+      spawnSync("git", args, {
+        cwd,
+        encoding: "utf8",
+        env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1" },
+      });
+    expect(git(["init", "--bare", remote]).status).toBe(0);
+    expect(git(["init", "-b", "main", author]).status).toBe(0);
+    writeFileSync(join(author, "fixture.txt"), "one\n");
+    expect(git(["add", "fixture.txt"], author).status).toBe(0);
+    expect(
+      git(["-c", "user.name=test", "-c", "user.email=test@invalid", "commit", "-m", "one"], author)
+        .status,
+    ).toBe(0);
+    expect(git(["remote", "add", "origin", remote], author).status).toBe(0);
+    expect(git(["push", "-u", "origin", "main"], author).status).toBe(0);
+    expect(git(["clone", "--branch", "main", remote, guest]).status).toBe(0);
+    writeFileSync(join(author, "fixture.txt"), "two\n");
+    expect(git(["add", "fixture.txt"], author).status).toBe(0);
+    expect(
+      git(["-c", "user.name=test", "-c", "user.email=test@invalid", "commit", "-m", "two"], author)
+        .status,
+    ).toBe(0);
+    expect(git(["push", "origin", "main"], author).status).toBe(0);
+
+    const stale = spawnSync("/bin/bash", ["-lc", remoteRefGuardCommand("main")], {
+      cwd: guest,
+      encoding: "utf8",
+    });
+    expect(stale.status).not.toBe(0);
+    expect(stale.stderr).toContain("stale origin ref");
+  });
+
+  it("defines one ordered daily-ready facade and package entry points", () => {
+    expect(READY_STEPS).toEqual([
+      "start",
+      "sync",
+      "doctor-guest",
+      "verify-shares",
+      "seed-smoke-project",
+    ]);
+    const packageJson = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    for (const command of [
+      "vm:macos:sync",
+      "vm:macos:ready",
+      "vm:macos:provision-project",
+      "vm:macos:collect-project-artifacts",
+    ]) {
+      expect(packageJson.scripts[command]).toContain("scripts/vm/macos-vm.ts");
+    }
+  });
+
+  it("hardens sshd only after preserving public-key authentication", () => {
+    const command = sshHardeningGuestCommand();
+    expect(command).toContain('"pubkeyauthentication" && $2 == "yes"');
+    expect(command).toContain('"passwordauthentication" && $2 == "no"');
+    expect(command).toContain('"kbdinteractiveauthentication" && $2 == "no"');
+    expect(command).toContain("sshd -t");
+    expect(command).toContain("launchctl kickstart -k system/com.openssh.sshd");
+  });
+
+  it("provisions only direct guest-local projects from safe remote or tracked archive sources", () => {
+    expect(validateProjectName("vean-fixture.1")).toBe("vean-fixture.1");
+    expect(guestProjectPath("vean-fixture")).toBe("/Users/admin/Projects/vean-fixture");
+    expect(() => validateProjectName("../escape")).toThrow("invalid guest project name");
+    expect(validateRemoteRepositoryUrl("https://github.com/example/project.git")).toBe(
+      "https://github.com/example/project.git",
+    );
+    for (const url of [
+      "git@github.com:example/project.git",
+      "https://token@github.com/example/project.git",
+      "file:///tmp/project",
+    ]) {
+      expect(() => validateRemoteRepositoryUrl(url)).toThrow();
+    }
+    const remote = provisionRemoteGuestCommand(
+      "https://github.com/example/project.git",
+      "main",
+      "project",
+    );
+    expect(remote).toContain("git ls-remote --exit-code origin");
+    expect(remote).toContain("test ! -e");
+    const archive = provisionArchiveGuestCommand("project", "a".repeat(40));
+    expect(archive).toContain("tar -xzf -");
+    expect(archive).toContain("git init -q");
+  });
+
+  it("collects only fixed artifact roots and refuses symlink-bearing payloads", () => {
+    expect(validateProjectArtifactIncludes(["coverage", "coverage"])).toEqual(["coverage"]);
+    expect(() => validateProjectArtifactIncludes([".env"])).toThrow("not allowlisted");
+    const command = collectProjectArtifactsGuestCommand("project", ["test-results"]);
+    expect(command).toContain("/Users/admin/Projects/project");
+    expect(command).toContain("-type l");
+    expect(command).toContain("test-results");
+    expect(PROJECT_ARTIFACT_ALLOWLIST).not.toContain("artifacts" as never);
   });
 
   it("verifies every guest share exists and cannot be written", () => {

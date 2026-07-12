@@ -14,9 +14,7 @@ bun run vm:macos:configure-shares -- project-media=/absolute/path/to/media refer
 bun run vm:macos:start
 bun run vm:macos:setup-ssh
 bun run vm:macos:bootstrap
-bun run vm:macos:doctor-guest
-bun run vm:macos:verify-shares
-bun run vm:macos:seed-smoke-project
+bun run vm:macos:ready
 ```
 
 `configure` clones the macOS Tahoe/Xcode image pinned at digest
@@ -34,7 +32,11 @@ the key for the documented Cirrus `admin` account through terminal-only
 `/usr/bin/expect`. The public image password defaults to `admin` and is never
 written to disk or a subprocess argument; set `VEAN_TART_BOOTSTRAP_PASSWORD`
 if the image password changed. An existing mismatched host key is a hard
-failure and is never replaced automatically.
+failure and is never replaced automatically. Once the dedicated key has been
+proved, setup installs and validates a key-only sshd drop-in, restarts sshd,
+then proves the same pinned key still works. Effective
+`PasswordAuthentication no`, `KbdInteractiveAuthentication no`, and
+`PubkeyAuthentication yes` are part of every guest doctor run.
 
 After setup, the harness prefers strict SSH because this image's Tart guest
 agent hangs. Every login requires `BatchMode`, `IdentitiesOnly`, the dedicated
@@ -54,9 +56,27 @@ toolchain directory explicitly. This is required on images that already ship a
 Homebrew `rustup` binary without installing the usual `~/.cargo/bin` proxy
 commands; native Tauri builds must not depend on an interactive shell default.
 
-Use `--source-ref <remote-branch>` with bootstrap and native verification when
+Use `--source-ref <remote-branch>` with bootstrap, ready, and native verification when
 the target is not `origin/main`. The ref must already exist on GitHub; no host
 credentials or secrets are copied into the guest.
+
+## Daily readiness
+
+```sh
+bun run vm:macos:ready -- --source-ref main
+```
+
+`ready` is the canonical daily facade: start headlessly, fetch and prune the
+guest clone, resolve the requested branch with `git ls-remote`, detach at that
+exact advertised commit, run the guest doctor, prove every configured share is
+read-only, and seed the smoke project. Individual doctor, seed, and native
+commands also compare the checkout and `origin/<branch>` with the independently
+advertised remote commit, so a stale remote-tracking ref cannot pass. The doctor
+requires at least 40 GiB free on `/` and 20 GiB free at the guest project root.
+
+The launch record binds the PID to the exact `ps` command captured for the Tart
+runner as well as the argument vector and share digest. A reused PID, changed
+command, externally started VM, or stale share configuration fails closed.
 
 ## Native proof and evidence
 
@@ -95,6 +115,33 @@ guest as a separate directory. Do not mount a host Git repository as the guest
 working copy. This preserves the clean-clone signal and prevents a guest test
 from changing host source, indexes, SQLite state, or build artifacts.
 
+Provision an additional writable guest-local project in either of two ways:
+
+```sh
+# Public, credential-free HTTPS remote. The branch is resolved against ls-remote.
+bun run vm:macos:provision-project -- --name sample --url https://github.com/org/repo.git --source-ref main
+
+# Clean committed snapshot from a local worktree. Only git-tracked bytes cross.
+bun run vm:macos:provision-project -- --name private-sample --source /absolute/local/repo --source-ref main
+```
+
+Remote provisioning accepts no URL credentials. Local provisioning refuses
+tracked or staged changes and streams `git archive` output into the guest; it
+does not copy `.git`, untracked files, ignored secrets, dependency caches, or
+build caches. Targets must be direct children of `/Users/admin/Projects` and
+must not already exist. This produces a clean writable guest repository without
+a writable host mount.
+
+Bring back only fixed test-output roots with a private archive:
+
+```sh
+bun run vm:macos:collect-project-artifacts -- --name sample --include test-results --include coverage
+```
+
+The collector accepts only `.vean/harness/native-runs`,
+`.vean/harness/browser-runs`, `test-results`, `playwright-report`, and
+`coverage`; it rejects missing roots and symlinks and writes a mode-0600 `.tgz`.
+
 Large immutable inputs can be exposed with read-only VirtioFS shares:
 
 ```sh
@@ -111,6 +158,13 @@ sensitive dot-configuration trees, and broad system roots. The host-local
 configuration is mode 0600 under `~/.local/state/vean-vm/`; no personal path is
 committed. There is no writable-share option. `verify-shares` checks every
 mount exists and proves a write fails.
+
+Read-only means integrity protection, not confidentiality. Guest processes can
+read mounted personal media, and this developer VM retains ordinary network
+access, so a compromised dependency could exfiltrate it. Use only committed
+synthetic fixtures (and configure no personal shares) for untrusted code. Mount
+personal media only for trusted project-smoke runs; network isolation is not
+currently an asserted property of this profile.
 
 Changing share configuration while the VM runs deliberately makes `start`,
 `status`, `doctor`, and guest commands fail until the VM is stopped and

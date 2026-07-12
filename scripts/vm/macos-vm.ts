@@ -6,6 +6,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   openSync,
   readFileSync,
   realpathSync,
@@ -26,10 +27,20 @@ export const DEFAULT_IMAGE =
 export const REPOSITORY_URL = "https://github.com/Tshah-95/vean.git";
 export const GUEST_REPOSITORY = "/Users/admin/Github/vean-runner";
 export const GUEST_SMOKE_PROJECT = "/Users/admin/Projects/vean-smoke";
+export const GUEST_PROJECTS_ROOT = "/Users/admin/Projects";
+export const MIN_GUEST_ROOT_FREE_KB = 40 * 1024 * 1024;
+export const MIN_GUEST_PROJECT_FREE_KB = 20 * 1024 * 1024;
 export const DEFAULT_SSH_KEY = join(homedir(), ".ssh/vean_tart_ed25519");
 export const DEFAULT_KNOWN_HOSTS = join(homedir(), ".ssh/known_hosts.vean-tart");
 export const DEFAULT_STATE_DIR = join(homedir(), ".local/state/vean-vm");
 export const HEADLESS_RUN_ARGS = ["run", "--no-graphics", "--no-audio", "--no-clipboard"] as const;
+export const READY_STEPS = [
+  "start",
+  "sync",
+  "doctor-guest",
+  "verify-shares",
+  "seed-smoke-project",
+] as const;
 
 export type VmShare = {
   name: string;
@@ -51,12 +62,15 @@ export type LaunchPlan = {
 
 type LaunchRecord = LaunchPlan & {
   pid: number;
+  processCommand: string;
   startedAt: string;
 };
 
 export type LaunchAssessment =
   | { ok: true; status: "current" }
   | { ok: false; status: "unknown" | "stale"; reason: string };
+
+export type RemoteRefAssessment = { ok: true; sha: string } | { ok: false; reason: string };
 
 type VmInfo = {
   OS: string;
@@ -237,6 +251,7 @@ export function assessLaunchRecord(
   expected: LaunchPlan,
   recorded: unknown,
   pidAlive = true,
+  actualProcessCommand?: string,
 ): LaunchAssessment {
   if (!recorded || typeof recorded !== "object") {
     return { ok: false, status: "unknown", reason: "no valid launch record exists" };
@@ -249,12 +264,23 @@ export function assessLaunchRecord(
     !Array.isArray(candidate.shares) ||
     typeof candidate.shareConfigSha256 !== "string" ||
     !Number.isInteger(candidate.pid) ||
+    typeof candidate.processCommand !== "string" ||
     typeof candidate.startedAt !== "string"
   ) {
     return { ok: false, status: "unknown", reason: "launch record is malformed" };
   }
   if (!pidAlive) {
     return { ok: false, status: "unknown", reason: "recorded Tart process is not alive" };
+  }
+  if (!actualProcessCommand || actualProcessCommand !== candidate.processCommand) {
+    return {
+      ok: false,
+      status: "unknown",
+      reason: "recorded PID no longer has the exact Tart launch command identity",
+    };
+  }
+  if (!/(?:^|\/)tart\s+run\s/.test(candidate.processCommand)) {
+    return { ok: false, status: "unknown", reason: "recorded process is not a Tart runner" };
   }
   const actualPlan: LaunchPlan = {
     version: 1,
@@ -315,6 +341,81 @@ export function validateSourceRef(value: string): string {
     fail(`invalid Git source ref: ${JSON.stringify(value)}`);
   }
   return value;
+}
+
+export function assessRemoteRef(
+  advertisedSha: string,
+  localRemoteSha: string,
+  headSha?: string,
+): RemoteRefAssessment {
+  const shaPattern = /^[0-9a-f]{40}$/;
+  if (!shaPattern.test(advertisedSha))
+    return { ok: false, reason: "remote did not advertise one commit" };
+  if (localRemoteSha !== advertisedSha) {
+    return { ok: false, reason: "local remote-tracking ref is stale relative to remote truth" };
+  }
+  if (headSha !== undefined && headSha !== advertisedSha) {
+    return { ok: false, reason: "guest checkout does not match remote truth" };
+  }
+  return { ok: true, sha: advertisedSha };
+}
+
+function remoteRefTruthCommands(ref: string, requireHead: boolean): string[] {
+  const branch = validateSourceRef(ref);
+  return [
+    `advertised="$(git ls-remote --exit-code origin ${shellQuote(`refs/heads/${branch}`)} | /usr/bin/awk 'NR == 1 { print $1 } END { if (NR != 1) exit 1 }')"`,
+    'case "$advertised" in [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;; *) printf "invalid advertised commit: %s\\n" "$advertised" >&2; exit 1 ;; esac',
+    `local_remote="$(git rev-parse ${shellQuote(`refs/remotes/origin/${branch}`)})"`,
+    'test "$local_remote" = "$advertised" || { printf "stale origin ref: local=%s remote=%s\\n" "$local_remote" "$advertised" >&2; exit 1; }',
+    ...(requireHead
+      ? [
+          'head="$(git rev-parse HEAD)"',
+          'test "$head" = "$advertised" || { printf "checkout is not remote truth: head=%s remote=%s\\n" "$head" "$advertised" >&2; exit 1; }',
+        ]
+      : []),
+  ];
+}
+
+export function remoteRefGuardCommand(sourceRef = "main", requireHead = true): string {
+  return ["set -euo pipefail", ...remoteRefTruthCommands(sourceRef, requireHead)].join("; ");
+}
+
+export function syncGuestCommand(sourceRef = "main"): string {
+  const ref = validateSourceRef(sourceRef);
+  return [
+    "set -euo pipefail",
+    `cd ${GUEST_REPOSITORY}`,
+    `test "$(git remote get-url origin)" = ${REPOSITORY_URL}`,
+    'test -z "$(git status --porcelain)"',
+    "git fetch --prune --tags origin",
+    ...remoteRefTruthCommands(ref, false),
+    'git checkout --detach "$advertised"',
+    'git reset --hard "$advertised"',
+    "git clean -ffd",
+    'test -z "$(git status --porcelain)"',
+    ...remoteRefTruthCommands(ref, true),
+    'export PATH="$HOME/.bun/bin:$HOME/.local/share/mise/shims:/opt/homebrew/bin:$PATH"',
+    "bun install --frozen-lockfile",
+  ].join("; ");
+}
+
+function guestDiskCommands(): string[] {
+  return [
+    `root_free_kb="$(df -Pk / | /usr/bin/awk 'NR == 2 { print $4 }')"`,
+    `test "$root_free_kb" -ge ${MIN_GUEST_ROOT_FREE_KB} || { printf "guest root disk below threshold: %s KiB free, need ${MIN_GUEST_ROOT_FREE_KB}\\n" "$root_free_kb" >&2; exit 1; }`,
+    `mkdir -p ${GUEST_PROJECTS_ROOT}`,
+    `project_free_kb="$(df -Pk ${GUEST_PROJECTS_ROOT} | /usr/bin/awk 'NR == 2 { print $4 }')"`,
+    `test "$project_free_kb" -ge ${MIN_GUEST_PROJECT_FREE_KB} || { printf "guest project disk below threshold: %s KiB free, need ${MIN_GUEST_PROJECT_FREE_KB}\\n" "$project_free_kb" >&2; exit 1; }`,
+  ];
+}
+
+function sshdEffectiveCommands(): string[] {
+  return [
+    'sshd_effective="$(sudo -n /usr/sbin/sshd -T)"',
+    'printf "%s\\n" "$sshd_effective" | /usr/bin/awk \'$1 == "passwordauthentication" && $2 == "no" { found=1 } END { exit !found }\'',
+    'printf "%s\\n" "$sshd_effective" | /usr/bin/awk \'$1 == "kbdinteractiveauthentication" && $2 == "no" { found=1 } END { exit !found }\'',
+    'printf "%s\\n" "$sshd_effective" | /usr/bin/awk \'$1 == "pubkeyauthentication" && $2 == "yes" { found=1 } END { exit !found }\'',
+  ];
 }
 
 export function tartRunPlan(shares: readonly VmShare[] = []): readonly string[] {
@@ -420,6 +521,30 @@ export function expectPasswordScript(password: string): string {
   ].join("\n");
 }
 
+export function sshHardeningGuestCommand(): string {
+  const content = [
+    "# Managed by vean vm:macos:setup-ssh",
+    "PubkeyAuthentication yes",
+    "PasswordAuthentication no",
+    "KbdInteractiveAuthentication no",
+    "ChallengeResponseAuthentication no",
+    "",
+  ].join("\n");
+  const encoded = Buffer.from(content).toString("base64");
+  return [
+    "set -euo pipefail",
+    'tmp="$(mktemp)"',
+    `printf %s ${shellQuote(encoded)} | base64 -D > "$tmp"`,
+    'chmod 600 "$tmp"',
+    "sudo -n mkdir -p /etc/ssh/sshd_config.d",
+    'sudo -n install -o root -g wheel -m 600 "$tmp" /etc/ssh/sshd_config.d/99-vean-key-only.conf',
+    'rm -f "$tmp"',
+    "sudo -n /usr/sbin/sshd -t",
+    ...sshdEffectiveCommands(),
+    "sudo -n /bin/launchctl kickstart -k system/com.openssh.sshd",
+  ].join("; ");
+}
+
 type GuestConnection =
   | { kind: "tart-agent" }
   | { kind: "ssh"; ip: string; keyPath: string; knownHostsPath: string };
@@ -454,6 +579,30 @@ function runGuestCommand(command: string): CommandResult {
       );
 }
 
+function runGuestCommandWithInput(command: string, input: Buffer): CommandResult {
+  const connection = resolveGuestConnection();
+  const plan =
+    connection.kind === "tart-agent"
+      ? guestExecPlan(command)
+      : sshGuestExecPlan(connection.ip, command, connection.keyPath, connection.knownHostsPath);
+  const [executable, ...args] = plan;
+  if (!executable) fail("guest input execution plan is empty");
+  const result = spawnSync(executable, args, {
+    input,
+    encoding: "utf8",
+    maxBuffer: 512 * 1024 * 1024,
+  });
+  const normalized = {
+    exitCode: result.status ?? 1,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? result.error?.message ?? "",
+  };
+  if (normalized.exitCode !== 0) {
+    fail(`${executable} guest transfer failed (${normalized.exitCode})\n${normalized.stderr}`);
+  }
+  return normalized;
+}
+
 const PINNED_RUST_PATH =
   'rust_bin="$(dirname "$(rustup which --toolchain 1.95.0 cargo)")"; export PATH="$rust_bin:$PATH"';
 
@@ -468,7 +617,7 @@ export function nativeVerifyPlan(
     `cd ${GUEST_REPOSITORY}`,
     `test \"$(git remote get-url origin)\" = ${REPOSITORY_URL}`,
     'test -z "$(git status --porcelain)"',
-    `test \"$(git rev-parse HEAD)\" = \"$(git rev-parse origin/${ref})\"`,
+    ...remoteRefTruthCommands(ref, true),
     'test "$(uname -s)" = Darwin',
     'export PATH="$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.local/share/mise/shims:/opt/homebrew/opt/libxml2/bin:/opt/homebrew/bin:$PATH"',
     PINNED_RUST_PATH,
@@ -486,7 +635,9 @@ export function guestDoctorPlan(sourceRef = "main"): readonly string[] {
     `cd ${GUEST_REPOSITORY}`,
     `test \"$(git remote get-url origin)\" = ${REPOSITORY_URL}`,
     'test -z "$(git status --porcelain)"',
-    `test \"$(git rev-parse HEAD)\" = \"$(git rev-parse origin/${ref})\"`,
+    ...remoteRefTruthCommands(ref, true),
+    ...guestDiskCommands(),
+    ...sshdEffectiveCommands(),
     'export PATH="$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.local/share/mise/shims:/opt/homebrew/opt/libxml2/bin:/opt/homebrew/bin:$PATH"',
     PINNED_RUST_PATH,
     'test "$(bun --version)" = 1.3.14',
@@ -548,6 +699,14 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
+function processCommand(pid: number): string | undefined {
+  if (!Number.isInteger(pid) || pid <= 0) return undefined;
+  const result = run("/bin/ps", ["-ww", "-p", String(pid), "-o", "command="], {
+    allowFailure: true,
+  });
+  return result.exitCode === 0 ? result.stdout.trim() || undefined : undefined;
+}
+
 function currentLaunchAssessment(): LaunchAssessment {
   const expected = buildLaunchPlan(readShareConfig().shares);
   const path = launchRecordPath();
@@ -562,7 +721,12 @@ function currentLaunchAssessment(): LaunchAssessment {
     }
     const recorded = JSON.parse(readFileSync(path, "utf8")) as Partial<LaunchRecord>;
     const pid = typeof recorded.pid === "number" ? recorded.pid : -1;
-    return assessLaunchRecord(expected, recorded, pid > 0 && processIsAlive(pid));
+    return assessLaunchRecord(
+      expected,
+      recorded,
+      pid > 0 && processIsAlive(pid),
+      processCommand(pid),
+    );
   } catch {
     return assessLaunchRecord(expected, undefined);
   }
@@ -668,9 +832,22 @@ function start(): void {
   });
   child.unref();
   writeFileSync(join(directory, `${VM_NAME}.pid`), `${child.pid}\n`, { mode: 0o600 });
+  const pid = child.pid ?? fail("Tart runner did not return a process id");
+  let identity: string | undefined;
+  for (let attempt = 0; attempt < 50 && !identity; attempt += 1) {
+    identity = processCommand(pid);
+    if (!identity) Bun.sleepSync(100);
+  }
+  if (!identity || !/(?:^|\/)tart\s+run\s/.test(identity)) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {}
+    fail(`could not prove exact Tart process identity for PID ${pid}`);
+  }
   const record: LaunchRecord = {
     ...plan,
-    pid: child.pid ?? fail("Tart runner did not return a process id"),
+    pid,
+    processCommand: identity,
     startedAt: new Date().toISOString(),
   };
   writePrivateJson(launchRecordPath(), record);
@@ -770,20 +947,64 @@ function setupSsh(): void {
     'chmod 700 "$HOME/.ssh"',
     'chmod 600 "$HOME/.ssh/authorized_keys"',
   ].join("; ");
-  const password = process.env.VEAN_TART_BOOTSTRAP_PASSWORD ?? "admin";
-  const expectScript = expectPasswordScript(password);
-  const installPlan = sshPasswordInstallPlan(ip, installCommand, knownHostsPath);
-  const expect = spawnSync("/usr/bin/expect", ["-f", "-", "--", ...installPlan], {
-    input: expectScript,
-    encoding: "utf8",
-    timeout: 60_000,
+  let keyProbe = runPlan(sshGuestExecPlan(ip, "true", keyPath, knownHostsPath), {
+    allowFailure: true,
   });
-  if ((expect.status ?? 1) !== 0) {
-    fail(`failed to authorize dedicated SSH key in ${VM_NAME}: ${expect.stderr ?? expect.stdout}`);
+  if (keyProbe.exitCode !== 0) {
+    const password = process.env.VEAN_TART_BOOTSTRAP_PASSWORD ?? "admin";
+    const expectScript = expectPasswordScript(password);
+    const installPlan = sshPasswordInstallPlan(ip, installCommand, knownHostsPath);
+    const expect = spawnSync("/usr/bin/expect", ["-f", "-", "--", ...installPlan], {
+      input: expectScript,
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+    if ((expect.status ?? 1) !== 0) {
+      fail(
+        `failed to authorize dedicated SSH key in ${VM_NAME}: ${expect.stderr ?? expect.stdout}`,
+      );
+    }
+    keyProbe = runPlan(sshGuestExecPlan(ip, "true", keyPath, knownHostsPath), {
+      allowFailure: true,
+    });
+    if (keyProbe.exitCode !== 0) fail("dedicated SSH key did not work after authorization");
   }
-  runPlan(sshGuestExecPlan(ip, "true", keyPath, knownHostsPath));
+
+  runPlan(sshGuestExecPlan(ip, sshHardeningGuestCommand(), keyPath, knownHostsPath));
+  let hardened = false;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const probe = runPlan(
+      sshGuestExecPlan(
+        ip,
+        [...sshdEffectiveCommands(), 'printf "ready\\n"'].join("; "),
+        keyPath,
+        knownHostsPath,
+      ),
+      { allowFailure: true },
+    );
+    if (probe.exitCode === 0 && probe.stdout.includes("ready")) {
+      hardened = true;
+      break;
+    }
+    Bun.sleepSync(500);
+  }
+  if (!hardened) {
+    fail(
+      "SSH key-only hardening did not survive sshd restart; use Tart guest recovery before retrying",
+    );
+  }
   const fingerprint = run("ssh-keygen", ["-lf", knownHostsPath]).stdout.trim();
-  print({ ok: true, vm: VM_NAME, ip, keyPath, knownHostsPath, fingerprint, strictLogin: true });
+  print({
+    ok: true,
+    vm: VM_NAME,
+    ip,
+    keyPath,
+    knownHostsPath,
+    fingerprint,
+    strictLogin: true,
+    passwordAuthentication: false,
+    keyboardInteractiveAuthentication: false,
+  });
 }
 
 function status(): void {
@@ -822,6 +1043,145 @@ function bootstrap(sourceRef: string): void {
     GUEST_REPOSITORY,
   ]);
   print({ ok: true, vm: VM_NAME, repository: GUEST_REPOSITORY, sourceRef: ref });
+}
+
+function sync(sourceRef: string): void {
+  assertRunning();
+  const ref = validateSourceRef(sourceRef);
+  runGuestCommand(syncGuestCommand(ref));
+  print({ ok: true, vm: VM_NAME, repository: GUEST_REPOSITORY, sourceRef: ref, synced: true });
+}
+
+export function validateProjectName(value: string): string {
+  if (!/^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/.test(value)) {
+    fail(`invalid guest project name: ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
+export function validateRemoteRepositoryUrl(value: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    fail(`invalid remote repository URL: ${JSON.stringify(value)}`);
+  }
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash ||
+    !parsed.hostname
+  ) {
+    fail("remote provisioning accepts only credential-free HTTPS Git URLs");
+  }
+  return parsed.toString();
+}
+
+export function guestProjectPath(name: string): string {
+  return `${GUEST_PROJECTS_ROOT}/${validateProjectName(name)}`;
+}
+
+export function provisionRemoteGuestCommand(url: string, sourceRef: string, name: string): string {
+  const repositoryUrl = validateRemoteRepositoryUrl(url);
+  const ref = validateSourceRef(sourceRef);
+  const target = guestProjectPath(name);
+  return [
+    "set -euo pipefail",
+    `target=${shellQuote(target)}`,
+    'test ! -e "$target" || { printf "guest project already exists: %s\\n" "$target" >&2; exit 1; }',
+    'tmp="${target}.tmp-$$"',
+    "trap 'rm -rf \"$tmp\"' EXIT",
+    `git clone --no-checkout --origin origin ${shellQuote(repositoryUrl)} "$tmp"`,
+    'cd "$tmp"',
+    "git fetch --prune --tags origin",
+    ...remoteRefTruthCommands(ref, false),
+    'git checkout --detach "$advertised"',
+    'test -z "$(git status --porcelain)"',
+    "cd ..",
+    'mv "$tmp" "$target"',
+    "trap - EXIT",
+    'printf "%s\\n" "$target"',
+  ].join("; ");
+}
+
+function provisionRemoteProject(url: string, sourceRef: string, name: string): void {
+  assertRunning();
+  const target = guestProjectPath(name);
+  runGuestCommand(provisionRemoteGuestCommand(url, sourceRef, name));
+  print({ ok: true, vm: VM_NAME, project: target, source: "remote", sourceRef });
+}
+
+function createTrackedArchive(source: string, sourceRef: string): { archive: Buffer; sha: string } {
+  const root = realpathSync(source);
+  if (!lstatSync(root).isDirectory()) fail(`local project source is not a directory: ${root}`);
+  const inside = run("git", ["-C", root, "rev-parse", "--is-inside-work-tree"], {
+    allowFailure: true,
+  });
+  if (inside.exitCode !== 0 || inside.stdout.trim() !== "true") {
+    fail(`local project source is not a Git worktree: ${root}`);
+  }
+  for (const args of [
+    ["-C", root, "diff", "--quiet"],
+    ["-C", root, "diff", "--cached", "--quiet"],
+  ]) {
+    if (run("git", args, { allowFailure: true }).exitCode !== 0) {
+      fail("local project has tracked changes; commit them before making a safe tracked archive");
+    }
+  }
+  const ref = validateSourceRef(sourceRef);
+  const sha = run("git", ["-C", root, "rev-parse", "--verify", `${ref}^{commit}`]).stdout.trim();
+  const temporary = mkdtempSync(join(stateDir(), "project-archive-"));
+  const archivePath = join(temporary, "tracked.tar.gz");
+  try {
+    run("git", ["-C", root, "archive", "--format=tar.gz", "-o", archivePath, sha]);
+    return { archive: readFileSync(archivePath), sha };
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+}
+
+export function provisionArchiveGuestCommand(name: string, sourceSha: string): string {
+  if (!/^[0-9a-f]{40}$/.test(sourceSha)) fail(`invalid archive source commit: ${sourceSha}`);
+  const target = guestProjectPath(name);
+  return [
+    "set -euo pipefail",
+    `target=${shellQuote(target)}`,
+    'test ! -e "$target" || { printf "guest project already exists: %s\\n" "$target" >&2; exit 1; }',
+    'tmp="${target}.tmp-$$"',
+    "trap 'rm -rf \"$tmp\"' EXIT",
+    'mkdir -p "$tmp"',
+    'tar -xzf - -C "$tmp"',
+    'cd "$tmp"',
+    "git init -q",
+    "git add -A",
+    `git -c user.name=vean-harness -c user.email=vean-harness@invalid commit -q -m ${shellQuote(`Provision tracked snapshot ${sourceSha}`)}`,
+    `git config vean.sourceCommit ${shellQuote(sourceSha)}`,
+    'test -z "$(git status --porcelain)"',
+    "cd ..",
+    'mv "$tmp" "$target"',
+    "trap - EXIT",
+    'printf "%s\\n" "$target"',
+  ].join("; ");
+}
+
+function provisionArchiveProject(source: string, sourceRef: string, name: string): void {
+  assertRunning();
+  ensureStateDir();
+  const target = guestProjectPath(name);
+  const { archive, sha } = createTrackedArchive(source, sourceRef);
+  runGuestCommandWithInput(provisionArchiveGuestCommand(name, sha), archive);
+  print({
+    ok: true,
+    vm: VM_NAME,
+    project: target,
+    source: "tracked-archive",
+    sourceRef,
+    sourceSha: sha,
+    bytes: archive.length,
+    excludesUntrackedFiles: true,
+  });
 }
 
 function verifyNative(sourceRef: string, args: readonly string[]): void {
@@ -863,7 +1223,7 @@ export function seedSmokeProjectGuestCommand(sourceRef = "main"): string {
     `cd ${GUEST_REPOSITORY}`,
     `test "$(git remote get-url origin)" = ${REPOSITORY_URL}`,
     'test -z "$(git status --porcelain)"',
-    `test "$(git rev-parse HEAD)" = "$(git rev-parse origin/${ref})"`,
+    ...remoteRefTruthCommands(ref, true),
     `project=${shellQuote(GUEST_SMOKE_PROJECT)}`,
     'mkdir -p "$project/corpus"',
     `test -f "$project/corpus/smoke.mlt" || cp ${GUEST_REPOSITORY}/corpus/shotcut-single.mlt "$project/corpus/smoke.mlt"`,
@@ -920,6 +1280,81 @@ function seedSmokeProject(sourceRef: string): void {
   });
 }
 
+export const PROJECT_ARTIFACT_ALLOWLIST = [
+  ".vean/harness/native-runs",
+  ".vean/harness/browser-runs",
+  "test-results",
+  "playwright-report",
+  "coverage",
+] as const;
+
+export function validateProjectArtifactIncludes(values: readonly string[]): string[] {
+  const allowed = new Set<string>(PROJECT_ARTIFACT_ALLOWLIST);
+  const unique = [...new Set(values)];
+  if (unique.length === 0) fail("at least one project artifact include is required");
+  for (const value of unique) {
+    if (!allowed.has(value))
+      fail(`project artifact path is not allowlisted: ${JSON.stringify(value)}`);
+  }
+  return unique;
+}
+
+export function collectProjectArtifactsGuestCommand(
+  name: string,
+  includes: readonly string[],
+): string {
+  const project = guestProjectPath(name);
+  const paths = validateProjectArtifactIncludes(includes);
+  const commands = ["set -euo pipefail", `project=${shellQuote(project)}`, 'test -d "$project"'];
+  for (const path of paths) {
+    commands.push(`path=${shellQuote(path)}`);
+    commands.push(
+      'test -e "$project/$path" || { printf "requested artifact is absent: %s\\n" "$path" >&2; exit 1; }',
+    );
+    commands.push(
+      'test -z "$(find "$project/$path" -type l -print -quit)" || { printf "artifact path contains a symlink: %s\\n" "$path" >&2; exit 1; }',
+    );
+  }
+  commands.push(`tar -czf - -C "$project" -- ${paths.map(shellQuote).join(" ")} | base64`);
+  return commands.join("; ");
+}
+
+function collectProjectArtifacts(
+  name: string,
+  includes: readonly string[],
+  destination?: string,
+): void {
+  assertRunning();
+  const project = guestProjectPath(name);
+  const selected = validateProjectArtifactIncludes(includes);
+  const target = resolve(
+    destination ??
+      join(
+        process.cwd(),
+        ".vean/vm-harness/project-artifacts",
+        `${name}-${new Date().toISOString().replaceAll(":", "-")}.tgz`,
+      ),
+  );
+  mkdirSync(dirname(target), { recursive: true });
+  const result = runGuestCommand(collectProjectArtifactsGuestCommand(name, selected));
+  const bytes = Buffer.from(result.stdout.replaceAll(/\s/g, ""), "base64");
+  if (bytes.length < 2 || bytes[0] !== 0x1f || bytes[1] !== 0x8b) {
+    fail("guest returned an invalid project artifact archive");
+  }
+  writeFileSync(target, bytes, { mode: 0o600 });
+  chmodSync(target, 0o600);
+  print({
+    ok: true,
+    vm: VM_NAME,
+    project,
+    includes: selected,
+    artifact: target,
+    mode: "0600",
+    bytes: bytes.length,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  });
+}
+
 function collectEvidence(destination?: string): void {
   assertRunning();
   const target = resolve(
@@ -961,9 +1396,53 @@ function stop(): void {
   print({ ok: true, vm: VM_NAME, stopped: true });
 }
 
+function ready(sourceRef: string): void {
+  const ref = validateSourceRef(sourceRef);
+  for (const step of READY_STEPS) {
+    switch (step) {
+      case "start":
+        start();
+        break;
+      case "sync":
+        sync(ref);
+        break;
+      case "doctor-guest":
+        doctorGuest(ref);
+        break;
+      case "verify-shares":
+        verifyShares();
+        break;
+      case "seed-smoke-project":
+        seedSmokeProject(ref);
+        break;
+    }
+  }
+  print({
+    ok: true,
+    vm: VM_NAME,
+    ready: true,
+    sourceRef: ref,
+    project: GUEST_SMOKE_PROJECT,
+  });
+}
+
+function optionValue(argv: readonly string[], option: string): string | undefined {
+  const index = argv.indexOf(option);
+  if (index < 0) return undefined;
+  return argv[index + 1] ?? usage();
+}
+
+function optionValues(argv: readonly string[], option: string): string[] {
+  const values: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] === option) values.push(argv[index + 1] ?? usage());
+  }
+  return values;
+}
+
 function usage(): never {
   fail(
-    "usage: macos-vm.ts <doctor|configure|configure-shares|start|setup-ssh|status|bootstrap|doctor-guest|verify-shares|seed-smoke-project|verify-native|collect-evidence|stop> [options]",
+    "usage: macos-vm.ts <doctor|configure|configure-shares|start|setup-ssh|status|bootstrap|sync|ready|doctor-guest|verify-shares|seed-smoke-project|provision-project|verify-native|collect-evidence|collect-project-artifacts|stop> [options]",
   );
 }
 
@@ -998,6 +1477,12 @@ if (import.meta.main) {
       case "bootstrap":
         bootstrap(sourceRef);
         break;
+      case "sync":
+        sync(sourceRef);
+        break;
+      case "ready":
+        ready(sourceRef);
+        break;
       case "doctor-guest":
         doctorGuest(sourceRef);
         break;
@@ -1007,6 +1492,16 @@ if (import.meta.main) {
       case "seed-smoke-project":
         seedSmokeProject(sourceRef);
         break;
+      case "provision-project": {
+        const name = optionValue(argv, "--name") ?? usage();
+        const url = optionValue(argv, "--url");
+        const source = optionValue(argv, "--source");
+        if (Boolean(url) === Boolean(source))
+          fail("provision-project requires exactly one of --url or --source");
+        if (url) provisionRemoteProject(url, sourceRef, name);
+        else provisionArchiveProject(source ?? usage(), sourceRef, name);
+        break;
+      }
       case "verify-native":
         verifyNative(sourceRef, passthrough);
         break;
@@ -1014,6 +1509,16 @@ if (import.meta.main) {
         const destinationIndex = argv.indexOf("--destination");
         collectEvidence(
           destinationIndex >= 0 ? (argv[destinationIndex + 1] ?? usage()) : undefined,
+        );
+        break;
+      }
+      case "collect-project-artifacts": {
+        const name = optionValue(argv, "--name") ?? usage();
+        const includes = optionValues(argv, "--include");
+        collectProjectArtifacts(
+          name,
+          includes.length > 0 ? includes : PROJECT_ARTIFACT_ALLOWLIST,
+          optionValue(argv, "--destination"),
         );
         break;
       }

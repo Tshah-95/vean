@@ -244,10 +244,18 @@ session. Route them through the hidden Tart guest:
 
 ```bash
 bun run vm:macos:status
+bun run vm:macos:ready
 bun run vm:macos:doctor-guest
 bun run vm:macos:verify-native
 bun run vm:macos:collect-evidence
 ```
+
+`vm:macos:ready` is the normal daily entry point. It starts only the hidden
+guest, synchronizes `main` against the remote's independently advertised commit,
+checks key-only SSH and guest disk headroom, verifies read-only media shares,
+and refreshes the guest-local smoke project. See
+[`artifacts/specs/macos-vm-harness.md`](artifacts/specs/macos-vm-harness.md) for
+safe project provisioning and allowlisted artifact collection.
 
 Those are development-app claims. They do not claim that unsigned packaging,
 signing/notarization, updater, release-lineage, or manual accessibility gates are

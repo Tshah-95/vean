@@ -362,7 +362,7 @@ Commands below are implemented unless their row says otherwise. See
 | Verify owned code + component/browser behavior | `bun run verify:harness --profile developer --json` | now |
 | Drive the loopback editor (headless H04) | `bun run drive verify` (equivalent to `bun run verify:browser`) | now |
 | Verify the actual Tauri/WKWebView development app | `bun run verify:tauri --provider auto` · `bun run verify:tauri-release-negative` | now |
-| Verify native menus/dialogs without touching the host desktop | `bun run vm:macos:status` · `bun run vm:macos:doctor-guest` · `bun run vm:macos:verify-native` · `bun run vm:macos:collect-evidence` | now; hidden Tart guest only |
+| Ready and verify native menus/dialogs without touching the host desktop | `bun run vm:macos:ready` · `bun run vm:macos:verify-native` · `bun run vm:macos:collect-evidence` | now; hidden Tart guest only |
 | Bring up the app so the human can click around (`/view`) | `bun src/cli.ts open [project] --dev` (native dev window, this worktree's live viewer) · `bun src/cli.ts open [project] --view browser` (instant browser tab) | now |
 
 ## System deps (not bun packages)
