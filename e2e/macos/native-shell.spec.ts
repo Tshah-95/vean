@@ -175,7 +175,7 @@ describe("Vean AppKit-owned shell", () => {
     );
     await openPanel.waitForExist({ timeout: 15_000 });
     await expect(openPanel).toBeDisplayed();
-    await browser.execute("macos: keys", [{ keys: [GO_TO_FOLDER_KEYSTROKE] }]);
+    await browser.execute("macos: keys", { keys: [GO_TO_FOLDER_KEYSTROKE] });
     let location: WebdriverIO.Element | undefined;
     let lastRootInventory: unknown = [];
     await browser
