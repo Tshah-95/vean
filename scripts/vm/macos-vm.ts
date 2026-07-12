@@ -9,7 +9,8 @@ export const VM_NAME = "vean-macos-dev";
 export const VM_CPU = 8;
 export const VM_MEMORY_MB = 32_768;
 export const VM_DISK_GB = 200;
-export const DEFAULT_IMAGE = "ghcr.io/cirruslabs/macos-tahoe-xcode:latest";
+export const DEFAULT_IMAGE =
+  "ghcr.io/cirruslabs/macos-tahoe-xcode@sha256:61f6e857a3d65dd2f8daf9c51c7b837fa458bcc9181ae8556e645b534dab6bf6";
 export const REPOSITORY_URL = "https://github.com/Tshah-95/vean.git";
 export const GUEST_REPOSITORY = "/Users/admin/Github/vean-runner";
 export const DEFAULT_SSH_KEY = join(homedir(), ".ssh/vean_tart_ed25519");
@@ -205,6 +206,10 @@ export function guestDoctorPlan(sourceRef = "main"): readonly string[] {
     'test "$(bun --version)" = 1.3.14',
     'test "$(node --version)" = v24.15.0',
     'rustup run 1.95.0 rustc --version | grep -q "^rustc 1.95.0"',
+    'test "$(sw_vers -productVersion)" = 26.4',
+    'test "$(sw_vers -buildVersion)" = 25E246',
+    'test "$(sysctl -n hw.model)" = VirtualMac2,1',
+    'xcodebuild -version | grep -q "^Xcode 26.5$"',
     "command -v melt",
     "command -v ffmpeg",
     "command -v xmllint",

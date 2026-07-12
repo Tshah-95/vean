@@ -15,8 +15,9 @@ bun run vm:macos:bootstrap
 bun run vm:macos:doctor-guest
 ```
 
-`configure` clones `ghcr.io/cirruslabs/macos-tahoe-xcode:latest` only when the
-named VM is absent, then adopts and validates the fixed resource profile. It
+`configure` clones the macOS Tahoe/Xcode image pinned at digest
+`sha256:61f6e857a3d65dd2f8daf9c51c7b837fa458bcc9181ae8556e645b534dab6bf6`
+only when the named VM is absent, then adopts and validates the fixed resource profile. It
 fails rather than replacing, shrinking, or silently accepting the wrong VM.
 `start` always uses `tart run --no-graphics --no-audio --no-clipboard`; it logs
 under `~/.local/state/vean-vm/` and waits for a guest command transport.
@@ -54,7 +55,8 @@ it run H06 with both required policy variables:
 `VEAN_ALLOW_INTERACTIVE_MACOS_AUTOMATION=1` and
 `VEAN_MACOS_RUNNER_CLASS=dedicated`.
 
-`doctor-guest` verifies the pinned guest toolchains, Xcode first-launch state,
+`doctor-guest` verifies macOS 26.4 build 25E246 on `VirtualMac2,1`, Xcode 26.5,
+the pinned guest toolchains, Xcode first-launch state,
 media binaries, clean-clone identity, and the real Mac2 driver doctor. On the
 first run, macOS may require one guest-only setup interaction: connect to the
 guest (never the host desktop), grant Accessibility to the signed Xcode Helper

@@ -19,7 +19,20 @@ if ! sudo -n true; then
   exit 1
 fi
 
-sudo -n xcode-select --switch /Applications/Xcode.app/Contents/Developer
+developer_dir="$(xcode-select -p 2>/dev/null || true)"
+if [[ ! -d "$developer_dir" ]] || [[ "$developer_dir" != /Applications/Xcode*.app/Contents/Developer ]]; then
+  shopt -s nullglob
+  xcode_candidates=(/Applications/Xcode*.app/Contents/Developer)
+  shopt -u nullglob
+  if [[ "${#xcode_candidates[@]}" -ne 1 ]]; then
+    echo "xcode-select is invalid and exactly one Xcode developer directory was not found" >&2
+    exit 1
+  fi
+  developer_dir="${xcode_candidates[0]}"
+  sudo -n xcode-select --switch "$developer_dir"
+fi
+[[ "$(xcode-select -p)" == "$developer_dir" ]]
+[[ "$(xcodebuild -version | head -1)" == "Xcode 26.5" ]]
 sudo -n xcodebuild -license accept
 sudo -n xcodebuild -runFirstLaunch
 xcodebuild -checkFirstLaunchStatus
@@ -66,6 +79,7 @@ git checkout --detach "origin/$source_ref"
 bun install --frozen-lockfile
 bun install --cwd viewer --frozen-lockfile
 bun install --cwd app --frozen-lockfile
+bun install --cwd remotion --frozen-lockfile
 
 mkdir -p "$HOME/.local/state/vean-vm"
 cat >"$HOME/.local/state/vean-vm/bootstrap.json" <<EOF
