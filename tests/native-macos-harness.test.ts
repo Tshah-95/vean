@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { countNativeElements } from "../e2e/macos/runtime";
 import { createFixture, hashFile } from "../scripts/harness/fixture";
 import {
   type MacosShellTruthInput,
@@ -145,6 +146,47 @@ describe("native macOS doctor classification", () => {
       source_sha: "abc123",
     });
     expect(evidence).not.toHaveProperty("session");
+  });
+});
+
+describe("Mac2 accessibility XML inventory", () => {
+  it("counts Window, Dialog, and Sheet opening tags with attributes and newlines", () => {
+    const source = `
+      <XCUIElementTypeWindow title="vean">
+        <XCUIElementTypeDialog
+          title="Confirm">
+          <XCUIElementTypeSheet enabled="true"></XCUIElementTypeSheet>
+        </XCUIElementTypeDialog>
+      </XCUIElementTypeWindow>
+    `;
+    expect(countNativeElements(source, "XCUIElementTypeWindow")).toBe(1);
+    expect(countNativeElements(source, "XCUIElementTypeDialog")).toBe(1);
+    expect(countNativeElements(source, "XCUIElementTypeSheet")).toBe(1);
+  });
+
+  it("counts multiple elements and ignores closing tags", () => {
+    const source =
+      "<XCUIElementTypeWindow></XCUIElementTypeWindow>" +
+      "<XCUIElementTypeWindow title='second'></XCUIElementTypeWindow>";
+    expect(countNativeElements(source, "XCUIElementTypeWindow")).toBe(2);
+  });
+
+  it("returns zero when the requested element is absent", () => {
+    expect(
+      countNativeElements(
+        "<XCUIElementTypeApplication></XCUIElementTypeApplication>",
+        "XCUIElementTypeSheet",
+      ),
+    ).toBe(0);
+  });
+
+  it("rejects substring collisions and attribute-name imitations", () => {
+    const source = `
+      <XCUIElementTypeWindowDecoration></XCUIElementTypeWindowDecoration>
+      <node type="XCUIElementTypeWindow"></node>
+      text &lt;XCUIElementTypeWindow&gt;
+    `;
+    expect(countNativeElements(source, "XCUIElementTypeWindow")).toBe(0);
   });
 });
 

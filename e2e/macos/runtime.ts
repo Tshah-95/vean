@@ -75,11 +75,19 @@ export async function nativeInventory(): Promise<{
   sheets: number;
 }> {
   const source = await browser.getPageSource();
-  const count = (name: string) => source.split(`type=\"${name}\"`).length - 1;
   return {
     source,
-    windows: count("XCUIElementTypeWindow"),
-    dialogs: count("XCUIElementTypeDialog"),
-    sheets: count("XCUIElementTypeSheet"),
+    windows: countNativeElements(source, "XCUIElementTypeWindow"),
+    dialogs: countNativeElements(source, "XCUIElementTypeDialog"),
+    sheets: countNativeElements(source, "XCUIElementTypeSheet"),
   };
+}
+
+export type NativeElementName =
+  | "XCUIElementTypeWindow"
+  | "XCUIElementTypeDialog"
+  | "XCUIElementTypeSheet";
+
+export function countNativeElements(source: string, name: NativeElementName): number {
+  return source.match(new RegExp(`<${name}(?:\\s|>)`, "g"))?.length ?? 0;
 }
