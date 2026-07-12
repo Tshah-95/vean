@@ -11,6 +11,7 @@
   { "id": "missing-scenario", "expected_exit": 1, "expected_code": "E_SCENARIO_COVERAGE" },
   { "id": "implicit-skip", "expected_exit": 1, "expected_code": "E_PROFILE_IMPLICIT_SKIP" },
   { "id": "stale-result", "expected_exit": 1, "expected_code": "E_RESULT_STALE" },
+  { "id": "future-result", "expected_exit": 1, "expected_code": "E_RESULT_TIME" },
   { "id": "malformed-evidence", "expected_exit": 1, "expected_code": "E_EVIDENCE_JSON" },
   { "id": "null-evidence", "expected_exit": 1, "expected_code": "E_EVIDENCE_SCHEMA" },
   { "id": "malformed-object", "expected_exit": 1, "expected_code": "E_EVIDENCE_SCHEMA" },

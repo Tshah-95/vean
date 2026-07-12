@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { evaluateHarness, explicitCliNow } from "../scripts/verify-harness";
 
 type Case = { id: string; expected_exit: number; expected_code: string | null };
 type EvidenceFixture = {
@@ -140,7 +141,7 @@ function fixture(testCase: Case): { root: string; manifest: string; evidenceDir:
       '  const evidence = JSON.parse(readFileSync(templatePath, "utf8"));',
       '  if (caseId !== "missing-parent-run") evidence.envelope.parent_run_ids = [runId];',
       "  evidence.envelope.run_id = claimRunId;",
-      '  if (caseId !== "stale-result") {',
+      '  if (caseId !== "stale-result" && caseId !== "future-result") {',
       "    evidence.envelope.start_timestamp = startedAt;",
       "    evidence.envelope.end_timestamp = new Date().toISOString();",
       "  }",
@@ -244,6 +245,10 @@ function fixture(testCase: Case): { root: string; manifest: string; evidenceDir:
     evidence.envelope.start_timestamp = "2000-01-01T00:00:00Z";
     evidence.envelope.end_timestamp = "2000-01-01T00:00:30Z";
   }
+  if (testCase.id === "future-result") {
+    evidence.envelope.start_timestamp = new Date(Date.now() + 119_000).toISOString();
+    evidence.envelope.end_timestamp = new Date(Date.now() + 120_000).toISOString();
+  }
   if (testCase.id === "implicit-skip") {
     const manifest = JSON.parse(readFileSync(join(root, "manifest.json"), "utf8")) as {
       aggregate_profiles: { developer: { implicit_skips_allowed: boolean } };
@@ -322,6 +327,59 @@ afterEach(() => {
 });
 
 describe("independent harness evaluator meta-contract", () => {
+  it("samples the default clock after oracle completion while explicit --now stays frozen", () => {
+    const paths = fixture({ id: "valid", expected_exit: 0, expected_code: null });
+    const launchTime = new Date(Date.now() - 120_000).toISOString();
+    const completionTime = new Date().toISOString();
+    let completionClockCalls = 0;
+    const common = {
+      manifestPath: paths.manifest,
+      evidenceDir: paths.evidenceDir,
+      profile: "release",
+      repoRoot: paths.root,
+      runId: "clock-regression",
+    };
+    const environment = {
+      VEAN_HARNESS_CONTRACT_TEST: "1",
+      VEAN_CASE_ID: "valid",
+      VEAN_EVIDENCE_TEMPLATE: join(paths.evidenceDir, "template.json"),
+    };
+    const previous = Object.fromEntries(
+      Object.keys(environment).map((key) => [key, process.env[key]]),
+    );
+    Object.assign(process.env, environment);
+
+    try {
+      const launchSampled = evaluateHarness({
+        ...common,
+        now: launchTime,
+        validationClock: () => completionTime,
+      });
+      expect(launchSampled.ok).toBe(false);
+      expect(launchSampled.issues.map((issue) => issue.code)).toContain("E_RESULT_TIME");
+      expect(completionClockCalls).toBe(0);
+
+      const completionSampled = evaluateHarness({
+        ...common,
+        validationClock: () => {
+          completionClockCalls += 1;
+          return completionTime;
+        },
+      });
+      expect(completionSampled.issues).toEqual([]);
+      expect(completionSampled.ok).toBe(true);
+      expect(completionClockCalls).toBeGreaterThan(0);
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+
+    expect(explicitCliNow(undefined)).toBeUndefined();
+    expect(explicitCliNow(launchTime)).toBe(launchTime);
+  });
+
   for (const testCase of cases) {
     it(`evaluates fixed corpus case: ${testCase.id}`, () => {
       const paths = fixture(testCase);

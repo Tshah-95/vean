@@ -176,6 +176,7 @@ export type HarnessEvaluationOptions = {
   skipRepoCheck?: boolean;
   runId?: string;
   runOracles?: boolean;
+  validationClock?: () => string;
 };
 
 export type HarnessEvaluation = {
@@ -548,7 +549,7 @@ function validateEvidence(
   }
   const start = Date.parse(evidence.envelope.start_timestamp);
   const end = Date.parse(evidence.envelope.end_timestamp);
-  const now = Date.parse(options.now ?? new Date().toISOString());
+  const now = Date.parse(options.now ?? options.validationClock?.() ?? new Date().toISOString());
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start || end > now + 60_000) {
     issues.push({
       code: "E_RESULT_TIME",
@@ -1172,6 +1173,10 @@ export function evaluateHarness(options: HarnessEvaluationOptions): HarnessEvalu
 
 type CliFlags = Record<string, string | boolean>;
 
+export function explicitCliNow(value: string | boolean | undefined): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
 function flags(argv: string[]): CliFlags {
   const out: CliFlags = {};
   for (let i = 0; i < argv.length; i++) {
@@ -1213,10 +1218,15 @@ function runCli(): void {
   );
   let result: HarnessEvaluation;
   try {
-    const now = typeof args.now === "string" ? args.now : new Date().toISOString();
+    // Leave the default clock dynamic so slow real oracles are validated against
+    // completion time, not the instant before baseline/control/restored runs began.
+    // An explicit --now remains deterministic for the adversarial fixture corpus.
+    const now = explicitCliNow(args.now);
     const maxAgeMs =
       typeof args["max-age-ms"] === "string" ? Number(args["max-age-ms"]) : 86_400_000;
-    if (!Number.isFinite(Date.parse(now))) throw new Error("--now must be a valid timestamp");
+    if (now !== undefined && !Number.isFinite(Date.parse(now))) {
+      throw new Error("--now must be a valid timestamp");
+    }
     if (!Number.isFinite(maxAgeMs) || maxAgeMs <= 0) {
       throw new Error("--max-age-ms must be a positive finite number");
     }
