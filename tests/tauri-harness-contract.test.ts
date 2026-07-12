@@ -1,5 +1,6 @@
 import { installMockSyncOverride } from "@wdio/native-utils";
 import { describe, expect, it } from "vitest";
+import { childPids } from "../e2e/tauri/runtime";
 import {
   type TauriIdentityObservation,
   evaluateTauriIdentity,
@@ -36,6 +37,22 @@ const canonical: TauriIdentityObservation = {
 };
 
 describe("Tauri evidence identity contract", () => {
+  it("treats only pgrep's documented no-match exit as an empty child set", () => {
+    const noMatch = Object.assign(new Error("pgrep exited 1"), { status: 1 });
+    expect(
+      childPids(801, () => {
+        throw noMatch;
+      }),
+    ).toEqual([]);
+
+    const executionFailure = Object.assign(new Error("pgrep exited 2"), { status: 2 });
+    expect(() =>
+      childPids(801, () => {
+        throw executionFailure;
+      }),
+    ).toThrow(executionFailure);
+  });
+
   it("pins the tauri-service compatibility export its published 2.4.0 dependency omitted", () => {
     expect(typeof installMockSyncOverride).toBe("function");
   });

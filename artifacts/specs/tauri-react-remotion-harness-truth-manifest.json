@@ -468,6 +468,7 @@
         "wdio.macos.conf.ts",
         "e2e/macos/native-shell.spec.ts",
         "e2e/macos/runtime.ts",
+        "e2e/tauri/runtime.ts",
         "artifacts/specs/harness-scenarios/macos.json",
         "app/src-tauri/src/lib.rs"
       ]

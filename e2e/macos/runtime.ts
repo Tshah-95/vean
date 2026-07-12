@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { $, browser } from "@wdio/globals";
-import { processIdentity } from "../tauri/runtime";
+import { childPids, processIdentity } from "../tauri/runtime";
 
 export type MacosRunContext = {
   runId: string;
@@ -43,6 +43,105 @@ export function appProcess(context: MacosRunContext): ReturnType<typeof processI
     throw new Error(`expected exact app process, got ${JSON.stringify(candidates)}`);
   }
   return candidates[0] as ReturnType<typeof processIdentity>;
+}
+
+export type PreviewSidecarObservation = {
+  parentPid: number;
+  projectRoot: string;
+  childPids: number[];
+  observed: Array<ReturnType<typeof processIdentity>>;
+  observationErrors: Array<{ pid: number; error: string }>;
+  matching: Array<ReturnType<typeof processIdentity>>;
+};
+
+export class PreviewSidecarWaitError extends Error {
+  readonly reasonCode: "E_H06_PREVIEW_SIDECAR_TIMEOUT" | "E_H06_PREVIEW_SIDECAR_AMBIGUOUS";
+  readonly observation: PreviewSidecarObservation;
+
+  constructor(
+    reasonCode: PreviewSidecarWaitError["reasonCode"],
+    observation: PreviewSidecarObservation,
+  ) {
+    super(`${reasonCode}: ${JSON.stringify(observation)}`);
+    this.name = "PreviewSidecarWaitError";
+    this.reasonCode = reasonCode;
+    this.observation = observation;
+  }
+}
+
+export type PreviewSidecarPollDependencies = {
+  listChildPids: (parentPid: number) => number[];
+  observeProcess: typeof processIdentity;
+  now: () => number;
+  sleep: (durationMs: number) => Promise<void>;
+};
+
+const previewSidecarPollDefaults: PreviewSidecarPollDependencies = {
+  listChildPids: childPids,
+  observeProcess: processIdentity,
+  now: Date.now,
+  sleep: (durationMs) => new Promise((resolveSleep) => setTimeout(resolveSleep, durationMs)),
+};
+
+export function observePreviewSidecars(
+  parentPid: number,
+  projectRoot: string,
+  dependencies: Pick<
+    PreviewSidecarPollDependencies,
+    "listChildPids" | "observeProcess"
+  > = previewSidecarPollDefaults,
+): PreviewSidecarObservation {
+  const pids = dependencies.listChildPids(parentPid);
+  const observed: PreviewSidecarObservation["observed"] = [];
+  const observationErrors: PreviewSidecarObservation["observationErrors"] = [];
+  for (const pid of pids) {
+    try {
+      observed.push(dependencies.observeProcess(pid));
+    } catch (error) {
+      observationErrors.push({ pid, error: String(error) });
+    }
+  }
+  const matching = observed.filter(
+    (candidate) =>
+      candidate.parentPid === parentPid &&
+      candidate.command.includes("src/cli.ts preview") &&
+      candidate.command.includes(`--repo ${projectRoot}`),
+  );
+  return { parentPid, projectRoot, childPids: pids, observed, observationErrors, matching };
+}
+
+export async function waitForPreviewSidecar(
+  parentPid: number,
+  projectRoot: string,
+  options: {
+    timeoutMs?: number;
+    intervalMs?: number;
+    dependencies?: Partial<PreviewSidecarPollDependencies>;
+  } = {},
+): Promise<ReturnType<typeof processIdentity>> {
+  const dependencies = { ...previewSidecarPollDefaults, ...options.dependencies };
+  const timeoutMs = options.timeoutMs ?? 30_000;
+  const intervalMs = options.intervalMs ?? 100;
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("preview sidecar timeoutMs must be positive and finite");
+  }
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+    throw new Error("preview sidecar intervalMs must be positive and finite");
+  }
+  const deadline = dependencies.now() + timeoutMs;
+  let observation = observePreviewSidecars(parentPid, projectRoot, dependencies);
+  while (true) {
+    if (observation.matching.length > 1) {
+      throw new PreviewSidecarWaitError("E_H06_PREVIEW_SIDECAR_AMBIGUOUS", observation);
+    }
+    const match = observation.matching[0];
+    if (match) return match;
+    if (dependencies.now() >= deadline) {
+      throw new PreviewSidecarWaitError("E_H06_PREVIEW_SIDECAR_TIMEOUT", observation);
+    }
+    await dependencies.sleep(intervalMs);
+    observation = observePreviewSidecars(parentPid, projectRoot, dependencies);
+  }
 }
 
 export function writeMacosResult(context: MacosRunContext, result: unknown): void {
