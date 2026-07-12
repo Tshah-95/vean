@@ -21,8 +21,8 @@
       "proof": "named transport controls update the master clock and audio state"
     },
     {
-      "id": "component.sidebar.tabs-and-actions",
-      "proof": "ARIA tabs select action-backed panels and collapse/reopen"
+      "id": "component.drawer.tabs-and-actions",
+      "proof": "ARIA tabs select action-backed drawer panels and collapse/reopen"
     },
     {
       "id": "component.editor.undo-redo-save",
