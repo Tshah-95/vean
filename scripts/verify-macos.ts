@@ -6,6 +6,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -55,6 +56,7 @@ mkdirSync(dirname(canary), { recursive: true });
 if (!Bun.file(canary).size) writeFileSync(canary, "poisoned-developer-state\n", { mode: 0o600 });
 const developerHash = hashFile(canary);
 const fixture = await createFixture({ sourceSha, developerCanary: canary });
+rmSync(fixture.descriptor.database, { force: true });
 const fixtureAppiumHome = join(fixture.root, "appium-home");
 const invocationId = (process.env.VEAN_HARNESS_CLAIM_RUN_ID ?? fixture.descriptor.runId).replace(
   /[^A-Za-z0-9_.-]/g,

@@ -1,5 +1,9 @@
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { createFixture, hashFile } from "../scripts/harness/fixture";
 import {
   type MacosShellTruthInput,
   evaluateMacosShellTruth,
@@ -26,6 +30,51 @@ function firstLaunch(overrides: Partial<TimedCommand> = {}): TimedCommand {
 }
 
 describe("native macOS doctor classification", () => {
+  it("replaces only the poisoned fixture DB before isolated project initialization", async () => {
+    const base = mkdtempSync(join(tmpdir(), "vean-h06-db-regression-"));
+    const canary = join(base, "developer-state-canary");
+    const fixture = await createFixture({
+      sourceSha: "h06-db-regression",
+      developerCanary: canary,
+      baseDir: base,
+    });
+    const developerHash = hashFile(canary);
+    const command = [
+      "src/cli.ts",
+      "project",
+      "init",
+      "--repo",
+      fixture.descriptor.projectRoot,
+      "--json",
+    ];
+    const options = {
+      cwd: process.cwd(),
+      encoding: "utf8" as const,
+      env: {
+        ...process.env,
+        HOME: fixture.descriptor.home,
+        VEAN_CONFIG_HOME: join(fixture.descriptor.home, ".vean"),
+      },
+    };
+    try {
+      expect(readFileSync(fixture.descriptor.database, "utf8")).toMatch(/^fixture-db:/);
+      const poisoned = spawnSync("bun", command, options);
+      expect(poisoned.status).not.toBe(0);
+      expect(`${poisoned.stdout}\n${poisoned.stderr}`).toContain("file is not a database");
+
+      rmSync(fixture.descriptor.database, { force: true });
+      const initialized = spawnSync("bun", command, options);
+      expect(initialized.status).toBe(0);
+      expect(readFileSync(fixture.descriptor.database).subarray(0, 16).toString()).toBe(
+        "SQLite format 3\u0000",
+      );
+      expect(hashFile(canary)).toBe(developerHash);
+    } finally {
+      await fixture.close();
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
   it("always closes its fixture after an internal post-fixture exception", () => {
     const result = spawnSync(
       "bun",
