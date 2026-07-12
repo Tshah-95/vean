@@ -6,6 +6,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -280,6 +281,8 @@ const cells = native.cells.map((cell) => {
 });
 const macosBuild = run(["sw_vers", "-buildVersion"]);
 const evidencePath = join(outputRoot, "wkwebview-media-evidence.json");
+const observationPath = join(outputRoot, "wkwebview-media-observation.json");
+const pendingPath = join(outputRoot, ".wkwebview-media-evidence.pending.json");
 const relativeArtifact = (path: string) => relative(outputRoot, path);
 const evidence = {
   schema_version: "1.0.0",
@@ -308,17 +311,27 @@ const evidence = {
   ),
   cells,
 };
-writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
-
-verifyExternalMediaEvidence({
-  evidencePath,
-  kind: "wkwebview-media-runtime",
-  fixtureManifestSha256: expectedManifestSha,
-  policySha256s,
-  requiredCellOutcomes: Object.fromEntries(
-    matrix.required_cells.map((cell) => [cell.id, cell.wkwebview]),
-  ),
-});
+writeFileSync(
+  observationPath,
+  `${JSON.stringify({ ...evidence, status: "observed_unverified" }, null, 2)}\n`,
+  { mode: 0o600 },
+);
+writeFileSync(pendingPath, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
+try {
+  verifyExternalMediaEvidence({
+    evidencePath: pendingPath,
+    kind: "wkwebview-media-runtime",
+    fixtureManifestSha256: expectedManifestSha,
+    policySha256s,
+    requiredCellOutcomes: Object.fromEntries(
+      matrix.required_cells.map((cell) => [cell.id, cell.wkwebview]),
+    ),
+  });
+  renameSync(pendingPath, evidencePath);
+} catch (error) {
+  rmSync(pendingPath, { force: true });
+  throw error;
+}
 const cleanup = await fixture.close();
 if (hashFile(developerCanary) !== developerCanaryHash) throw new Error("E_H07_WK_DEVELOPER_STATE");
 rmSync(staticDir, { recursive: true, force: true });
