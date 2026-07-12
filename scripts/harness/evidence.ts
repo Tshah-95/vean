@@ -133,6 +133,8 @@ export function writeVerifiedEvidence(options: {
   artifactPaths: string[];
   result: unknown;
   controlPlan?: ControlPlan;
+  scenarioPath?: string;
+  executedScenarioIds?: string[];
 }): void {
   const evidencePath = process.env.VEAN_HARNESS_EVIDENCE_PATH;
   if (!evidencePath) {
@@ -168,7 +170,7 @@ export function writeVerifiedEvidence(options: {
       command_implementation_hash: commandHash,
       fixture_path: options.fixturePath,
       fixture_hash: hashPath(options.fixturePath),
-      scenario_ledger_hash: null,
+      scenario_ledger_hash: options.scenarioPath ? hashPath(options.scenarioPath) : null,
       executable_app_dmg_update_hashes: Object.fromEntries(
         options.artifactPaths.map((path) => [path, hashPath(path)]),
       ),
@@ -183,7 +185,7 @@ export function writeVerifiedEvidence(options: {
       parent_run_ids: [runId],
       parent_artifact_hashes: [...new Set([...Object.values(implementationHashes), commandHash])],
     },
-    executed_scenario_ids: [],
+    executed_scenario_ids: options.executedScenarioIds ?? [],
     negative_control: {
       control_id: options.controlId,
       before_hash: plan.before_hash,

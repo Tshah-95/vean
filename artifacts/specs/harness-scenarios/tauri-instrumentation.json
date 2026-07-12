@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "suite": "tauri-instrumentation-absence",
+  "scenarios": [
+    {
+      "id": "tauri-production-instrumentation-development-candidate",
+      "provider": "release-negative",
+      "steps": [
+        "build without default features",
+        "scan dependency tree, config, capabilities, frontend packages, and binary symbols",
+        "launch under hostile WDIO environment variables",
+        "reject WebDriver status/session access on the fixture-owned port"
+      ],
+      "scope": "development candidate only; H08R must repeat against the exact signed and installed release lineage"
+    }
+  ]
+}

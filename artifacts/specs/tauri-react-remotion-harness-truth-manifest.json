@@ -808,7 +808,7 @@
       "oracle_exists": false,
       "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "finalizer_owner": "H08R",
-      "scenario_manifest": "artifacts/specs/harness-scenarios/tauri.json",
+      "scenario_manifest": "artifacts/specs/harness-scenarios/tauri-instrumentation.json",
       "negative_control": {
         "control_id": "nc-test-instrumentation-absent",
         "setup_command": "bun run harness:mutate --control nc-test-instrumentation-absent",
@@ -830,7 +830,7 @@
         "app/src-tauri/src/lib.rs",
         "app/src-tauri/capabilities/default.json",
         "app/src-tauri/tauri.conf.json",
-        "artifacts/specs/harness-scenarios/tauri.json"
+        "artifacts/specs/harness-scenarios/tauri-instrumentation.json"
       ]
     },
     {

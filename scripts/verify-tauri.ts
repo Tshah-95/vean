@@ -373,6 +373,8 @@ writeVerifiedEvidence({
   artifactPaths: [bundlePath, binaryPath, durableTimelinePath],
   result: completedOracle,
   controlPlan,
+  scenarioPath: join(repo, "artifacts/specs/harness-scenarios/tauri.json"),
+  executedScenarioIds: ["tauri-final-viewer-split-save"],
 });
 if (hashFile(canary) !== developerHash) throw new Error("developer canary changed after cleanup");
 if (!process.env.VEAN_HARNESS_EVIDENCE_PATH) {
