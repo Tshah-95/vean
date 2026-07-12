@@ -461,7 +461,7 @@ run/job ID. Required evidence includes:
 
 ## Completion oracle
 
-The truth manifest defines 25 downstream claims plus an independently proven
+The truth manifest defines 26 downstream claims plus an independently proven
 evaluator meta-contract. A completion report is valid only after:
 
 1. all implementation branches are reconciled to canonical `main`;
@@ -504,7 +504,7 @@ making the gates honest.
 
 The harness program is done when:
 
-- the evaluator meta-contract and all 25 truth-manifest claims are verified on
+- the evaluator meta-contract and all 26 truth-manifest claims are verified on
   canonical `main` or exact final release lineage;
 - `verify:all` composes without accessing developer state or leaking processes;
 - Chrome, actual WKWebView, and native AppKit evidence are clearly separated;

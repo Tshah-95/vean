@@ -84,6 +84,7 @@
         "claim-ci-enforcement",
         "claim-release-evidence-current",
         "claim-failure-evidence",
+        "claim-installed-webview-policy",
         "claim-guidance-current"
       ],
       "implicit_skips_allowed": false
@@ -541,6 +542,36 @@
         ]
       },
       "oracle_implementation_paths": ["scripts/verify-webview-policy.ts", "src/preview/security.ts"]
+    },
+    {
+      "claim_id": "claim-installed-webview-policy",
+      "claim": "The exact installed release package enforces the approved policy in its actual WKWebView and contains no broader navigation, resource, evaluation, or cross-origin authority.",
+      "oracle_command": "bun run verify:release --suite installed-webview-policy --lineage <manifest>",
+      "expected_predicate": "actual installed WKWebView behavior and package inspection are bound to the exact signed release lineage and reject hostile navigation/resource/eval/cross-origin cases without test authority",
+      "canonical_artifact_paths": ["release/", "artifacts/release-evidence/webview-policy/"],
+      "worker_lane_owner": "H08R",
+      "verifier_owner": "security-release",
+      "dispatch_class": "release-manual",
+      "current_status": "open",
+      "oracle_exists": false,
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
+      "finalizer_owner": "H08R",
+      "scenario_manifest": "artifacts/specs/harness-scenarios/release.json",
+      "negative_control": {
+        "control_id": "nc-installed-webview-policy",
+        "setup_command": "bun run harness:mutate --control nc-installed-webview-policy",
+        "mutation_or_fixture_hash": "required: substituted package/policy lineage hash differs from the approved installed candidate",
+        "oracle_command": "bun run verify:release --suite installed-webview-policy --lineage <manifest>",
+        "expected_oracle_exit": 1,
+        "expected_status": "failed",
+        "expected_reason_code": "SENSITIVITY_INSTALLED_WEBVIEW_POLICY",
+        "cleanup_command": "bun run harness:mutate --restore nc-installed-webview-policy",
+        "restoration_predicate": "restored lineage hashes match and the exact installed package oracle returns verified",
+        "evidence_paths": [
+          "artifacts/test-runs/<run-id>/negative-controls/nc-installed-webview-policy.json"
+        ]
+      },
+      "oracle_implementation_paths": ["scripts/verify-release.ts", "e2e/release/"]
     },
     {
       "claim_id": "claim-react-components",

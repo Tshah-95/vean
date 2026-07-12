@@ -172,11 +172,12 @@ oracle execution, evidence refresh, and completion status.
 - Worktree: `pm/harness-h08r-release`
 - Starts: H08 candidate merged
 - Owns: signing/notary/staple, updater E2E, final post-sign package/Mac2 smoke,
-  manual keyboard/VoiceOver assessment, immutable lineage
+  installed-WKWebView policy proof, manual keyboard/VoiceOver assessment,
+  immutable lineage
 - Escalate: Apple/updater key custody, release authority, assessor availability
 - Ready when: all results reference one source-to-final lineage; vN to vN+1 and
-  tamper/interruption/replay/downgrade cases pass; manual evidence binds exact
-  package/OS/VoiceOver version.
+  tamper/interruption/replay/downgrade cases pass; actual installed WKWebView
+  policy and manual evidence bind the exact package/OS/WebKit/VoiceOver version.
 
 ## H09 — CI and evidence
 
