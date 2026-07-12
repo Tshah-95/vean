@@ -1,12 +1,12 @@
 {
   "program": "tauri-react-remotion-harness",
-  "observed_at": "2026-07-12T00:10:00Z",
+  "observed_at": "2026-07-12T00:12:30Z",
   "target_branch": "main",
-  "target_branch_sha": "da7c9065bdb40357c1469fb3b7b01155d1d8da3b",
+  "target_branch_sha": "4a32c5bcff227404bd7039c1bfd4ba195ee9f129",
   "canonical_oracle": {
     "command": "bun run verify:harness --profile developer --json",
     "exit_code": 1,
-    "result": "structured OPEN: eight developer claims remain unimplemented; H00 meta-contract passes 32 adversarial cases"
+    "result": "structured OPEN at run 25ab67bc-1722-4253-b06b-7495d7b23c96: H00 passes; eight named developer claims remain open"
   },
   "active_lane": "H00",
   "claims": [
@@ -15,12 +15,12 @@
       "source_of_truth": "bun run test tests/harness-contract.test.ts",
       "old_failure": "bun run verify:harness --profile developer --json (script absent)",
       "new_gate": "bun run test tests/harness-contract.test.ts: 32/32 pass; typecheck and Biome pass",
-      "target_branch_sha": "da7c9065bdb40357c1469fb3b7b01155d1d8da3b",
-      "post_integration_result": "awaiting clean canonical commit and rerun"
+      "target_branch_sha": "4a32c5bcff227404bd7039c1bfd4ba195ee9f129",
+      "post_integration_result": "verified: 32/32 meta-contract cases, typecheck, and Biome pass on clean canonical main"
     }
   ],
   "roadmap_status": {
-    "H00": "ready_for_canonical_commit",
+    "H00": "complete",
     "H01": "open",
     "H02": "open",
     "H09A": "open",
