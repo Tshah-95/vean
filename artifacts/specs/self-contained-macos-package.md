@@ -1,6 +1,6 @@
 # Self-contained Vean macOS package implementation spec
 
-Status: PM-approved; implementation authorized after H07 verification  
+Status: PM-approved; implementation authorized after the H07 corpus/baseline freeze
 Roadmap units: H08 unsigned candidate; H08R signed release  
 Decision basis: package audit on `b416c8a5f26730a838a3e847aaab44e3e4772508`
 
@@ -61,6 +61,9 @@ cannot claim any H08R property.
 7. **H07 is a hard lineage input.** The completion run must name a non-draft H07
    fixture-manifest hash, semantic-oracle version/hash, runtime-matrix hash, and
    approved expected-output set. Placeholder or different-parent H07 inputs fail.
+   H08 implementation may begin from the frozen H07 corpus and baseline; H08's
+   optimized-package result is itself required to close H07's release-performance
+   cell, so requiring all of H07 to verify before H08 starts would be circular.
 
 ## Release-mode environment policy
 
