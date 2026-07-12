@@ -192,7 +192,8 @@ The v2 path intentionally leaves the older `/Users/admin/Projects/vean-smoke`
 project untouched. A seed marker owns only the v2 timeline and three copied
 fixtures. Repeated seeding verifies their hashes/content and fails rather than
 overwriting any edit; an existing v2 directory without that marker is treated
-as user-owned and refused. A failed first creation is removed atomically. This
+as user-owned and refused. A failed fixture/timeline construction removes its
+partial project before ownership is committed. This
 preserves hands-on projects while making a fresh daily seed exercise real video,
 audio, and alpha paths. The committed lower-third parity document still depends
 on a generated Remotion render, so the daily seed does not claim Remotion parity;
