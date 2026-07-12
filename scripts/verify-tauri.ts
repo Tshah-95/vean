@@ -11,7 +11,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { listenerPid, processIdentity } from "../e2e/tauri/runtime";
 import { fromMlt } from "../src/ir/parse";
+import type { Timeline } from "../src/ir/types";
 import {
   controlRoot,
   ensureControlPlan,
@@ -21,6 +23,7 @@ import {
 } from "./harness/evidence";
 import { createFixture, hashFile } from "./harness/fixture";
 import { runSelfUnderSupervisor } from "./harness/supervisor";
+import { evaluateSplitPersistence } from "./harness/tauri-domain-truth";
 import { evaluateTauriIdentity } from "./harness/tauri-identity";
 
 const repo = resolve(import.meta.dirname, "..");
@@ -247,11 +250,27 @@ type NativeResult = {
   sourceSha?: string;
   binary?: { observedPath?: string; observedHash?: string };
   process?: { pid?: number; observedBundleId?: string };
-  sidecar?: { pid?: number };
   window?: { finalUrl?: string };
   runtime?: { webkitVersion?: string };
   driver?: { port?: number; listenerPid?: number; sessionId?: string };
-  actionEnvelope?: { ok?: boolean; value?: { ok?: boolean; revision?: number } };
+  action?: { id?: string; input?: { uuid?: string; frame?: number } };
+  actionEnvelope?: {
+    ok?: boolean;
+    value?: {
+      ok?: boolean;
+      revision?: number;
+      ir?: Timeline;
+      consequences?: {
+        clipsAdded?: Array<{ uuid?: string; track?: string; position?: number; playtime?: number }>;
+        clipsTrimmed?: Array<{
+          uuid?: string;
+          inDelta?: number;
+          outDelta?: number;
+          playtimeDelta?: number;
+        }>;
+      };
+    };
+  };
   saveEnvelope?: { path?: string };
 };
 const native = JSON.parse(readFileSync(nativeResultPath, "utf8")) as NativeResult;
@@ -262,6 +281,33 @@ const clips = [...parsed.tracks.video, ...parsed.tracks.audio].flatMap((track) =
 );
 const afterTimelineHash = hashFile(timelinePath);
 const savePath = native.saveEnvelope?.path;
+const appPid = native.process?.pid;
+if (!Number.isInteger(appPid)) throw new Error("native evidence omitted the app PID");
+const directChildren = Bun.spawnSync(["pgrep", "-P", String(appPid)])
+  .stdout.toString()
+  .trim()
+  .split("\n")
+  .map((value) => Number.parseInt(value, 10))
+  .filter(Number.isInteger);
+const sidecarCommandFragments = [
+  "src/cli.ts preview",
+  "--no-open --prod",
+  `--port ${fixture.descriptor.previewPort}`,
+  `--repo ${fixture.descriptor.projectRoot}`,
+];
+const sidecarCandidates = directChildren
+  .map(processIdentity)
+  .filter((identity) =>
+    sidecarCommandFragments.every((fragment) => identity.command.includes(fragment)),
+  );
+if (sidecarCandidates.length !== 1) {
+  throw new Error(
+    `expected one independently derived preview child: ${JSON.stringify(sidecarCandidates)}`,
+  );
+}
+const sidecar = sidecarCandidates[0];
+if (!sidecar) throw new Error("preview sidecar identity missing");
+const observedPreviewListenerPid = listenerPid(fixture.descriptor.previewPort);
 const identityPredicate = evaluateTauriIdentity({
   expectedBinaryPath: binaryPath,
   expectedBinaryHash: controlConfig.binaryHashOverride ?? binaryHash,
@@ -275,26 +321,36 @@ const identityPredicate = evaluateTauriIdentity({
   appPid: native.process?.pid,
   expectedPreviewPort: fixture.descriptor.previewPort + controlConfig.previewPortOffset,
   observedPreviewPort: fixture.descriptor.previewPort,
-  previewListenerPid: native.sidecar?.pid,
-  sidecarPid: native.sidecar?.pid,
+  previewListenerPid: observedPreviewListenerPid,
+  sidecarPid: sidecar.pid,
+  sidecarParentPid: sidecar.parentPid,
+  sidecarProcessGroup: sidecar.processGroup,
+  sidecarProcessMarker: sidecar.processMarker,
+  expectedSidecarProcessMarker: `vean-sidecar-${appPid}-${fixture.descriptor.previewPort}`,
+  sidecarCommand: sidecar.command,
+  expectedSidecarCommandFragments: sidecarCommandFragments,
   expectedFinalUrl: controlConfig.finalUrlOverride ?? expectedFinalUrl,
   observedFinalUrl: native.window?.finalUrl,
 });
+const documentPredicate = evaluateSplitPersistence({
+  actionId: native.action?.id,
+  input: native.action?.input,
+  envelope: native.actionEnvelope,
+  parsed,
+  originalUuid: "{7c1a0e2a-0001-4abc-9d00-000000000001}",
+  splitFrame: 40,
+  timelinePath,
+  savePath,
+  beforeHash: beforeTimelineHash,
+  afterHash: afterTimelineHash,
+});
 const predicate = {
   ...identityPredicate,
+  ...documentPredicate,
   nativeProvider: native.provider === "embedded-safe",
   finalWkwebview: Boolean(native.runtime?.webkitVersion),
   driverSession:
     native.driver?.port === fixture.descriptor.webdriverPort && Boolean(native.driver?.sessionId),
-  actionEnvelope:
-    native.actionEnvelope?.ok === true &&
-    native.actionEnvelope?.value?.ok === true &&
-    native.actionEnvelope?.value?.revision === 1,
-  persistedDocument:
-    beforeTimelineHash !== afterTimelineHash &&
-    clips.length === 2 &&
-    clips.some((clip) => clip.id === "{7c1a0e2a-0001-4abc-9d00-000000000001}") &&
-    savePath === timelinePath,
   sourceAndFixture:
     native.sourceSha === sourceSha && native.fixtureRunId === fixture.descriptor.runId,
   developerStateUnchanged: hashFile(canary) === developerHash,
@@ -359,6 +415,7 @@ writeVerifiedEvidence({
     join(repo, "vitest.config.ts"),
     join(repo, "scripts/verify-tauri.ts"),
     join(repo, "scripts/doctor-tauri-driver.ts"),
+    join(repo, "scripts/harness/tauri-domain-truth.ts"),
     join(repo, "scripts/harness/tauri-identity.ts"),
     join(repo, "scripts/harness/tauri-ledger-monitor.ts"),
     join(repo, "wdio.tauri.conf.ts"),
@@ -368,6 +425,7 @@ writeVerifiedEvidence({
     join(repo, "app/src-tauri/src/lib.rs"),
     join(repo, "artifacts/specs/harness-scenarios/tauri.json"),
     join(repo, "tests/tauri-harness-contract.test.ts"),
+    join(repo, "tests/tauri-domain-truth.test.ts"),
   ],
   generatedPaths: [
     nativeResultPath,

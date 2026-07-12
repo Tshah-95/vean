@@ -46,6 +46,9 @@ export function listenerPid(port: number): number {
 
 export function processIdentity(pid: number): {
   pid: number;
+  parentPid: number;
+  processGroup: number;
+  processMarker: string;
   executable: string;
   command: string;
   startedAt: string;
@@ -58,8 +61,21 @@ export function processIdentity(pid: number): {
   const executable = realpathSync(executableLine.slice(1));
   const fullCommand = command("ps", "-p", String(pid), "-o", "command=");
   const startedAt = command("ps", "-p", String(pid), "-o", "lstart=");
+  const [parentPid, processGroup] = command("ps", "-p", String(pid), "-o", "ppid=,pgid=")
+    .split(/\s+/)
+    .map((value) => Number.parseInt(value, 10));
+  const processMarker =
+    command("ps", "eww", "-p", String(pid), "-o", "command=").match(
+      /(?:^|\s)VEAN_PROCESS_MARKER=([^\s]+)/,
+    )?.[1] ?? "";
+  if (!Number.isInteger(parentPid) || !Number.isInteger(processGroup)) {
+    throw new Error(`could not observe parent/process group for PID ${pid}`);
+  }
   return {
     pid,
+    parentPid: parentPid as number,
+    processGroup: processGroup as number,
+    processMarker,
     executable: resolve(executable),
     command: fullCommand,
     startedAt,

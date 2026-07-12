@@ -20,6 +20,17 @@ const canonical: TauriIdentityObservation = {
   observedPreviewPort: 41002,
   previewListenerPid: 802,
   sidecarPid: 802,
+  sidecarParentPid: 801,
+  sidecarProcessGroup: 802,
+  sidecarProcessMarker: "vean-sidecar-801-41002",
+  expectedSidecarProcessMarker: "vean-sidecar-801-41002",
+  sidecarCommand: "bun src/cli.ts preview --no-open --prod --port 41002 --repo /tmp/project",
+  expectedSidecarCommandFragments: [
+    "src/cli.ts preview",
+    "--no-open --prod",
+    "--port 41002",
+    "--repo /tmp/project",
+  ],
   expectedFinalUrl: "http://127.0.0.1:41002/?route=timeline%3Amain",
   observedFinalUrl: "http://127.0.0.1:41002/?route=timeline%3Amain",
 };
@@ -40,6 +51,14 @@ describe("Tauri evidence identity contract", () => {
     ["foreign WebDriver listener", { webdriverListenerPid: 999 }, "webdriverListenerOwned"],
     ["wrong WebDriver port", { observedWebdriverPort: 4445 }, "webdriverListenerOwned"],
     ["foreign preview listener", { previewListenerPid: 999 }, "previewListenerOwned"],
+    [
+      "tautological foreign preview listener and sidecar",
+      { previewListenerPid: 999, sidecarPid: 999 },
+      "previewListenerOwned",
+    ],
+    ["foreign sidecar parent", { sidecarParentPid: 999 }, "previewListenerOwned"],
+    ["foreign sidecar process group", { sidecarProcessGroup: 999 }, "previewListenerOwned"],
+    ["foreign sidecar marker", { sidecarProcessMarker: "foreign" }, "previewListenerOwned"],
     ["splash-only URL", { observedFinalUrl: "tauri://localhost/" }, "exactFinalUrl"],
     ["standalone-browser URL", { observedFinalUrl: "http://127.0.0.1:5173/" }, "exactFinalUrl"],
   ] as const) {

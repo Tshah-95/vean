@@ -118,7 +118,7 @@ describe("Vean's final localhost WKWebView", () => {
         observedBundleId: bundleIdentifier(appPid),
         expectedBundleId: context.bundleId,
       },
-      sidecar: { ...sidecar, processGroup: sidecarRecord.pgid },
+      sidecar: { ...sidecar, ledgerProcessGroup: sidecarRecord.pgid },
       window: { label: "main", handles: windowHandles, finalUrl: url },
       runtime: {
         userAgent,
@@ -132,6 +132,10 @@ describe("Vean's final localhost WKWebView", () => {
         node: process.version,
       },
       actionEnvelope,
+      action: {
+        id: "split",
+        input: { uuid: "{7c1a0e2a-0001-4abc-9d00-000000000001}", frame: 40 },
+      },
       saveEnvelope,
       persistedTimeline: context.timelinePath,
       screenshotPath,

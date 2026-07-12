@@ -13,6 +13,12 @@ export type TauriIdentityObservation = {
   observedPreviewPort?: number;
   previewListenerPid?: number;
   sidecarPid?: number;
+  sidecarParentPid?: number;
+  sidecarProcessGroup?: number;
+  sidecarProcessMarker?: string;
+  expectedSidecarProcessMarker: string;
+  sidecarCommand?: string;
+  expectedSidecarCommandFragments: string[];
   expectedFinalUrl: string;
   observedFinalUrl?: string;
 };
@@ -31,7 +37,13 @@ export function evaluateTauriIdentity(input: TauriIdentityObservation): Record<s
     previewListenerOwned:
       input.observedPreviewPort === input.expectedPreviewPort &&
       input.previewListenerPid === input.sidecarPid &&
-      input.sidecarPid !== input.appPid,
+      input.sidecarPid !== input.appPid &&
+      input.sidecarParentPid === input.appPid &&
+      input.sidecarProcessGroup === input.sidecarPid &&
+      input.sidecarProcessMarker === input.expectedSidecarProcessMarker &&
+      input.expectedSidecarCommandFragments.every((fragment) =>
+        input.sidecarCommand?.includes(fragment),
+      ),
     exactFinalUrl: input.observedFinalUrl === input.expectedFinalUrl,
   };
 }
