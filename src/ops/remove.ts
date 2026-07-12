@@ -25,6 +25,7 @@ import {
   findClip,
   findTrack,
   insertEntryAt,
+  linkDesyncWarning,
   playtime,
   rippleOtherTracks,
 } from "./primitives";
@@ -70,6 +71,20 @@ export const remove: Op<RemoveArgs> = (state, args): OpResult | EditError => {
     playtime: len,
   });
   c.durationDelta = -len; // ripple-close shortens the track by the clip playtime
+
+  // Record a link desync (record, don't corrupt): ripple-removing ONE half of a
+  // linked A/V pair leaves the partner in place (its track is only shifted if it's
+  // an OTHER track under rippleAllTracks, and even then not from the partner's own
+  // position), so the pair drifts and the partner's link now dangles. The remove is
+  // performed correctly; we flag it for the diagnostics layer (dangling-link + desync).
+  c.warnings.push(
+    ...linkDesyncWarning(
+      state,
+      loc.clip,
+      "remove",
+      "the clip was ripple-deleted but its linked partner was not",
+    ),
+  );
 
   // Track ids the cross-track ripple-close LEFT IN PLACE (content at the seam);
   // the inverse must NOT re-open a gap on these, or undo would shift them.

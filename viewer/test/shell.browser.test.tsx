@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { describe, expect, test, vi } from "vitest";
 import { cleanup } from "vitest-browser-react";
-import { page, userEvent } from "vitest/browser";
+import { page } from "vitest/browser";
 
 const api = vi.hoisted(() => ({
   fetchTimeline: vi.fn(),
@@ -37,22 +37,45 @@ vi.mock("../src/api", async (importOriginal) => ({
 
 import { App } from "../src/App";
 import { ClockProvider, useClockInstance } from "../src/ClockProvider";
-import { Sidebar } from "../src/components/Sidebar";
+import { SourceProvider } from "../src/SourceProvider";
 import { Transport } from "../src/components/Transport";
+import { Drawer } from "../src/components/shell/Drawer";
+import type { DrawerView } from "../src/components/shell/layout";
 
 function ConfiguredTransport() {
   const clock = useClockInstance();
   const [volume, setVolume] = useState(0.75);
   const [muted, setMuted] = useState(false);
-  useEffect(() => clock.configure([30, 1], 120), [clock]);
+  useEffect(() => {
+    clock.configure([30, 1], 120);
+    // The transport no longer owns a scrub slider (the timeline ruler is the seek
+    // surface), so drive the clock directly and assert the timecode readout follows.
+    clock.seekTo(42);
+  }, [clock]);
   return (
     <Transport
+      editPoints={[0, 60]}
       volume={volume}
       muted={muted}
       onVolumeChange={setVolume}
       onMutedChange={setMuted}
       sinkId=""
       onSinkChange={() => {}}
+    />
+  );
+}
+
+/** The drawer as AppShell mounts it: a stateful view selection over the icon tabs. */
+function ConfiguredDrawer() {
+  const [view, setView] = useState<DrawerView>("media");
+  return (
+    <Drawer
+      view={view}
+      onSelect={setView}
+      width={264}
+      checksCount={0}
+      route="timeline:fixture"
+      baseTitle="Fixture"
     />
   );
 }
@@ -77,30 +100,32 @@ describe("viewer shell browser contracts", () => {
       </ClockProvider>,
     );
     await expect.element(page.getByRole("button", { name: "Play" })).toBeVisible();
-    const playhead = page.getByRole("slider", { name: "Playhead frame" });
-    await userEvent.fill(playhead, "42");
     await expect
       .element(page.getByRole("status", { name: "Playhead timecode" }))
       .toHaveTextContent("00:00:01:12");
+    // Volume + mute live behind the audio menu (the macOS Sound-menu pattern).
+    await page.getByRole("button", { name: "Audio" }).click();
     await page.getByRole("button", { name: "Mute" }).click();
     await expect.element(page.getByRole("button", { name: "Unmute" })).toBeVisible();
-    await expect.element(page.getByRole("slider", { name: "Volume" })).toHaveValue("0");
+    await expect
+      .element(page.getByRole("slider", { name: "Volume" }))
+      .toHaveAttribute("aria-valuenow", "0");
   });
 
-  test("component.sidebar.tabs-and-actions", async () => {
+  test("component.drawer.tabs-and-actions", async () => {
     await page.render(
       <ClockProvider>
-        <Sidebar route="timeline:fixture" baseTitle="Fixture" />
+        <SourceProvider>
+          <ConfiguredDrawer />
+        </SourceProvider>
       </ClockProvider>,
     );
     const media = page.getByRole("tab", { name: "Media" });
-    const render = page.getByRole("tab", { name: "Render" });
+    const jobs = page.getByRole("tab", { name: "Jobs" });
     await expect.element(media).toHaveAttribute("aria-selected", "true");
-    await render.click();
-    await expect.element(render).toHaveAttribute("aria-selected", "true");
-    await expect.element(page.getByRole("tabpanel", { name: "Render" })).toBeVisible();
-    await page.getByRole("button", { name: "Hide panels" }).click();
-    await expect.element(page.getByRole("button", { name: "Show panels" })).toBeVisible();
+    await jobs.click();
+    await expect.element(jobs).toHaveAttribute("aria-selected", "true");
+    await expect.element(page.getByRole("tabpanel", { name: "Jobs" })).toBeVisible();
     await expect(api.runAction("unknown.action")).rejects.toThrow(
       "unregistered fixture action: unknown.action",
     );

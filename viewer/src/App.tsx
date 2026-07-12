@@ -1,3 +1,4 @@
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 // The viewer app. Loads the timeline IR (/api/timeline), configures the master
 // clock to the profile fps + total frames, and derives the overlay (the Remotion
 // graphic clip) so the @remotion/player shows the right composition for the right
@@ -5,17 +6,20 @@
 // working IR at the playhead and seeks per-source `<video>`s — NO `melt` proxy, no
 // save (DESIGN-LIVE-PREVIEW §6 Tier 0). All preview layers are slaved to the one
 // master clock (see ClockProvider + PreviewPane).
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ClockProvider, useClockInstance } from "./ClockProvider";
 import { PreviewProvider } from "./PreviewProvider";
+import { SourceProvider, useSource } from "./SourceProvider";
 import { type ProjectEntry, fetchDiagnostics, fetchProjects, fetchTimeline } from "./api";
-import { Header } from "./components/Header";
 import { PreviewPane } from "./components/PreviewPane";
-import { Sidebar } from "./components/Sidebar";
+import { SourcePreview } from "./components/SourcePreview";
 import { TimelineStrip } from "./components/TimelineStrip";
 import { Transport } from "./components/Transport";
+import { AppShell } from "./components/shell/AppShell";
+import { RightPanel } from "./components/shell/RightPanel";
 import { installDecodeBridge } from "./decode/debugBridge";
 import type { TimelineResponse } from "./types";
+import { placeItems } from "./types";
 import { humanHistoryOptions, useTimelineEditor } from "./useTimelineEditor";
 
 function isTextEntry(target: EventTarget | null): boolean {
@@ -111,10 +115,10 @@ function Viewer({ route }: { route: string | undefined }) {
 
   if (error) {
     return (
-      <div style={{ padding: 24, color: "#e08585", fontFamily: "ui-monospace, monospace" }}>
-        <div style={{ fontWeight: 700, marginBottom: 8 }}>Failed to load timeline</div>
-        <div style={{ color: "#9aa0ae" }}>{error}</div>
-        <div style={{ color: "#6b7280", marginTop: 12, fontSize: 12 }}>
+      <div className="p-6 font-mono text-red">
+        <div className="mb-2 font-medium">Failed to load timeline</div>
+        <div className="text-muted-foreground">{error}</div>
+        <div className="mt-3 text-xs text-fg-3">
           Set an active timeline with <code>vean timeline use &lt;path.mlt&gt;</code>, then reload.
         </div>
       </div>
@@ -122,35 +126,22 @@ function Viewer({ route }: { route: string | undefined }) {
   }
 
   if (!data) {
-    return <div style={{ padding: 24, color: "#6b7280" }}>Loading timeline…</div>;
+    return <div className="p-6 text-fg-3">Loading timeline…</div>;
   }
 
   return (
-    <div style={{ display: "flex", height: "100%" }}>
-      <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
-        <Header
-          title={data.timeline.title}
-          route={data.route}
-          fps={data.fps}
-          width={data.profile.width}
-          height={data.profile.height}
-          diagnostics={diag}
-          projects={projects}
-          currentResolvedPath={data.resolvedPath}
-        />
-        <Stage
-          data={data}
-          route={route}
-          volume={volume}
-          muted={muted}
-          sinkId={sinkId}
-          onVolumeChange={setVolume}
-          onMutedChange={setMuted}
-          onSinkChange={setSinkId}
-        />
-      </div>
-      <Sidebar route={route} baseTitle={data.timeline.title} />
-    </div>
+    <Stage
+      data={data}
+      route={route}
+      volume={volume}
+      muted={muted}
+      sinkId={sinkId}
+      onVolumeChange={setVolume}
+      onMutedChange={setMuted}
+      onSinkChange={setSinkId}
+      projects={projects}
+      diagnostics={diag}
+    />
   );
 }
 
@@ -172,6 +163,8 @@ function Stage({
   onVolumeChange,
   onMutedChange,
   onSinkChange,
+  projects,
+  diagnostics,
 }: {
   data: TimelineResponse;
   route: string | undefined;
@@ -181,9 +174,55 @@ function Stage({
   onVolumeChange: (v: number) => void;
   onMutedChange: (m: boolean) => void;
   onSinkChange: (id: string) => void;
+  projects: ProjectEntry[];
+  diagnostics: { errors: number; warnings: number } | null;
 }) {
   const clock = useClockInstance();
   const editor = useTimelineEditor(data.timeline, data.totalFrames, route);
+  const { source, monitor, setMonitor } = useSource();
+  const showSource = monitor === "source" && source != null;
+
+  // MONITOR-side track mute/hide (view state, not the document): the eye/speaker
+  // toggles in the track headers. Muted tracks are handed to the compositor/mixer
+  // as EMPTY, so the monitor skips them while the timeline + document keep them.
+  const [previewMuted, setPreviewMuted] = useState<Set<string>>(new Set());
+  // The compositor repaints on `(currentFrame, revision)` — a mute toggle changes
+  // WHAT to draw without an edit, so it must bump the revision the monitor sees.
+  const [viewRev, setViewRev] = useState(0);
+  const onTogglePreviewMute = useCallback((trackId: string) => {
+    setPreviewMuted((prev) => {
+      const next = new Set(prev);
+      if (next.has(trackId)) next.delete(trackId);
+      else next.add(trackId);
+      return next;
+    });
+    setViewRev((r) => r + 1);
+  }, []);
+  // Clip boundaries across all tracks — the transport's skip-back/forward targets.
+  const editPoints = useMemo(() => {
+    const pts = new Set<number>([0]);
+    for (const tr of [...editor.timeline.tracks.video, ...editor.timeline.tracks.audio]) {
+      for (const p of placeItems(tr)) {
+        if (p.item.kind !== "clip") continue;
+        pts.add(p.start);
+        pts.add(p.start + p.length);
+      }
+    }
+    return [...pts].sort((a, b) => a - b);
+  }, [editor.timeline]);
+
+  const viewTimeline = useMemo(() => {
+    if (previewMuted.size === 0) return editor.timeline;
+    const blank = (t: (typeof editor.timeline.tracks.video)[number]) =>
+      previewMuted.has(t.id) ? { ...t, items: [] } : t;
+    return {
+      ...editor.timeline,
+      tracks: {
+        video: editor.timeline.tracks.video.map(blank),
+        audio: editor.timeline.tracks.audio.map(blank),
+      },
+    };
+  }, [editor.timeline, previewMuted]);
 
   // Keep the master clock's total-frame bound in step with the working IR: a
   // ripple/trim that changes the timeline length must move the playhead's clamp so
@@ -243,29 +282,92 @@ function Stage({
     return () => window.removeEventListener("keydown", onKey);
   }, [editor, clock]);
 
+  // AUTOSAVE — there is no Save button: a beat after any committed edit, the
+  // working IR serializes to disk, so the document is ALWAYS saved (the top bar
+  // shows the ambient "saving…/saved" state). ⌘S still forces an immediate save.
+  useEffect(() => {
+    if (!editor.dirty) return;
+    const t = setTimeout(() => void editor.save(), 1000);
+    return () => clearTimeout(t);
+  }, [editor.dirty, editor.save]);
+
   return (
-    <>
-      <PreviewPane
-        width={data.profile.width}
-        height={data.profile.height}
-        fps={data.fps}
-        timeline={editor.timeline}
-        revision={editor.revision}
-        route={route}
-        volume={volume}
-        muted={muted}
-        sinkId={sinkId}
-      />
-      <Transport
-        volume={volume}
-        muted={muted}
-        onVolumeChange={onVolumeChange}
-        onMutedChange={onMutedChange}
-        sinkId={sinkId}
-        onSinkChange={onSinkChange}
-      />
-      <TimelineStrip editor={editor} />
-    </>
+    <AppShell
+      title={data.timeline.title}
+      route={route}
+      displayRoute={data.route}
+      baseTitle={data.timeline.title}
+      fps={data.fps}
+      width={data.profile.width}
+      height={data.profile.height}
+      diagnostics={diagnostics}
+      saveState={editor.dirty ? "saving" : "saved"}
+      projects={projects}
+      currentResolvedPath={data.resolvedPath}
+      preview={
+        <>
+          {/* Monitor tabs — Program (the timeline) | Source (the selected media). */}
+          {source ? (
+            <Tabs value={monitor} onValueChange={(v) => setMonitor(v as "program" | "source")}>
+              <TabsList className="px-3 pt-1.5">
+                <TabsTrigger value="program">Program</TabsTrigger>
+                <TabsTrigger value="source">{source.name}</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          ) : null}
+          {/* The program monitor stays MOUNTED while Source shows (decode caches
+              stay warm) — it's just not displayed. */}
+          <div
+            style={{
+              display: showSource ? "none" : "flex",
+              flexDirection: "column",
+              flex: 1,
+              minHeight: 0,
+            }}
+          >
+            <PreviewPane
+              width={data.profile.width}
+              height={data.profile.height}
+              fps={data.fps}
+              timeline={viewTimeline}
+              // Edit revision ⊕ view revision: either an edit OR a monitor mute/hide
+              // toggle repaints. Edits are sparse ints, so a large stride keeps the
+              // combined value monotonic-unique for both.
+              revision={editor.revision + viewRev * 1_000_000}
+              route={route}
+              volume={volume}
+              muted={muted}
+              sinkId={sinkId}
+            />
+            <Transport
+              editPoints={editPoints}
+              volume={volume}
+              muted={muted}
+              onVolumeChange={onVolumeChange}
+              onMutedChange={onMutedChange}
+              sinkId={sinkId}
+              onSinkChange={onSinkChange}
+            />
+          </div>
+          {showSource ? <SourcePreview route={route} /> : null}
+        </>
+      }
+      inspector={
+        <RightPanel
+          editor={editor}
+          fps={data.fps}
+          videoWidth={data.profile.width}
+          videoHeight={data.profile.height}
+        />
+      }
+      timeline={
+        <TimelineStrip
+          editor={editor}
+          previewMuted={previewMuted}
+          onTogglePreviewMute={onTogglePreviewMute}
+        />
+      }
+    />
   );
 }
 
@@ -284,7 +386,9 @@ export function App() {
   return (
     <ClockProvider>
       <PreviewProvider>
-        <Viewer route={route} />
+        <SourceProvider>
+          <Viewer route={route} />
+        </SourceProvider>
       </PreviewProvider>
     </ClockProvider>
   );

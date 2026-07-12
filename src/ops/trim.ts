@@ -40,6 +40,7 @@ import {
   findClip,
   isFadeIn,
   isFadeOut,
+  linkDesyncWarning,
   playtime,
   rippleOtherTracks,
   shiftAnimWindow,
@@ -207,6 +208,19 @@ function doTrim(
         `window is ${newLen}; the serializer will clamp the fade to fit`,
     });
   }
+
+  // ── Record a link desync (record, don't corrupt) ──
+  // Trimming ONE half of a linked A/V pair drifts it out of sync with the partner
+  // that wasn't trimmed. The trim is still performed correctly; we flag the drift so
+  // the diagnostics layer surfaces it and a "trim both" fix can be offered.
+  warnings.push(
+    ...linkDesyncWarning(
+      state,
+      clip,
+      side === "in" ? "trimIn" : "trimOut",
+      `the ${side === "in" ? "in" : "out"}-point moved by ${side === "in" ? delta : -delta} frame(s)`,
+    ),
+  );
 
   const c = noConsequences();
   c.clipsTrimmed.push({

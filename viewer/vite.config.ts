@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
@@ -9,10 +10,12 @@ import { defineConfig } from "vite";
 // component the producer renders to ProRes — one composition, two compositing
 // paths (live preview ≠ bit-exact export, the accepted Remotion-seam cost).
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   base: "/",
   resolve: {
     alias: {
+      // `@/*` → viewer source (shadcn convention; used by the token layer + shell).
+      "@": resolve(__dirname, "src"),
       // Reuse the producer's compositions from the sibling workspace by source.
       "@remotion-comp": resolve(__dirname, "..", "remotion", "src", "compositions"),
       // PER-PROJECT comps: the ACTIVE project's own `remotion/src/compositions` dir,

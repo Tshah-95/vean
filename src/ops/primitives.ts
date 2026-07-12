@@ -146,6 +146,80 @@ export function findClip(state: Timeline, id: Uuid): ClipLocation | undefined {
   return undefined;
 }
 
+/** Every clip in the timeline that shares `link.id` with the given clip, EXCLUDING
+ *  the clip itself — its linked partners (the A/V pair, or a larger link group). An
+ *  unlinked clip has no partners (empty array). Partners are located by uuid so a
+ *  caller can shift/inspect each one; the order is video-tracks-then-audio-tracks,
+ *  document order within a track (deterministic). Used by the link-aware ops (move
+ *  shifts every partner; trim/split/ripple check whether an edit would desync one). */
+export function findLinkedPartners(state: Timeline, clip: Clip): ClipLocation[] {
+  const link = clip.link;
+  if (link == null) return [];
+  const out: ClipLocation[] = [];
+  const lists: Array<["video" | "audio", Track[]]> = [
+    ["video", state.tracks.video],
+    ["audio", state.tracks.audio],
+  ];
+  for (const [kind, tracks] of lists) {
+    for (let ti = 0; ti < tracks.length; ti++) {
+      const track = tracks[ti] as Track;
+      for (let ii = 0; ii < track.items.length; ii++) {
+        const it = track.items[ii] as Item;
+        if (it.kind !== "clip") continue;
+        if (it.id === clip.id) continue; // the clip itself is not its own partner
+        if (it.link?.id !== link.id) continue;
+        out.push({
+          trackKind: kind,
+          trackIndex: ti,
+          trackId: track.id,
+          itemIndex: ii,
+          clip: it,
+          position: startOf(track.items, ii),
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/** The first audio track (by index) that is ENTIRELY BLANK across the rendered
+ *  region `[position, position+length)` — a place the detached audio can land
+ *  without stamping over existing content (Shotcut's "find a blank audio track for
+ *  the span, else add one"). Returns the track's index within `tracks.audio[]`, or
+ *  -1 if no existing audio track has a free span there. */
+export function findAudioTrackWithBlank(state: Timeline, position: number, length: number): number {
+  const audio = state.tracks.audio;
+  for (let ti = 0; ti < audio.length; ti++) {
+    if (regionIsBlank((audio[ti] as Track).items, position, length)) return ti;
+  }
+  return -1;
+}
+
+/** A `link-desync` warning iff the clip is linked to partners this edit does NOT
+ *  touch — so the edit (a one-sided trim/split/ripple) would drift a detached A/V
+ *  pair out of sync. Returns `[]` for an unlinked clip. This is the "record, don't
+ *  silently corrupt" contract from DESIGN-UI.md §Appendix: the op still performs the
+ *  edit (never mangles the partner), but flags the drift so the diagnostics layer +
+ *  the surface can offer a "trim both" fix. The `verb` names the op for the message;
+ *  `detail` describes the specific desync. Partner uuids ride in the warning detail
+ *  so a consumer can locate them without re-deriving the group. */
+export function linkDesyncWarning(
+  state: Timeline,
+  clip: Clip,
+  verb: string,
+  detail: string,
+): Array<{ code: string; detail: string }> {
+  const partners = findLinkedPartners(state, clip);
+  if (partners.length === 0) return [];
+  const ids = partners.map((p) => p.clip.id).join(", ");
+  return [
+    {
+      code: "link-desync",
+      detail: `${verb}: clip "${clip.id}" is linked to [${ids}] — ${detail}. The linked partner(s) were NOT adjusted, so the A/V pair may now be out of sync (trim/edit both, or unlink).`,
+    },
+  ];
+}
+
 /** Resolve a TrackAddr to its (kind, index, track). `undefined` if it doesn't
  *  resolve to a real track. */
 export function findTrack(

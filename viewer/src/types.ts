@@ -44,6 +44,15 @@ export interface ClipItem {
    *  subset (§7) and flags the rest `approximate`. */
   filters?: ClipFilter[];
   label?: string;
+  /** Count of AUDIO streams in this clip's SOURCE file (from the server-side ffprobe
+   *  probe), surfaced on the /api/timeline wire IR only — the .mlt/IR schema never
+   *  carry it. Present only when the source could be probed; a color/synthetic clip
+   *  or an unprobeable source OMITS it (never guessed). The linked-audio companion
+   *  lane keys off this + `hasAudio`. */
+  audioStreams?: number;
+  /** Derived from `audioStreams` (≥1 ⇒ true): does this clip's source carry audio?
+   *  Present exactly when `audioStreams` is (both omitted for an unprobeable source). */
+  hasAudio?: boolean;
   /** Remotion-composition identity — present iff this clip names a composition.
    *  Mirrors `Clip.composition` in src/ir/types.ts; round-trips through the
    *  `vean:composition` / `vean:compositionProps` producer properties. Two consumers
@@ -116,6 +125,66 @@ export interface ApiError {
   ok: false;
   kind: string;
   detail: string;
+}
+
+/** /api/peaks response — a downsampled audio waveform for one source clip. `peaks`
+ *  is a flat [min0,max0, min1,max1, …] array of float amplitude pairs in [-1, 1]
+ *  (length = 2·`bins`); the waveform lane draws one vertical bar per pair. A source
+ *  with no audio yields `{ bins: 0, peaks: [] }` — the lane renders nothing. */
+export interface PeaksResponse {
+  ok: true;
+  /** Echoes a clip-addressed request (`?clipId=`); absent for a path-addressed one. */
+  clipId?: string;
+  /** The sample rate ffmpeg decoded at (Hz) — informational; the buckets are
+   *  already time-agnostic min/max pairs. */
+  sampleRate: number;
+  /** Timeline frames per bucket when a frame-aligned bin size was requested, else 0. */
+  binFrames: number;
+  /** The number of [min,max] buckets (== peaks.length / 2). */
+  bins: number;
+  /** Flat [min,max] float pairs, amplitude in [-1, 1]. Length = 2·bins. */
+  peaks: number[];
+}
+
+/** One transcribed word with a frame-exact span, mirroring the core
+ *  `TranscriptWord` (src/transcript/types.ts). `[startFrame, endFrame]` is an
+ *  INCLUSIVE integer-frame window in timeline space; `id` is stable (the peek/edit
+ *  addresses words by this, never by index). */
+export interface TranscriptWord {
+  id: string;
+  startFrame: number;
+  endFrame: number;
+  text: string;
+}
+
+/** One transcript segment (a caption-sized run of words). Mirrors the core
+ *  `TranscriptSegment`. */
+export interface TranscriptSegment {
+  id: string;
+  startFrame: number;
+  endFrame: number;
+  text: string;
+  words: TranscriptWord[];
+}
+
+/** The frame-exact transcript for a source, mirroring the core `Transcript`.
+ *  `fps` is the rational `[num, den]` the frame timings live in. */
+export interface Transcript {
+  fps: Fps;
+  mediaPath?: string;
+  segments: TranscriptSegment[];
+}
+
+/** /api/transcript response — the transcript for a clip's source, or the never-
+ *  faked empty case. `words` is the flat word stream (the peek's minimal read);
+ *  `transcript` is the full segmented model (or null when none exists). `clipId`
+ *  echoes a clip-addressed request; `path` echoes a path-addressed one. */
+export interface TranscriptResponse {
+  ok: true;
+  clipId?: string;
+  path?: string;
+  words: TranscriptWord[];
+  transcript: Transcript | null;
 }
 
 // ─── Edit-loop wire types (mirror src/preview/session.ts + src/diagnostics) ───
