@@ -32,6 +32,8 @@ export interface DecodeProof {
   meanLuma?: number;
   /** Whether any sampled pixel is non-black (content present). */
   nonBlack?: boolean;
+  nonBlackRatio?: number;
+  alphaRatio?: number;
   error?: string;
 }
 
@@ -71,6 +73,16 @@ function sampleFrame(clipId: string, requestedSeconds: number, frame: DecodedFra
   }
   const meanLuma = lumaSum / points.length;
   const nonBlack = samples.some(([r, g, b]) => r > 4 || g > 4 || b > 4);
+  const pixels = ctx.getImageData(0, 0, w, h).data;
+  let nonBlackPixels = 0;
+  let transparentPixels = 0;
+  for (let index = 0; index < pixels.length; index += 4) {
+    if ((pixels[index] ?? 0) + (pixels[index + 1] ?? 0) + (pixels[index + 2] ?? 0) > 24) {
+      nonBlackPixels += 1;
+    }
+    if ((pixels[index + 3] ?? 255) < 250) transparentPixels += 1;
+  }
+  const pixelCount = pixels.length / 4;
   bitmap.close(); // §8.3: sample then immediately release.
   return {
     ok: true,
@@ -82,6 +94,8 @@ function sampleFrame(clipId: string, requestedSeconds: number, frame: DecodedFra
     samples,
     meanLuma,
     nonBlack,
+    nonBlackRatio: nonBlackPixels / pixelCount,
+    alphaRatio: transparentPixels / pixelCount,
   };
 }
 
@@ -96,11 +110,40 @@ export function installDecodeBridge(): void {
       height: number,
       route?: string,
     ) => Promise<DecodeProof>;
+    __veanDecodeProxy?: (
+      clipId: string,
+      proxyUrl: string,
+      sourceSeconds: number,
+      width: number,
+      height: number,
+    ) => Promise<DecodeProof>;
   };
   if (w.__veanDecode) return;
   w.__veanDecode = async (clipId, resource, sourceSeconds, width, height, route) => {
     try {
       const frame = await decoder().decodeAt(clipId, resource, sourceSeconds, width, height, route);
+      if (!frame) {
+        return { ok: false, clipId, requestedSeconds: sourceSeconds, error: "no frame decoded" };
+      }
+      return sampleFrame(clipId, sourceSeconds, frame);
+    } catch (error) {
+      return {
+        ok: false,
+        clipId,
+        requestedSeconds: sourceSeconds,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  };
+  w.__veanDecodeProxy = async (clipId, proxyUrl, sourceSeconds, width, height) => {
+    try {
+      const frame = await decoder().decodeProxyUrlAt(
+        clipId,
+        proxyUrl,
+        sourceSeconds,
+        width,
+        height,
+      );
       if (!frame) {
         return { ok: false, clipId, requestedSeconds: sourceSeconds, error: "no frame decoded" };
       }

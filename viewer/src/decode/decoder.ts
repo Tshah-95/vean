@@ -53,6 +53,8 @@ interface ClipState {
   /** The output box the sink was opened with (so a box change forces a re-open). */
   width: number;
   height: number;
+  /** Exact fetched URL. Prevents a direct-fixture proof from reusing a source-proxy open. */
+  sourceUrl: string;
 }
 
 let nextRequestId = 0;
@@ -118,8 +120,26 @@ export class Decoder {
     height: number,
     route?: string,
   ): Promise<boolean> {
+    return this.ensureOpenUrl(clipId, sourceProxyUrl(resource, route), width, height);
+  }
+
+  /** Open an already-derived proxy URL through the same worker/Mediabunny
+   * `CanvasSink({ alpha: true })` path used by product decoding. This is exposed
+   * only through the existing decode proof bridge so H07 can distinguish the
+   * product decoder from WKWebView's `<video>` compositing behavior. */
+  private ensureOpenUrl(
+    clipId: string,
+    sourceUrl: string,
+    width: number,
+    height: number,
+  ): Promise<boolean> {
     const existing = this.clips.get(clipId);
-    if (existing && existing.width === width && existing.height === height) {
+    if (
+      existing &&
+      existing.width === width &&
+      existing.height === height &&
+      existing.sourceUrl === sourceUrl
+    ) {
       return existing.opened;
     }
     if (existing) {
@@ -131,7 +151,7 @@ export class Decoder {
       // Fetch the short-GOP H.264 proxy bytes ONCE (the server transcodes on first
       // touch, then serves from cache). Range not needed — mediabunny's BlobSource
       // reads the whole blob; the proxy is small (≤960px short-GOP).
-      const res = await fetch(sourceProxyUrl(resource, route));
+      const res = await fetch(sourceUrl);
       if (!res.ok) throw new Error(`source-proxy ${res.status}`);
       const blob = await res.blob();
       const requestId = `open-${nextRequestId++}`;
@@ -146,7 +166,7 @@ export class Decoder {
       if (!resp.ok) throw new Error(resp.error ?? "open failed");
       return true;
     })();
-    this.clips.set(clipId, { opened, width, height });
+    this.clips.set(clipId, { opened, width, height, sourceUrl });
     // A rejected open should not poison the cache forever — drop it so a later
     // attempt can retry (e.g. the proxy was still encoding on the first touch).
     opened.catch(() => {
@@ -194,6 +214,25 @@ export class Decoder {
   ): Promise<DecodedFrame | null> {
     const opened = await this.ensureOpen(clipId, resource, width, height, route);
     if (!opened) return null;
+    return this.decodeOpened(clipId, sourceSeconds);
+  }
+
+  /** Decode exact pre-derived proxy bytes without invoking the source transcode
+   * endpoint. The worker, Mediabunny demux/decode, CanvasSink alpha merge, bitmap
+   * ownership, and in-flight bounds remain identical to `decodeAt`. */
+  async decodeProxyUrlAt(
+    clipId: string,
+    sourceUrl: string,
+    sourceSeconds: number,
+    width: number,
+    height: number,
+  ): Promise<DecodedFrame | null> {
+    const opened = await this.ensureOpenUrl(clipId, sourceUrl, width, height);
+    if (!opened) return null;
+    return this.decodeOpened(clipId, sourceSeconds);
+  }
+
+  private decodeOpened(clipId: string, sourceSeconds: number): Promise<DecodedFrame | null> {
     return this.withSlot(async () => {
       const requestId = `decode-${nextRequestId++}`;
       const resp = await this.request<DecodeResponse>({

@@ -190,6 +190,7 @@ describe("H07 media assurance contract", () => {
           outcome: "verified_supported",
           observations: {
             decoded: true,
+            decoder_path: "mediabunny-canvas-sink-alpha",
             nonblack_ratio: 0.8,
             seek_error_seconds: 0.01,
             fixture_sha256: "d".repeat(64),

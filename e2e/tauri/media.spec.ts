@@ -29,8 +29,9 @@ describe("Vean media in the actual Tauri WKWebView", () => {
     });
 
     const prefix = context.mediaStaticPrefix;
+    const opaqueAlphaControl = process.env.VEAN_H07_OPAQUE_ALPHA_CONTROL === "1";
     const cells = (await browser.executeAsync(
-      (staticPrefix: string, done: (value: Cell[]) => void) => {
+      (staticPrefix: string, mutateAlphaOpaque: boolean, done: (value: Cell[]) => void) => {
         const url = (name: string) => `${staticPrefix}/${name}`;
         const wait = (target: EventTarget, success: string, failure: string, timeout = 20_000) =>
           new Promise<void>((resolve, reject) => {
@@ -52,49 +53,41 @@ describe("Vean media in the actual Tauri WKWebView", () => {
               { once: true },
             );
           });
-        const video = async (name: string, alpha: boolean) => {
-          const element = document.createElement("video");
-          element.muted = true;
-          element.playsInline = true;
-          element.preload = "auto";
-          element.src = url(name);
-          document.body.append(element);
-          await wait(element, "loadeddata", "error");
-          const requested = Math.min(0.5, Math.max(0, element.duration / 3));
-          const seek = wait(element, "seeked", "error");
-          element.currentTime = requested;
-          await seek;
-          const canvas = document.createElement("canvas");
-          canvas.width = element.videoWidth;
-          canvas.height = element.videoHeight;
-          canvas.dataset.h07Cell = name;
-          canvas.style.width = "320px";
-          canvas.style.height = "180px";
-          canvas.style.background = "repeating-conic-gradient(#ddd 0 25%,#777 0 50%) 0/24px 24px";
-          document.body.append(canvas);
-          const context2d = canvas.getContext("2d", { alpha: true });
-          if (!context2d) throw new Error("2d-context-unavailable");
-          context2d.clearRect(0, 0, canvas.width, canvas.height);
-          context2d.drawImage(element, 0, 0);
-          const pixels = context2d.getImageData(0, 0, canvas.width, canvas.height).data;
-          let nonblack = 0;
-          let transparent = 0;
-          for (let index = 0; index < pixels.length; index += 4) {
-            if ((pixels[index] ?? 0) + (pixels[index + 1] ?? 0) + (pixels[index + 2] ?? 0) > 24)
-              nonblack += 1;
-            if ((pixels[index + 3] ?? 255) < 250) transparent += 1;
-          }
-          element.remove();
-          const count = pixels.length / 4;
+        const productProxy = async (name: string, alpha: boolean) => {
+          const decode = (
+            window as unknown as {
+              __veanDecodeProxy?: (
+                clipId: string,
+                proxyUrl: string,
+                sourceSeconds: number,
+                width: number,
+                height: number,
+              ) => Promise<{
+                ok: boolean;
+                timestamp?: number;
+                nonBlackRatio?: number;
+                alphaRatio?: number;
+                width?: number;
+                height?: number;
+                error?: string;
+              }>;
+            }
+          ).__veanDecodeProxy;
+          if (!decode) throw new Error("window.__veanDecodeProxy unavailable");
+          const requested = 0.5;
+          const proof = await decode(`h07-${name}`, url(name), requested, 320, 180);
+          if (!proof.ok) throw new Error(`product decode failed:${proof.error ?? "unknown"}`);
+          const decodedTime = proof.timestamp ?? requested;
           return {
             decoded: true,
+            decoder_path: "mediabunny-canvas-sink-alpha",
             requested_time_seconds: requested,
-            decoded_time_seconds: element.currentTime,
-            seek_error_seconds: Math.abs(element.currentTime - requested),
-            nonblack_ratio: nonblack / count,
-            ...(alpha ? { alpha_ratio: transparent / count } : {}),
-            video_width: canvas.width,
-            video_height: canvas.height,
+            decoded_time_seconds: decodedTime,
+            seek_error_seconds: Math.abs(decodedTime - requested),
+            nonblack_ratio: proof.nonBlackRatio ?? 0,
+            ...(alpha ? { alpha_ratio: proof.alphaRatio ?? 0 } : {}),
+            video_width: proof.width,
+            video_height: proof.height,
           };
         };
         const audio = async (name: string) => {
@@ -167,8 +160,9 @@ describe("Vean media in the actual Tauri WKWebView", () => {
         };
         (async () => {
           document.body.innerHTML = "<h1>H07 actual WKWebView media matrix</h1>";
-          const avc = await video("proxy-avc.mp4", false);
-          const alpha = await video("proxy-vp9-alpha.webm", true);
+          const avc = await productProxy("proxy-avc.mp4", false);
+          const alphaDecodedFile = mutateAlphaOpaque ? "proxy-avc.mp4" : "proxy-vp9-alpha.webm";
+          const alpha = await productProxy(alphaDecodedFile, true);
           const rows: Cell[] = [
             {
               id: "ingest.h264-aac",
@@ -203,7 +197,7 @@ describe("Vean media in the actual Tauri WKWebView", () => {
               observations: {
                 ...alpha,
                 fixture_file: "source-prores4444-alpha.mov",
-                decoded_file: "proxy-vp9-alpha.webm",
+                decoded_file: alphaDecodedFile,
               },
             },
             {
@@ -221,7 +215,7 @@ describe("Vean media in the actual Tauri WKWebView", () => {
               observations: {
                 ...alpha,
                 fixture_file: "proxy-vp9-alpha.webm",
-                decoded_file: "proxy-vp9-alpha.webm",
+                decoded_file: alphaDecodedFile,
               },
             },
             {
@@ -274,6 +268,7 @@ describe("Vean media in the actual Tauri WKWebView", () => {
         );
       },
       prefix,
+      opaqueAlphaControl,
     )) as Cell[];
 
     mkdirSync(context.artifactDir, { recursive: true });

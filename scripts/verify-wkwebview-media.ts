@@ -208,6 +208,9 @@ const wdio = Bun.spawn(
       VEAN_H05_HOME: fixture.descriptor.home,
       VEAN_H05_CONFIG_HOME: join(fixture.descriptor.home, ".vean"),
       VEAN_H05_MEDIA: "1",
+      ...(process.argv.includes("--simulate-opaque-alpha")
+        ? { VEAN_H07_OPAQUE_ALPHA_CONTROL: "1" }
+        : {}),
     },
     stdout: "pipe",
     stderr: "pipe",

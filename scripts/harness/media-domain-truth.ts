@@ -173,6 +173,9 @@ function assertWkCells(
       throw new Error(`E_MEDIA_EXTERNAL_WK_CELL_RAW_MISMATCH:${id}`);
     }
     if (id.startsWith("ingest.") || id.startsWith("runtime.proxy")) {
+      if (observations.decoder_path !== "mediabunny-canvas-sink-alpha") {
+        throw new Error(`E_MEDIA_EXTERNAL_WK_PRODUCT_DECODER_PATH:${id}`);
+      }
       if (!/^[a-f0-9]{64}$/.test(string(observations.fixture_sha256, `WK_FIXTURE_SHA:${id}`))) {
         throw new Error(`E_MEDIA_EXTERNAL_WK_FIXTURE_SHA:${id}`);
       }
