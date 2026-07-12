@@ -10,7 +10,7 @@ MB RAM, and a 200 GB sparse disk.
 ```sh
 bun run vm:macos:doctor -- --host-only
 bun run vm:macos:configure
-bun run vm:macos:configure-shares -- project-media=/absolute/path/to/media reference-assets=/absolute/path/to/assets
+bun run vm:macos:configure-shares -- media-library=/absolute/path/to/library media-recordings=/absolute/path/to/recordings media-mic=/absolute/path/to/mic media-acquired=/absolute/path/to/acquired
 bun run vm:macos:start
 bun run vm:macos:setup-ssh
 bun run vm:macos:bootstrap

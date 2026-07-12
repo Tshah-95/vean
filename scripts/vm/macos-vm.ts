@@ -3,7 +3,10 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
   existsSync,
+  fsyncSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -1198,6 +1201,59 @@ function verifyNative(sourceRef: string, args: readonly string[]): void {
   print({ ok: true, vm: VM_NAME, runnerClass: "dedicated", sourceRef });
 }
 
+function lstatIfPresent(path: string): ReturnType<typeof lstatSync> | undefined {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+export function validateAndPublishArchive(
+  target: string,
+  bytes: Buffer,
+  allowedPrefixes: readonly string[],
+): void {
+  if (lstatIfPresent(target)) fail(`refusing to overwrite existing archive destination: ${target}`);
+  mkdirSync(dirname(target), { recursive: true });
+  const temporary = join(
+    dirname(target),
+    `.${target.split(sep).at(-1) ?? "evidence"}.${process.pid}.${Date.now()}.tmp`,
+  );
+  const fd = openSync(temporary, "wx", 0o600);
+  try {
+    writeFileSync(fd, bytes);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  try {
+    const names = spawnSync("tar", ["-tzf", temporary], { encoding: "utf8" });
+    const verbose = spawnSync("tar", ["-tvzf", temporary], { encoding: "utf8" });
+    if (names.status !== 0 || verbose.status !== 0) fail("evidence archive is not valid gzip tar");
+    const entries = names.stdout.split("\n").filter(Boolean);
+    if (entries.length === 0) fail("evidence archive is empty");
+    for (const entry of entries) {
+      if (isAbsolute(entry) || entry.split("/").some((part) => part === "..")) {
+        fail(`unsafe evidence archive entry: ${JSON.stringify(entry)}`);
+      }
+      if (!allowedPrefixes.some((prefix) => entry === prefix || entry.startsWith(`${prefix}/`))) {
+        fail(`unexpected evidence archive entry: ${JSON.stringify(entry)}`);
+      }
+    }
+    for (const line of verbose.stdout.split("\n").filter(Boolean)) {
+      if (!line.startsWith("-") && !line.startsWith("d")) {
+        fail(`evidence archive contains a non-regular entry: ${line}`);
+      }
+    }
+    linkSync(temporary, target);
+    chmodSync(target, 0o600);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+}
+
 function verifyWkwebviewMedia(sourceRef: string, destination?: string): void {
   assertRunning();
   const ref = validateSourceRef(sourceRef);
@@ -1226,16 +1282,14 @@ function verifyWkwebviewMedia(sourceRef: string, destination?: string): void {
         `h07-wkwebview-${new Date().toISOString().replaceAll(":", "-")}.tgz`,
       ),
   );
-  mkdirSync(dirname(target), { recursive: true });
   const archived = runGuestCommand(
-    `set -euo pipefail; cd ${GUEST_REPOSITORY}; test -d .vean/harness/wkwebview-media/current; test -z "$(find .vean/harness/wkwebview-media/current -type l -print -quit)"; tar -czf - .vean/harness/wkwebview-media/current | base64`,
+    `set -euo pipefail; cd ${GUEST_REPOSITORY}; root=.vean/harness/wkwebview-media/current; test -d "$root"; test ! -L "$root"; test -z "$(find "$root" ! -type f ! -type d -print -quit)"; tar -czf - "$root" | base64`,
   );
   const bytes = Buffer.from(archived.stdout.replaceAll(/\s/g, ""), "base64");
   if (bytes.length < 2 || bytes[0] !== 0x1f || bytes[1] !== 0x8b) {
     fail("guest returned an invalid H07 WKWebView evidence archive");
   }
-  writeFileSync(target, bytes, { mode: 0o600 });
-  chmodSync(target, 0o600);
+  validateAndPublishArchive(target, bytes, [".vean/harness/wkwebview-media/current"]);
   print({
     ok: true,
     vm: VM_NAME,
@@ -1383,14 +1437,19 @@ export function collectProjectArtifactsGuestCommand(
 ): string {
   const project = guestProjectPath(name);
   const paths = validateProjectArtifactIncludes(includes);
-  const commands = ["set -euo pipefail", `project=${shellQuote(project)}`, 'test -d "$project"'];
+  const commands = [
+    "set -euo pipefail",
+    `project=${shellQuote(project)}`,
+    'test -d "$project"',
+    'test ! -L "$project"',
+  ];
   for (const path of paths) {
     commands.push(`path=${shellQuote(path)}`);
     commands.push(
       'test -e "$project/$path" || { printf "requested artifact is absent: %s\\n" "$path" >&2; exit 1; }',
     );
     commands.push(
-      'test -z "$(find "$project/$path" -type l -print -quit)" || { printf "artifact path contains a symlink: %s\\n" "$path" >&2; exit 1; }',
+      'test -z "$(find "$project/$path" ! -type f ! -type d -print -quit)" || { printf "artifact path contains a symlink or special file: %s\\n" "$path" >&2; exit 1; }',
     );
   }
   commands.push(`tar -czf - -C "$project" -- ${paths.map(shellQuote).join(" ")} | base64`);
@@ -1413,14 +1472,12 @@ function collectProjectArtifacts(
         `${name}-${new Date().toISOString().replaceAll(":", "-")}.tgz`,
       ),
   );
-  mkdirSync(dirname(target), { recursive: true });
   const result = runGuestCommand(collectProjectArtifactsGuestCommand(name, selected));
   const bytes = Buffer.from(result.stdout.replaceAll(/\s/g, ""), "base64");
   if (bytes.length < 2 || bytes[0] !== 0x1f || bytes[1] !== 0x8b) {
     fail("guest returned an invalid project artifact archive");
   }
-  writeFileSync(target, bytes, { mode: 0o600 });
-  chmodSync(target, 0o600);
+  validateAndPublishArchive(target, bytes, selected);
   print({
     ok: true,
     vm: VM_NAME,
@@ -1444,14 +1501,13 @@ function collectEvidence(destination?: string): void {
         "h06.tgz",
       ),
   );
-  mkdirSync(dirname(target), { recursive: true });
-  const command = `set -euo pipefail; cd ${GUEST_REPOSITORY}; test -d .vean/harness/native-runs; tar -czf - .vean/harness/native-runs | base64`;
+  const command = `set -euo pipefail; cd ${GUEST_REPOSITORY}; root=.vean/harness/native-runs; test -d "$root"; test ! -L "$root"; test -z "$(find "$root" ! -type f ! -type d -print -quit)"; tar -czf - "$root" | base64`;
   const result = runGuestCommand(command);
   const bytes = Buffer.from(result.stdout.replaceAll(/\s/g, ""), "base64");
   if (bytes.length < 2 || bytes[0] !== 0x1f || bytes[1] !== 0x8b) {
     fail("guest returned an invalid H06 evidence archive");
   }
-  writeFileSync(target, bytes, { mode: 0o600 });
+  validateAndPublishArchive(target, bytes, [".vean/harness/native-runs"]);
   print({
     ok: true,
     vm: VM_NAME,

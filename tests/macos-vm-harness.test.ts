@@ -4,7 +4,9 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -40,6 +42,7 @@ import {
   sshPasswordInstallPlan,
   syncGuestCommand,
   tartRunPlan,
+  validateAndPublishArchive,
   validateGuestIp,
   validateHostKeyPin,
   validateProjectArtifactIncludes,
@@ -358,9 +361,55 @@ describe("macOS Tart VM harness policy", () => {
     expect(() => validateProjectArtifactIncludes([".env"])).toThrow("not allowlisted");
     const command = collectProjectArtifactsGuestCommand("project", ["test-results"]);
     expect(command).toContain("/Users/admin/Projects/project");
-    expect(command).toContain("-type l");
+    expect(command).toContain("! -type f ! -type d");
+    expect(command).toContain('test ! -L "$project"');
     expect(command).toContain("test-results");
     expect(PROJECT_ARTIFACT_ALLOWLIST).not.toContain("artifacts" as never);
+  });
+
+  it("validates archives and publishes them exclusively as mode 0600", () => {
+    const root = mkdtempSync(join(tmpdir(), "vean-archive-"));
+    try {
+      const payload = join(root, ".vean/harness/native-runs");
+      mkdirSync(payload, { recursive: true });
+      writeFileSync(join(payload, "result.json"), "{}\n");
+      const source = join(root, "source.tgz");
+      expect(
+        spawnSync("tar", ["-czf", source, "-C", root, ".vean/harness/native-runs"]).status,
+      ).toBe(0);
+      const target = join(root, "evidence.tgz");
+      validateAndPublishArchive(target, readFileSync(source), [".vean/harness/native-runs"]);
+      expect(statSync(target).mode & 0o777).toBe(0o600);
+      expect(() =>
+        validateAndPublishArchive(target, readFileSync(source), [".vean/harness/native-runs"]),
+      ).toThrow("refusing to overwrite");
+
+      const wrongTarget = join(root, "wrong.tgz");
+      expect(() =>
+        validateAndPublishArchive(wrongTarget, readFileSync(source), ["coverage"]),
+      ).toThrow("unexpected evidence archive entry");
+
+      symlinkSync("result.json", join(payload, "linked.json"));
+      const linked = join(root, "linked.tgz");
+      expect(
+        spawnSync("tar", ["-czf", linked, "-C", root, ".vean/harness/native-runs"]).status,
+      ).toBe(0);
+      expect(() =>
+        validateAndPublishArchive(join(root, "linked-output.tgz"), readFileSync(linked), [
+          ".vean/harness/native-runs",
+        ]),
+      ).toThrow("non-regular entry");
+
+      const symlinkTarget = join(root, "destination-link.tgz");
+      symlinkSync(source, symlinkTarget);
+      expect(() =>
+        validateAndPublishArchive(symlinkTarget, readFileSync(source), [
+          ".vean/harness/native-runs",
+        ]),
+      ).toThrow("refusing to overwrite");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("verifies every guest share exists and cannot be written", () => {
