@@ -21,7 +21,11 @@
       "verify:tauri": "bun scripts/verify-tauri.ts",
       "verify:tauri-release-negative": "bun scripts/verify-tauri-instrumentation.ts",
       "verify:tauri-cleanup-failure": "bun scripts/verify-tauri.ts --simulate-session-failure",
-      "doctor:tauri-driver": "bun scripts/doctor-tauri-driver.ts"
+      "doctor:tauri-driver": "bun scripts/doctor-tauri-driver.ts",
+      "doctor:macos-driver": "bun scripts/doctor-macos-driver.ts",
+      "typecheck:macos-harness": "tsc -p tsconfig.macos-harness.json --noEmit",
+      "verify:macos": "bun scripts/verify-macos.ts",
+      "verify:macos-residual-negative": "bun scripts/verify-macos.ts --simulate-residual-dialog"
     },
     "viewer/package.json": {
       "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.worker.json --noEmit",

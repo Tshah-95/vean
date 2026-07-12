@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "suite": "native-macos-shell-development",
+  "maxInstances": 1,
+  "authority": "Appium 3 / Mac2 / XCTest native accessibility tree",
+  "excluded_authority": [
+    "detailed web editor DOM",
+    "screen coordinates",
+    "screenshots as truth",
+    "installed release package"
+  ],
+  "scenarios": [
+    {
+      "id": "macos-shell-role-name-focus",
+      "truth": ["native window role", "accessible name", "focused state"]
+    },
+    {
+      "id": "macos-open-project-cancel-focus-restore",
+      "truth": [
+        "File menu accessible name",
+        "Open Project Folder panel",
+        "Cancel",
+        "focus restoration"
+      ]
+    },
+    {
+      "id": "macos-open-project-real-folder",
+      "truth": [
+        "semantic file-panel controls",
+        "exact selected fixture folder",
+        "replacement sidecar command"
+      ]
+    },
+    {
+      "id": "macos-window-close-reopen-classification",
+      "truth": [
+        "native close",
+        "zero remaining windows",
+        "current product reopen support explicitly false"
+      ]
+    },
+    {
+      "id": "macos-native-quit",
+      "truth": ["native app menu", "semantic Quit item", "post-session cleanup"]
+    }
+  ],
+  "negative_controls": [
+    {
+      "id": "nc-native-macos-shell",
+      "mutation": "replace the real Rust File menu accessibility label",
+      "required_failure": "canonical Mac2 semantic locator cannot find Open Project Folder…"
+    },
+    {
+      "id": "nc-native-macos-residual-dialog",
+      "mutation": "leave the real Open Project Folder panel unresolved",
+      "required_failure": "teardown detects residual native dialog before forced cleanup"
+    }
+  ]
+}

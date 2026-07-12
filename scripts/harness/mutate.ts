@@ -2,6 +2,7 @@
 import { copyFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { controlRoot } from "./evidence";
+import { nativeMacosControlId, prepareNativeMacosControl } from "./native-macos-control";
 
 const controlIndex = process.argv.indexOf("--control");
 const controlId =
@@ -10,6 +11,9 @@ const controlId =
     : process.argv.find((value) => /^nc-[a-z0-9-]+$/.test(value));
 if (!controlId || !/^nc-[a-z0-9-]+$/.test(controlId))
   throw new Error("valid --control is required");
+if (controlId === nativeMacosControlId) {
+  prepareNativeMacosControl(!process.argv.includes("--restore"));
+}
 const root = controlRoot(process.cwd(), controlId);
 const manifest = JSON.parse(readFileSync(join(root, "mutation.json"), "utf8")) as {
   control_id: string;

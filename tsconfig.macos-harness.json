@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["bun", "mocha", "@wdio/globals/types"]
+  },
+  "include": [
+    "scripts/doctor-macos-driver.ts",
+    "scripts/verify-macos.ts",
+    "scripts/harness/macos-driver.ts",
+    "scripts/harness/native-macos-control.ts",
+    "scripts/harness/macos-domain-truth.ts",
+    "scripts/harness/macos-ledger-monitor.ts",
+    "scripts/harness/appium-capabilities.d.ts",
+    "e2e/macos",
+    "e2e/tauri/runtime.ts",
+    "wdio.macos.conf.ts"
+  ]
+}
