@@ -61,10 +61,11 @@ export function evaluateMacosRunnerPolicy(env: NodeJS.ProcessEnv = process.env):
  * Refuse before any fixture, driver, build, or app work. A successful
  * --policy-only response proves only the runner policy, never a Mac2 session.
  */
-export function enforceMacosRunnerPolicy(argv = process.argv.slice(2)): void {
+export function enforceMacosRunnerPolicy(argv = process.argv.slice(2)): MacosRunnerPolicy {
   const policy = evaluateMacosRunnerPolicy();
   if (!policy.ok || argv.includes("--policy-only")) {
     console.log(JSON.stringify(policy, null, 2));
     process.exit(policy.ok ? 0 : 1);
   }
+  return policy;
 }

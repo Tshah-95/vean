@@ -83,6 +83,15 @@ export function nativePredicate(elementType: number, condition?: string): string
   return `-ios predicate string:elementType == ${elementType}${condition ? ` AND (${condition})` : ""}`;
 }
 
+export const NATIVE_PANEL_ROOT_TYPES = [
+  NATIVE_ELEMENT_TYPE.Sheet,
+  NATIVE_ELEMENT_TYPE.Dialog,
+] as const;
+
+export function focusedEnabledTextFieldPredicate(): string {
+  return nativePredicate(NATIVE_ELEMENT_TYPE.TextField, "focused == true AND enabled == true");
+}
+
 export async function nativeInventory(): Promise<{
   source: string;
   windows: number;
@@ -90,6 +99,15 @@ export async function nativeInventory(): Promise<{
   sheets: number;
 }> {
   const source = await browser.getPageSource();
+  return nativeInventoryFromSource(source);
+}
+
+export function nativeInventoryFromSource(source: string): {
+  source: string;
+  windows: number;
+  dialogs: number;
+  sheets: number;
+} {
   return {
     source,
     windows: countNativeElements(source, "XCUIElementTypeWindow"),

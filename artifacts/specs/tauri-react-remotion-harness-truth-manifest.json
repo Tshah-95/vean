@@ -463,10 +463,13 @@
         "scripts/harness/macos-domain-truth.ts",
         "scripts/harness/macos-ledger-monitor.ts",
         "scripts/harness/native-macos-control.ts",
+        "scripts/harness/macos-runner-policy.ts",
+        "scripts/harness/macos-evidence-contract.ts",
         "wdio.macos.conf.ts",
         "e2e/macos/native-shell.spec.ts",
         "e2e/macos/runtime.ts",
-        "artifacts/specs/harness-scenarios/macos.json"
+        "artifacts/specs/harness-scenarios/macos.json",
+        "app/src-tauri/src/lib.rs"
       ]
     },
     {
