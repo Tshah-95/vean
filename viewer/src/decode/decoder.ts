@@ -241,7 +241,10 @@ export class Decoder {
         clipId,
         time: sourceSeconds,
       });
-      if (!resp.bitmap) return null;
+      if (!resp.bitmap) {
+        if (resp.error) throw new Error(resp.error);
+        return null;
+      }
       return { bitmap: resp.bitmap, timestamp: resp.timestamp ?? sourceSeconds };
     });
   }
