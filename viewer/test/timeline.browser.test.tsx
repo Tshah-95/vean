@@ -127,11 +127,13 @@ function Harness({
   forceConflict = false,
   allowRemoval = false,
   failCommits = false,
+  commitDelayMs = 0,
 }: {
   calls: Call[];
   forceConflict?: boolean;
   allowRemoval?: boolean;
   failCommits?: boolean;
+  commitDelayMs?: number;
 }) {
   const [workingTimeline, setWorkingTimeline] = useState(timeline);
   const [selectedId, select] = useState<string | null>(null);
@@ -148,6 +150,9 @@ function Harness({
         throw new Error(`unregistered fixture action: ${invocation.op}`);
       }
       calls.push({ kind: "commit", invocation, opts });
+      if (commitDelayMs > 0) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, commitDelayMs));
+      }
       if (failCommits) {
         setLastError({ kind: "fixture-edit-rejected", detail: "canonical edit refused" });
         return null;
@@ -209,6 +214,7 @@ function Harness({
   }, [
     author,
     calls,
+    commitDelayMs,
     failCommits,
     forceConflict,
     lastError,
@@ -252,7 +258,12 @@ function TimelineClockConfiguration() {
 
 async function renderHarness(
   calls: Call[],
-  options: { forceConflict?: boolean; allowRemoval?: boolean; failCommits?: boolean } = {},
+  options: {
+    forceConflict?: boolean;
+    allowRemoval?: boolean;
+    failCommits?: boolean;
+    commitDelayMs?: number;
+  } = {},
 ) {
   return page.render(<Harness calls={calls} {...options} />);
 }
@@ -408,6 +419,44 @@ describe("approved timeline-a11y-v1 contract", () => {
     expect(calls[1]?.opts?.author).toBe(calls[0]?.opts?.author);
     await expect.element(alpha).toHaveAttribute("data-edit-mode", "false");
     await expect.element(alpha).toHaveFocus();
+
+    await cleanup();
+    const serializedCalls: Call[] = [];
+    await renderHarness(serializedCalls, { commitDelayMs: 60 });
+    const serializedAlpha = page.getByRole("option", { name: /Alpha, Video track V1/ });
+    serializedAlpha.element().focus();
+    await userEvent.keyboard("{Enter}{ArrowRight}");
+    await userEvent.keyboard("{Alt>}{ArrowRight}{/Alt}{Enter}");
+    await vi.waitFor(() =>
+      expect(serializedCalls.filter((call) => call.kind === "commit")).toHaveLength(2),
+    );
+    expect(serializedCalls.slice(0, 2).map((call) => call.invocation?.op)).toEqual([
+      "move",
+      "slip",
+    ]);
+    await expect.element(serializedAlpha).toHaveAttribute("data-edit-mode", "false");
+
+    await cleanup();
+    const historyRaceCalls: Call[] = [];
+    await renderHarness(historyRaceCalls, { commitDelayMs: 60 });
+    const historyAlpha = page.getByRole("option", { name: /Alpha, Video track V1/ });
+    historyAlpha.element().focus();
+    await userEvent.keyboard("b");
+    await vi.waitFor(() =>
+      expect(historyRaceCalls.filter((call) => call.kind === "commit")).toHaveLength(1),
+    );
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 80));
+    historyAlpha.element().focus();
+    await userEvent.keyboard("{Enter}{ArrowRight}");
+    await userEvent.keyboard("{Control>}z{/Control}");
+    await vi.waitFor(() =>
+      expect(historyRaceCalls.map((call) => call.kind)).toEqual(["commit", "commit", "undo"]),
+    );
+    expect(historyRaceCalls[1]?.invocation?.op).toBe("move");
+    expect(historyRaceCalls[2]?.opts?.author).toBe(historyRaceCalls[1]?.opts?.author);
+    await expect.element(historyAlpha).toHaveAttribute("data-edit-mode", "false");
+    await userEvent.keyboard("{Escape}");
+    expect(historyRaceCalls.map((call) => call.kind)).toEqual(["commit", "commit", "undo"]);
   });
 
   test("a11y.timeline.pointer-keyboard-parity", async () => {

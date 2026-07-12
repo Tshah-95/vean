@@ -153,6 +153,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
     dx: number;
     alt: boolean;
     meta: boolean;
+    target: EditTarget;
     timer: number | null;
   } | null>(null);
   const flushPromiseRef = useRef<Promise<boolean> | null>(null);
@@ -335,61 +336,68 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
 
   const flushBurst = useCallback((): Promise<boolean> => {
     if (flushPromiseRef.current) return flushPromiseRef.current;
-    const work = (async (): Promise<boolean> => {
-      const burst = burstRef.current;
+    const discardPendingBurst = () => {
+      const pending = burstRef.current;
+      if (pending?.timer != null) window.clearTimeout(pending.timer);
       burstRef.current = null;
-      if (!burst) return transactionRef.current?.failed !== true;
-      if (burst.timer != null) window.clearTimeout(burst.timer);
-      const transaction = transactionRef.current;
-      const mode = editMode;
-      if (!transaction || !mode || transaction.clipId !== mode.clipId) return false;
-      const result = keyboardInvocation({
-        timeline: editorRef.current.timeline,
-        clipId: mode.clipId,
-        target: mode.target,
-        dx: burst.dx,
-        alt: burst.alt,
-        meta: burst.meta,
-        snapEnabled,
-        pxPerFrame,
-        snapCandidates,
-      });
-      if (!result) {
-        transaction.failed = true;
-        setAnnouncement("The selected clip is no longer available");
-        return false;
-      }
-      if (!result.invocation) {
+    };
+    const work = (async (): Promise<boolean> => {
+      while (burstRef.current) {
+        const burst = burstRef.current;
+        burstRef.current = null;
+        if (burst.timer != null) window.clearTimeout(burst.timer);
+        const transaction = transactionRef.current;
+        if (!transaction || transaction.clipId !== editMode?.clipId) return false;
+        const result = keyboardInvocation({
+          timeline: editorRef.current.timeline,
+          clipId: transaction.clipId,
+          target: burst.target,
+          dx: burst.dx,
+          alt: burst.alt,
+          meta: burst.meta,
+          snapEnabled,
+          pxPerFrame,
+          snapCandidates,
+        });
+        if (!result) {
+          transaction.failed = true;
+          discardPendingBurst();
+          setAnnouncement("The selected clip is no longer available");
+          return false;
+        }
+        if (!result.invocation) {
+          transaction.failed = false;
+          const limitation = result.limitation ?? "No timeline change";
+          if (lastBoundaryRef.current !== limitation) setAnnouncement(limitation);
+          lastBoundaryRef.current = limitation;
+          continue;
+        }
+        const response = await editorRef.current.commit(result.invocation, {
+          author: transaction.author,
+        });
+        if (!response) {
+          transaction.failed = true;
+          discardPendingBurst();
+          const error = editorRef.current.lastError;
+          setAnnouncement(error ? `${error.kind}: ${error.detail}` : "Timeline edit failed");
+          return false;
+        }
+        transaction.expectedRevision = response.revision;
+        transaction.undoCount++;
         transaction.failed = false;
-        const limitation = result.limitation ?? "No timeline change";
-        if (lastBoundaryRef.current !== limitation) setAnnouncement(limitation);
-        lastBoundaryRef.current = limitation;
-        return true;
+        lastBoundaryRef.current = null;
+        const direction = result.appliedDx > 0 ? "+" : "";
+        const updated = findClip(response.ir, transaction.clipId);
+        const item = updated?.placed.item;
+        const resultingRange =
+          updated && item?.kind === "clip"
+            ? `, ${trackLabel(updated.track, response.ir)}, timeline ${updated.placed.start} to ${updated.placed.start + updated.placed.length - 1}, source ${item.in} to ${item.out}`
+            : "";
+        setAnnouncement(
+          `${result.tool} ${direction}${result.appliedDx} frames${resultingRange}${result.snappedTo == null ? "" : `, snapped to frame ${result.snappedTo}`}${burst.alt ? ", ripple modifier" : ""}${burst.meta ? ", roll or slide modifier" : ""}`,
+        );
       }
-      const response = await editorRef.current.commit(result.invocation, {
-        author: transaction.author,
-      });
-      if (!response) {
-        transaction.failed = true;
-        const error = editorRef.current.lastError;
-        setAnnouncement(error ? `${error.kind}: ${error.detail}` : "Timeline edit failed");
-        return false;
-      }
-      transaction.expectedRevision = response.revision;
-      transaction.undoCount++;
-      transaction.failed = false;
-      lastBoundaryRef.current = null;
-      const direction = result.appliedDx > 0 ? "+" : "";
-      const updated = findClip(response.ir, mode.clipId);
-      const item = updated?.placed.item;
-      const resultingRange =
-        updated && item?.kind === "clip"
-          ? `, ${trackLabel(updated.track, response.ir)}, timeline ${updated.placed.start} to ${updated.placed.start + updated.placed.length - 1}, source ${item.in} to ${item.out}`
-          : "";
-      setAnnouncement(
-        `${result.tool} ${direction}${result.appliedDx} frames${resultingRange}${result.snappedTo == null ? "" : `, snapped to frame ${result.snappedTo}`}${burst.alt ? ", ripple modifier" : ""}${burst.meta ? ", roll or slide modifier" : ""}`,
-      );
-      return true;
+      return transactionRef.current?.failed !== true;
     })();
     flushPromiseRef.current = work;
     void work.finally(() => {
@@ -406,15 +414,19 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         void flushBurst();
       }
       const burst =
-        existing && existing.key === key && existing.alt === alt && existing.meta === meta
+        existing &&
+        existing.key === key &&
+        existing.alt === alt &&
+        existing.meta === meta &&
+        existing.target === editMode?.target
           ? existing
-          : { key, dx: 0, alt, meta, timer: null };
+          : { key, dx: 0, alt, meta, target: editMode?.target ?? "body", timer: null };
       burst.dx += key === "ArrowLeft" ? -step : step;
       if (burst.timer != null) window.clearTimeout(burst.timer);
       burst.timer = window.setTimeout(() => void flushBurst(), 500);
       burstRef.current = burst;
     },
-    [flushBurst],
+    [editMode?.target, flushBurst],
   );
 
   const leaveEditMode = useCallback((clipId: string) => {
@@ -462,6 +474,33 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
     setAnnouncement(`Split at frame ${frame}`);
   }, [clock, focusClip]);
 
+  const runGlobalShortcut = useCallback(
+    async (action: "undo" | "redo" | "save", clipId: string) => {
+      let settledUndoAuthor: string | null = null;
+      if (editMode) {
+        // A global history/save command is an explicit end to the current edit
+        // session. Drain every queued burst first, then leave edit mode before
+        // touching global history so Escape can never overclaim an exact restore.
+        if (editMode.clipId !== clipId || !(await flushBurst())) return;
+        const transaction = transactionRef.current;
+        if (transaction && transaction.undoCount > 0) settledUndoAuthor = transaction.author;
+        leaveEditMode(clipId);
+      }
+      if (action === "undo") {
+        await editorRef.current.undo(
+          settledUndoAuthor
+            ? { author: settledUndoAuthor }
+            : humanHistoryOptions(editorRef.current.nextUndoAuthor),
+        );
+      } else if (action === "redo") {
+        await editorRef.current.redo(humanHistoryOptions(editorRef.current.nextRedoAuthor));
+      } else {
+        await editorRef.current.save();
+      }
+    },
+    [editMode, flushBurst, leaveEditMode],
+  );
+
   const onClipKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>, id: string) => {
       const meta = event.metaKey || event.ctrlKey;
@@ -469,22 +508,22 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         event.preventDefault();
         event.stopPropagation();
         if (event.shiftKey) {
-          void editorRef.current.redo(humanHistoryOptions(editorRef.current.nextRedoAuthor));
+          void runGlobalShortcut("redo", id);
         } else {
-          void editorRef.current.undo(humanHistoryOptions(editorRef.current.nextUndoAuthor));
+          void runGlobalShortcut("undo", id);
         }
         return;
       }
       if (meta && (event.key === "y" || event.key === "Y")) {
         event.preventDefault();
         event.stopPropagation();
-        void editorRef.current.redo(humanHistoryOptions(editorRef.current.nextRedoAuthor));
+        void runGlobalShortcut("redo", id);
         return;
       }
       if (meta && (event.key === "s" || event.key === "S")) {
         event.preventDefault();
         event.stopPropagation();
-        void editorRef.current.save();
+        void runGlobalShortcut("save", id);
         return;
       }
       if (!editMode) {
@@ -602,6 +641,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
       flushBurst,
       focusClip,
       leaveEditMode,
+      runGlobalShortcut,
       scheduleBurst,
     ],
   );
