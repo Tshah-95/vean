@@ -286,9 +286,10 @@ describe("Vean AppKit-owned shell", () => {
       ? { source: "", windows: 0, dialogs: 0, sheets: 0 }
       : await nativeInventory();
     if (!appExitedAfterClose) {
-      await browser.execute("macos: terminateApp", [
-        { bundleId: context.bundleId, path: context.bundlePath },
-      ]);
+      await browser.execute("macos: terminateApp", {
+        bundleId: context.bundleId,
+        path: context.bundlePath,
+      });
       await browser.waitUntil(
         async () => {
           try {
@@ -316,13 +317,11 @@ describe("Vean AppKit-owned shell", () => {
       automationRelaunchForQuit: true,
     });
 
-    await browser.execute("macos: launchApp", [
-      {
-        bundleId: context.bundleId,
-        path: context.bundlePath,
-        environment: context.appEnvironment,
-      },
-    ]);
+    await browser.execute("macos: launchApp", {
+      bundleId: context.bundleId,
+      path: context.bundlePath,
+      environment: context.appEnvironment,
+    });
     await browser.waitUntil(async () => (await nativeInventory()).windows === 1, {
       timeout: 30_000,
       timeoutMsg: "automation-only relaunch for the independent Quit scenario failed",

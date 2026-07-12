@@ -145,6 +145,14 @@ describe("native macOS doctor classification", () => {
     expect(source).not.toContain('VEAN_BIN: "bun"');
   });
 
+  it("passes Mac2 app lifecycle parameters as plain objects", () => {
+    const source = readFileSync(join(process.cwd(), "e2e/macos/native-shell.spec.ts"), "utf8");
+    expect(source).toContain('browser.execute("macos: launchApp", {');
+    expect(source).toContain('browser.execute("macos: terminateApp", {');
+    expect(source).not.toContain('browser.execute("macos: launchApp", [');
+    expect(source).not.toContain('browser.execute("macos: terminateApp", [');
+  });
+
   it.each(["scripts/doctor-macos-driver.ts", "scripts/verify-macos.ts"])(
     "%s refuses a shared desktop before fixture, driver, build, or app launch",
     (script) => {
