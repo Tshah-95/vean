@@ -52,6 +52,7 @@ import { FrameCache } from "../decode/frameCache";
 import { ParallelDecoder } from "../decode/parallelDecoder";
 import { resolveAudio } from "../resolveAudio";
 import { type FootageLayer, type Layer, resolveLayers } from "../resolveLayers";
+import { MediaResourceLedger } from "../test-bridge/resourceLedger";
 import type { Fps, Timeline } from "../types";
 
 export interface FootageStageProps {
@@ -109,12 +110,15 @@ function frameKey(uuid: string, sourceFrame: number): string {
 interface VeanPerf {
   compositeAvgMs: number;
   compositeMedianMs: number;
+  compositeP95Ms: number;
+  compositeMaxMs: number;
   compositeFps: number;
   samples: number;
+  rawCompositeMs: number[];
   cache: ReturnType<FrameCache["getStats"]>;
   decoder: ReturnType<ParallelDecoder["getStats"]> | null;
 }
-type VeanPerfWindow = Window & { __veanPerf?: VeanPerf };
+type VeanPerfWindow = Window & { __veanPerf?: VeanPerf; __veanPerfReset?: () => void };
 
 export function FootageStage({
   timeline,
@@ -161,11 +165,14 @@ export function FootageStage({
   }
 
   const compositor = useRef<GlCompositor | null>(null);
+  const resourceLedger = useRef(new MediaResourceLedger());
   // The Tier-2a decode POOL (N workers, generation-counter cancel) + the byte-
   // bounded LRU it feeds (close()-on-evict). Both imperative (refs) so a decode
   // completing repaints without a React re-render.
   const decoder = useRef<ParallelDecoder | null>(null);
-  const cache = useRef<FrameCache>(new FrameCache({ maxSizeBytes: CACHE_MAX_BYTES }));
+  const cache = useRef<FrameCache>(
+    new FrameCache({ maxSizeBytes: CACHE_MAX_BYTES }, resourceLedger.current),
+  );
   // In-flight decode keys (so we never double-request the same frame in a tick).
   const decoding = useRef<Set<string>>(new Set());
 
@@ -178,7 +185,7 @@ export function FootageStage({
   const recordComposite = useCallback((ms: number) => {
     const arr = compositeTimes.current;
     arr.push(ms);
-    if (arr.length > 120) arr.shift(); // ~last 120 composites
+    if (arr.length > 300) arr.shift();
     const w = window as VeanPerfWindow;
     const avg = arr.reduce((a, b) => a + b, 0) / arr.length;
     const sorted = [...arr].sort((a, b) => a - b);
@@ -186,10 +193,17 @@ export function FootageStage({
     w.__veanPerf = {
       compositeAvgMs: avg,
       compositeMedianMs: median,
+      compositeP95Ms: sorted[Math.max(0, Math.ceil(sorted.length * 0.95) - 1)] ?? 0,
+      compositeMaxMs: sorted.at(-1) ?? 0,
       compositeFps: avg > 0 ? 1000 / avg : 0,
       samples: arr.length,
+      rawCompositeMs: [...arr],
       cache: cache.current.getStats(),
       decoder: decoder.current?.getStats() ?? null,
+    };
+    w.__veanPerfReset = () => {
+      compositeTimes.current = [];
+      w.__veanPerf = undefined;
     };
   }, []);
 
@@ -403,26 +417,81 @@ export function FootageStage({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    try {
+    let contextOwned = false;
+    let losses = 0;
+    let restores = 0;
+    const publishRecovery = () => {
+      (
+        window as unknown as {
+          __veanContextRecovery?: { losses: number; restores: number; contentValid: boolean };
+        }
+      ).__veanContextRecovery = {
+        losses,
+        restores,
+        contentValid: compositor.current != null,
+      };
+    };
+    const createCompositor = () => {
       compositor.current = new GlCompositor(canvas);
+      resourceLedger.current.open("webgl-context", "footage-stage");
+      contextOwned = true;
+      publishRecovery();
+    };
+    try {
+      createCompositor();
     } catch (err) {
       // WebGL2 unavailable — leave the canvas blank; the overlay still draws. The
       // pane surfaces the gap via `hasContent`.
       console.error("vean compositor: WebGL2 init failed", err);
     }
-    decoder.current = new ParallelDecoder();
+    const onContextLost = (event: Event) => {
+      event.preventDefault();
+      losses++;
+      if (contextOwned) {
+        compositor.current?.dispose();
+        compositor.current = null;
+        resourceLedger.current.close("webgl-context", "footage-stage");
+        contextOwned = false;
+      }
+      publishRecovery();
+    };
+    const onContextRestored = () => {
+      try {
+        createCompositor();
+        restores++;
+        const snap = clockInstance.getSnapshot();
+        scheduleComposite(snap.currentFrame, revisionRef.current, true);
+      } catch (error) {
+        console.error("vean compositor: WebGL2 restore failed", error);
+      }
+      publishRecovery();
+    };
+    canvas.addEventListener("webglcontextlost", onContextLost);
+    canvas.addEventListener("webglcontextrestored", onContextRestored);
+    decoder.current = new ParallelDecoder(undefined, resourceLedger.current);
+    window.__veanMediaResources = () => resourceLedger.current.snapshot();
     // Paint the current frame off the live IR immediately (the baseline frame).
     const snap = clockInstance.getSnapshot();
     lastFrame.current = snap.currentFrame;
     lastRevision.current = revisionRef.current;
     scheduleComposite(snap.currentFrame, revisionRef.current);
     return () => {
-      compositor.current?.dispose();
+      canvas.removeEventListener("webglcontextlost", onContextLost);
+      canvas.removeEventListener("webglcontextrestored", onContextRestored);
+      if (contextOwned) {
+        compositor.current?.dispose();
+        resourceLedger.current.close("webgl-context", "footage-stage");
+        contextOwned = false;
+      }
       compositor.current = null;
       decoder.current?.dispose();
       decoder.current = null;
       cache.current.clear(); // close()s every resident bitmap (§8.3)
       decoding.current.clear();
+      (window as VeanPerfWindow).__veanPerf = undefined;
+      (window as VeanPerfWindow).__veanPerfReset = undefined;
+      // Keep the bridge available through React cleanup so a harness can assert
+      // the final balanced snapshot before closing the page.
     };
     // Re-init only on a compositor-identity change (canvas remount). The HMR effect
     // owns frame/revision reactivity; this owns lifecycle + the baseline paint.
@@ -503,12 +572,14 @@ export function FootageStage({
   // buffers immediately so the first play is instant.
   useEffect(() => {
     const graph = new AudioGraph(clockInstance, fps, route);
+    resourceLedger.current.open("audio-context", "timeline-mixer");
     audioGraph.current = graph;
     (window as unknown as { __veanAudio?: () => ReturnType<AudioGraph["getStats"]> }).__veanAudio =
       () => graph.getStats();
     return () => {
       audioScheduleGate.current.release(graph);
       graph.dispose();
+      resourceLedger.current.close("audio-context", "timeline-mixer");
       audioGraph.current = null;
       (window as unknown as { __veanAudio?: unknown }).__veanAudio = undefined;
     };

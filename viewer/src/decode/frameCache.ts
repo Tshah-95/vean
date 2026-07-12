@@ -25,6 +25,8 @@
 // DOM beyond the bitmap. Unit-testable in isolation (the byte accounting +
 // eviction are pure given a fake closable bitmap).
 
+import type { MediaResourceLedger } from "../test-bridge/resourceLedger";
+
 /** A cached decoded footage frame. The cache owns `bitmap` until eviction. */
 export interface CachedFrame {
   /** `${uuid}@${sourceFrame}` — the composite key (see {@link frameKey}). */
@@ -87,9 +89,11 @@ export class FrameCache {
   private hits = 0;
   private misses = 0;
   private evictions = 0;
+  private readonly ledger?: MediaResourceLedger;
 
-  constructor(config: Partial<FrameCacheConfig> = {}) {
+  constructor(config: Partial<FrameCacheConfig> = {}, ledger?: MediaResourceLedger) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.ledger = ledger;
   }
 
   /** Look up the decoded frame for `(uuid, sourceFrame)`. Bumps recency on a hit.
@@ -157,6 +161,7 @@ export class FrameCache {
     const existing = this.cache.get(key);
     if (existing) {
       existing.bitmap.close(); // close-on-replace (§8.3)
+      this.ledger?.close("image-bitmap", existing.key);
       this.totalBytes -= existing.bytes;
       this.cache.delete(key);
     }
@@ -179,6 +184,7 @@ export class FrameCache {
       bytes,
       lastUsed: ++this.tick,
     });
+    this.ledger?.open("image-bitmap", key);
     this.totalBytes += bytes;
   }
 
@@ -198,7 +204,10 @@ export class FrameCache {
   /** Release EVERY frame (on unmount / project switch). The single teardown path —
    *  after this the cache holds no GPU memory. */
   clear(): void {
-    for (const e of this.cache.values()) e.bitmap.close();
+    for (const e of this.cache.values()) {
+      e.bitmap.close();
+      this.ledger?.close("image-bitmap", e.key);
+    }
     this.cache.clear();
     this.totalBytes = 0;
   }
@@ -262,6 +271,7 @@ export class FrameCache {
     const e = this.cache.get(key);
     if (!e) return;
     e.bitmap.close(); // THE load-bearing release (§8.3)
+    this.ledger?.close("image-bitmap", e.key);
     this.totalBytes -= e.bytes;
     this.cache.delete(key);
   }
@@ -276,6 +286,7 @@ export class FrameCache {
     for (const e of byAge) {
       if (this.totalBytes <= budget) break;
       e.bitmap.close();
+      this.ledger?.close("image-bitmap", e.key);
       this.totalBytes -= e.bytes;
       this.cache.delete(e.key);
       this.evictions++;

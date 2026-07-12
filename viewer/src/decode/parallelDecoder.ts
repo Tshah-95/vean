@@ -1,3 +1,4 @@
+import type { MediaResourceLedger } from "../test-bridge/resourceLedger";
 // The PARALLEL DECODE POOL (DESIGN-LIVE-PREVIEW §5 "worker pool", §6 Tier 2a,
 // §8.3, §8.5, §9 step 5). Ported from OpenReel's `parallel-frame-decoder.ts`
 // (worker pool, least-busy scheduling, in-flight cap, zero-copy transfer) FUSED
@@ -83,12 +84,17 @@ export class ParallelDecoder {
   private decodes = 0;
   private staleDropped = 0;
   private totalDecodeMs = 0;
+  private readonly ledger?: MediaResourceLedger;
 
   // Per-worker in-flight + overflow queue (the §8.5 cap). Keyed by worker index.
   private inFlight: number[] = [];
   private queues: Array<Array<() => void>> = [];
 
-  constructor(poolSize = Math.min(4, navigator.hardwareConcurrency || 4)) {
+  constructor(
+    poolSize = Math.min(4, navigator.hardwareConcurrency || 4),
+    ledger?: MediaResourceLedger,
+  ) {
+    this.ledger = ledger;
     const n = Math.max(1, poolSize);
     for (let i = 0; i < n; i++) {
       this.workers.push(this.createWorker(i));
@@ -104,6 +110,7 @@ export class ParallelDecoder {
     const worker = new Worker(new URL("./decode-worker.ts", import.meta.url), {
       type: "module",
     });
+    this.ledger?.open("decoder-worker", String(index));
     const w: PoolWorker = {
       worker,
       index,
@@ -332,6 +339,7 @@ export class ParallelDecoder {
       w.clips.clear();
       w.pending.clear();
       w.worker.terminate();
+      this.ledger?.close("decoder-worker", String(w.index));
     }
     this.workers = [];
     this.clipWorker.clear();
