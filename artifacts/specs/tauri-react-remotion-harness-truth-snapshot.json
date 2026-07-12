@@ -1,8 +1,8 @@
 {
   "program": "tauri-react-remotion-harness",
-  "observed_at": "2026-07-12T00:20:30Z",
+  "observed_at": "2026-07-12T00:36:20Z",
   "target_branch": "main",
-  "target_branch_sha": "fe45251d7f2946a59ec603de86ce035126e10e76",
+  "target_branch_sha": "092fa3080376796789dcb07fb6fc324b99eaed95",
   "canonical_oracle": {
     "command": "bun run verify:harness --profile developer --json",
     "exit_code": 1,
@@ -23,15 +23,15 @@
       "source_of_truth": "bun run test tests/harness-ci-mapping.test.ts && bun run verify:ci-bootstrap",
       "old_failure": "no .github workflow or CI policy existed",
       "new_gate": "semantic YAML/policy validation plus 16 adversarial topology mutations and full bootstrap runner",
-      "target_branch_sha": "fe45251d7f2946a59ec603de86ce035126e10e76",
-      "post_integration_result": "awaiting clean canonical commit and GitHub push run"
+      "target_branch_sha": "092fa3080376796789dcb07fb6fc324b99eaed95",
+      "post_integration_result": "verified: GitHub Actions run 29173915202 succeeded and uploaded structured evidence"
     }
   ],
   "roadmap_status": {
     "H00": "complete",
     "H01": "open",
     "H02": "open",
-    "H09A": "ready_for_canonical_commit",
+    "H09A": "complete",
     "remaining_lanes": "open"
   }
 }
