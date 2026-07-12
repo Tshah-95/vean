@@ -380,6 +380,14 @@ a separate pinned runtime stress checks queue, process memory, latency, and cras
 bounds. Performance is measured separately in browser CI and the optimized final
 package with bounded telemetry and recorded instrumentation overhead.
 
+Current H07 implementation truth: the repo-authored synthetic corpus, candidate
+goldens, headless-Chrome live/resilience runner, and baseline distribution command
+exist. That baseline is deliberately `baseline_only`; it does not approve the
+draft policies or promote candidate goldens. The five H07 acceptance claims remain
+open until their exact claim commands pass with approved policies. In particular,
+Chrome cannot substitute for the actual-WKWebView matrix, and development-host
+timings cannot substitute for optimized installed-package measurements from H08.
+
 ### H08/H08R — package candidate, then canonical release lineage
 
 The package lane is not complete when `tauri build` succeeds or when PATH/HOME

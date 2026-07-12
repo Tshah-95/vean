@@ -149,6 +149,10 @@ oracle execution, evidence refresh, and completion status.
 - Ready when: declared Chrome/WKWebView matrix, render Remotion/MLT,
   live-export semantic parity, handle ledger/stress resilience, and separate
   browser/release performance sections pass against pre-approved policies.
+- Current truth: corpus generation, candidate goldens, Chrome baseline, claim
+  oracles, and claim-to-scenario negative controls are implemented. All five
+  claims remain open: policies are draft, goldens are candidates, WKWebView media
+  evidence is absent, and optimized release-package evidence depends on H08.
 
 ## H07B — media policies and baseline approval
 

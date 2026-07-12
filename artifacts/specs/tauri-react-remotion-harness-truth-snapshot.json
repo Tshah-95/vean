@@ -1,6 +1,6 @@
 {
   "program": "tauri-react-remotion-harness",
-  "observed_at": "2026-07-12T22:43:34Z",
+  "observed_at": "2026-07-12T23:28:00Z",
   "target_branch": "main",
   "evidence_subject_sha": "b416c8a5f26730a838a3e847aaab44e3e4772508",
   "evidence_subject_basis": "historical canonical main commit observed_at; this snapshot records prior evidence and is not self-authenticating proof for the current main SHA",
@@ -9,7 +9,7 @@
     "exit_code": 0,
     "result": "structured VERIFIED at run bcb9ef27-d29b-46f9-b8ae-4f9be90701a3: all 8/8 developer claims verified with zero issues after H04 integration"
   },
-  "active_lane": "H07B media policy",
+  "active_lane": "H07 media oracle reconciliation; acceptance remains open",
   "claims": [
     {
       "claim": "The harness evaluator independently rejects false or stale evidence and composes only explicit profile claims.",
@@ -100,6 +100,15 @@
       "evidence_subject_sha": "b416c8a5f26730a838a3e847aaab44e3e4772508",
       "evidence_subject_basis": "canonical main commit on which post_integration_result was observed",
       "post_integration_result": "verified environment: macOS 26.4 build 25E246, Xcode 26.5, VirtualMac2,1, key-only strict SSH, Node 24.15.0, Bun 1.3.14, pinned Cargo/Rust 1.95.0, MLT 7.40.0, MACOS_DRIVER_READY, and a current headless launch record; media library, recordings, mic, and acquired mounts exist under /Volumes/My Shared Files and all four reject writes"
+    },
+    {
+      "claim": "H07 has a reproducible synthetic corpus, candidate goldens, executable claim oracles, structured negative-control mappings, and a measured non-accepting Chrome baseline; this does not verify any H07 acceptance claim.",
+      "source_of_truth": "bun run test tests/media-harness.test.ts && bun run verify:media --suite baseline --no-accept",
+      "old_failure": "the H07 commands existed but the H00 manifest still declared their oracles absent, top-level claim controls had no executable scenario mapping, and external WKWebView/package JSON was trusted after checking only status plus fixture hash",
+      "new_gate": "five claim commands bind the exact media implementation set and canonical scenario-control mutations; external evidence must satisfy source/runtime/policy/fixture lineage, exact WK cell denominator or recomputed package distributions, and independently hashed artifacts",
+      "evidence_subject_sha": "bcf7dc9d08bbbcac623c06eb69d7a7e2a3d1dff7",
+      "evidence_subject_basis": "origin/main parent used for the reconciliation worktree; the described oracle changes are unmerged until the reconciliation commit lands",
+      "post_integration_result": "baseline_only run 0916846f-69ba-47ca-8c10-596692ad3487: 12-fixture manifest 7e8a9684ccd86de9af5564636401f424e5c3709be4eca9ad305e57987aa81cd5; headless Chrome live/resilience passed; 3 warmups plus 15 fresh processes x 300 samples recorded (max per-run p95 0.040 ms, max sample 0.165 ms). Render/parity remain candidate_only; live.wkwebview requires the H05 guest provider; performance.release-package requires H08; all three policies remain draft and unapproved."
     }
   ],
   "roadmap_status": {
@@ -112,7 +121,9 @@
     "H03": "complete",
     "H04": "complete",
     "H06": "complete",
+    "H07B": "draft policies and frozen synthetic corpus/baseline only; Tejas approval absent",
+    "H07": "oracles mechanically implemented; all five acceptance claims remain open pending approved policies, actual WKWebView evidence, approved goldens, and release-package evidence",
     "H09A": "complete",
-    "remaining_lanes": "H07B, H07, H08, H08R, H09, and H10 open"
+    "remaining_lanes": "H07 acceptance, H08, H08R, H09, and H10 open"
   }
 }

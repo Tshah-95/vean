@@ -311,7 +311,7 @@
       "verifier_owner": "media-domain",
       "dispatch_class": "media",
       "current_status": "open",
-      "oracle_exists": false,
+      "oracle_exists": true,
       "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/media.json",
       "negative_control": {
@@ -328,7 +328,17 @@
           "artifacts/test-runs/<run-id>/negative-controls/nc-live-export-semantic-parity.json"
         ]
       },
-      "oracle_implementation_paths": ["package.json"]
+      "oracle_implementation_paths": [
+        "scripts/verify-media.ts",
+        "scripts/harness/media-control.ts",
+        "scripts/harness/media-control-policy.json",
+        "scripts/harness/media-domain-truth.ts",
+        "e2e/media/media.spec.ts",
+        "e2e/media/performance-sample.ts",
+        "viewer/src/test-bridge/resourceLedger.ts",
+        "scripts/media-fixtures.ts",
+        "scripts/media-goldens.ts"
+      ]
     },
     {
       "claim_id": "claim-live-media",
@@ -339,7 +349,7 @@
       "worker_lane_owner": "H07",
       "verifier_owner": "media-runtime",
       "current_status": "open",
-      "oracle_exists": false,
+      "oracle_exists": true,
       "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/media.json",
       "negative_control": {
@@ -354,7 +364,17 @@
         "restoration_predicate": "restored_hash == before_hash and baseline oracle returns verified",
         "evidence_paths": ["artifacts/test-runs/<run-id>/negative-controls/nc-live-media.json"]
       },
-      "oracle_implementation_paths": ["package.json"]
+      "oracle_implementation_paths": [
+        "scripts/verify-media.ts",
+        "scripts/harness/media-control.ts",
+        "scripts/harness/media-control-policy.json",
+        "scripts/harness/media-domain-truth.ts",
+        "e2e/media/media.spec.ts",
+        "e2e/media/performance-sample.ts",
+        "viewer/src/test-bridge/resourceLedger.ts",
+        "scripts/media-fixtures.ts",
+        "scripts/media-goldens.ts"
+      ]
     },
     {
       "claim_id": "claim-loopback-authority",
@@ -426,7 +446,7 @@
       "worker_lane_owner": "H07",
       "verifier_owner": "media-resilience",
       "current_status": "open",
-      "oracle_exists": false,
+      "oracle_exists": true,
       "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/media.json",
       "negative_control": {
@@ -443,7 +463,17 @@
           "artifacts/test-runs/<run-id>/negative-controls/nc-media-resilience.json"
         ]
       },
-      "oracle_implementation_paths": ["package.json"]
+      "oracle_implementation_paths": [
+        "scripts/verify-media.ts",
+        "scripts/harness/media-control.ts",
+        "scripts/harness/media-control-policy.json",
+        "scripts/harness/media-domain-truth.ts",
+        "e2e/media/media.spec.ts",
+        "e2e/media/performance-sample.ts",
+        "viewer/src/test-bridge/resourceLedger.ts",
+        "scripts/media-fixtures.ts",
+        "scripts/media-goldens.ts"
+      ]
     },
     {
       "claim_id": "claim-native-macos-shell",
@@ -530,7 +560,7 @@
       "worker_lane_owner": "H07",
       "verifier_owner": "performance",
       "current_status": "open",
-      "oracle_exists": false,
+      "oracle_exists": true,
       "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/media.json",
       "negative_control": {
@@ -547,7 +577,17 @@
           "artifacts/test-runs/<run-id>/negative-controls/nc-performance-budget.json"
         ]
       },
-      "oracle_implementation_paths": ["package.json"]
+      "oracle_implementation_paths": [
+        "scripts/verify-media.ts",
+        "scripts/harness/media-control.ts",
+        "scripts/harness/media-control-policy.json",
+        "scripts/harness/media-domain-truth.ts",
+        "e2e/media/media.spec.ts",
+        "e2e/media/performance-sample.ts",
+        "viewer/src/test-bridge/resourceLedger.ts",
+        "scripts/media-fixtures.ts",
+        "scripts/media-goldens.ts"
+      ]
     },
     {
       "claim_id": "claim-process-cleanup",
@@ -716,7 +756,7 @@
       "worker_lane_owner": "H07",
       "verifier_owner": "media-render",
       "current_status": "open",
-      "oracle_exists": false,
+      "oracle_exists": true,
       "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": "artifacts/specs/harness-scenarios/media.json",
       "negative_control": {
@@ -731,7 +771,17 @@
         "restoration_predicate": "restored_hash == before_hash and baseline oracle returns verified",
         "evidence_paths": ["artifacts/test-runs/<run-id>/negative-controls/nc-render-fidelity.json"]
       },
-      "oracle_implementation_paths": ["package.json"]
+      "oracle_implementation_paths": [
+        "scripts/verify-media.ts",
+        "scripts/harness/media-control.ts",
+        "scripts/harness/media-control-policy.json",
+        "scripts/harness/media-domain-truth.ts",
+        "e2e/media/media.spec.ts",
+        "e2e/media/performance-sample.ts",
+        "viewer/src/test-bridge/resourceLedger.ts",
+        "scripts/media-fixtures.ts",
+        "scripts/media-goldens.ts"
+      ]
     },
     {
       "claim_id": "claim-self-contained-package",

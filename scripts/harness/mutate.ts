@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { isBrowserControlId, prepareBrowserControl } from "./browser-control";
 import { isComponentControlId, prepareComponentControl } from "./component-control";
 import { controlRoot } from "./evidence";
+import { isMediaClaimControlId, prepareMediaControl } from "./media-control";
 import { nativeMacosControlId, prepareNativeMacosControl } from "./native-macos-control";
 
 const controlIndex = process.argv.indexOf("--control");
@@ -19,6 +20,8 @@ if (controlId === nativeMacosControlId) {
   prepareBrowserControl(controlId, !process.argv.includes("--restore"));
 } else if (isComponentControlId(controlId)) {
   prepareComponentControl(controlId, !process.argv.includes("--restore"));
+} else if (isMediaClaimControlId(controlId)) {
+  prepareMediaControl(controlId, !process.argv.includes("--restore"));
 }
 const root = controlRoot(process.cwd(), controlId);
 const manifest = JSON.parse(readFileSync(join(root, "mutation.json"), "utf8")) as {
