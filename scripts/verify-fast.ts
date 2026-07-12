@@ -48,7 +48,13 @@ function gates(profile: Profile): Gate[] {
     { id: "viewer-production-build", command: "bun", args: ["run", "viewer:build"] },
     { id: "rustfmt", command: "bun", args: ["run", "rust:fmt"] },
   ];
-  if (profile === "macos") {
+  if (profile === "developer") {
+    common.push(
+      { id: "rust-check-host", command: "bun", args: ["run", "rust:check"] },
+      { id: "rust-clippy-host", command: "bun", args: ["run", "rust:clippy"] },
+      { id: "rust-test-host", command: "bun", args: ["run", "rust:test"] },
+    );
+  } else {
     common.push(
       { id: "rust-check-macos", command: "bun", args: ["run", "rust:check:macos"] },
       { id: "rust-clippy-macos", command: "bun", args: ["run", "rust:clippy:macos"] },
