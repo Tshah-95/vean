@@ -216,7 +216,7 @@ export function validateBootstrapPolicy(
   const allowedRunSteps = runSteps.filter(
     (command) =>
       command.includes("CI_BOOTSTRAP_NOT_REACHED") ||
-      command === "sudo apt-get update && sudo apt-get install --yes libxml2-utils" ||
+      command === "sudo apt-get update && sudo apt-get install --yes ffmpeg libxml2-utils melt" ||
       command === "bun install --frozen-lockfile\nbun install --cwd app --frozen-lockfile" ||
       command === "bun run verify:ci-bootstrap",
   );

@@ -31,7 +31,7 @@ jobs:
         with:
           bun-version: 1.3.14
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install --yes libxml2-utils
+        run: sudo apt-get update && sudo apt-get install --yes ffmpeg libxml2-utils melt
       - name: Install locked dependencies
         run: |
           bun install --frozen-lockfile

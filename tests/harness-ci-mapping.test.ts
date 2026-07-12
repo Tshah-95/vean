@@ -19,7 +19,7 @@ describe("CI bootstrap policy mapping", () => {
     expect(validateBootstrapPolicy(policy, workflow, packageJson)).toEqual([]);
     expect(policy.commands).toEqual(["bun run lint", "bun run typecheck", "bun run test"]);
     expect(workflow).toContain("bun install --cwd app --frozen-lockfile");
-    expect(workflow).toContain("sudo apt-get install --yes libxml2-utils");
+    expect(workflow).toContain("sudo apt-get install --yes ffmpeg libxml2-utils melt");
   });
 
   it("rejects trigger removal, permissive failure, duplicate logic, and stale commands", () => {
