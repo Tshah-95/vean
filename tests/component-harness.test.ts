@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { prepareComponentControl } from "../scripts/harness/component-control";
+import {
+  componentOracleImplementationPaths,
+  prepareComponentControl,
+} from "../scripts/harness/component-control";
 
 const repo = resolve(import.meta.dirname, "..");
 const read = (path: string) => readFileSync(join(repo, path), "utf8");
@@ -80,6 +83,24 @@ describe("H03 real-browser component harness contract", () => {
       expect(verifier).toContain(needle);
     }
     expect(verifier).toContain('["move", "slip", "slide", "trimIn", "trimOut", "roll", "move"]');
+  });
+
+  it("binds both claim manifests to the exact emitted oracle authority set", () => {
+    const manifest = JSON.parse(
+      read("artifacts/specs/tauri-react-remotion-harness-truth-manifest.json"),
+    ) as {
+      claims: Array<{ claim_id: string; oracle_implementation_paths: string[] }>;
+    };
+    for (const claimId of ["claim-react-components", "claim-dom-accessibility"]) {
+      const claim = manifest.claims.find((candidate) => candidate.claim_id === claimId);
+      expect(claim?.oracle_implementation_paths).toEqual([...componentOracleImplementationPaths]);
+    }
+  });
+
+  it("emits non-empty generated evidence assets for aggregate validation", () => {
+    const verifier = read("scripts/verify-component.ts");
+    expect(verifier).toContain("generatedPaths: [truthPath, parityTruthPath, resultPath]");
+    expect(verifier).not.toContain("generatedPaths: []");
   });
 
   it("records parity through a fixed browser endpoint with no arbitrary file authority", () => {

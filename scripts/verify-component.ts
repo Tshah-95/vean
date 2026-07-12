@@ -17,6 +17,7 @@ import {
 } from "../src/preview/session";
 import {
   type ComponentControlId,
+  componentOracleImplementationPaths,
   isComponentControlId,
   prepareComponentControl,
 } from "./harness/component-control";
@@ -289,18 +290,8 @@ try {
     controlId,
     fixturePath: sourceTimeline,
     commandPath: join(repo, "scripts/verify-component.ts"),
-    implementationPaths: [
-      join(repo, "scripts/verify-component.ts"),
-      join(repo, "scripts/harness/component-control.ts"),
-      join(repo, "viewer/vitest.browser.config.ts"),
-      join(repo, "viewer/test/setup-browser.ts"),
-      join(repo, "viewer/test/timeline.browser.test.tsx"),
-      join(repo, "viewer/src/components/TimelineStrip.tsx"),
-      join(repo, "viewer/src/components/ClipBlock.tsx"),
-      join(repo, "viewer/src/timelineKeyboard.ts"),
-      join(repo, "viewer/src/useTimelineEditor.ts"),
-    ],
-    generatedPaths: [],
+    implementationPaths: componentOracleImplementationPaths.map((path) => join(repo, path)),
+    generatedPaths: [truthPath, parityTruthPath, resultPath],
     artifactPaths: [
       browserLogPath,
       invocationPath,

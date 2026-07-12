@@ -8,6 +8,22 @@ const repo = resolve(import.meta.dirname, "../..");
 export const componentControlIds = ["nc-react-components", "nc-dom-accessibility"] as const;
 export type ComponentControlId = (typeof componentControlIds)[number];
 
+// This is the complete H03 oracle authority set. Both component claims share
+// the same browser runner and product semantics, so the truth manifest and the
+// emitted evidence must name this exact set (neither a package.json proxy nor a
+// partial subset is sufficient).
+export const componentOracleImplementationPaths = [
+  "scripts/verify-component.ts",
+  "scripts/harness/component-control.ts",
+  "viewer/vitest.browser.config.ts",
+  "viewer/test/setup-browser.ts",
+  "viewer/test/timeline.browser.test.tsx",
+  "viewer/src/components/TimelineStrip.tsx",
+  "viewer/src/components/ClipBlock.tsx",
+  "viewer/src/timelineKeyboard.ts",
+  "viewer/src/useTimelineEditor.ts",
+] as const;
+
 const definitions: Record<
   ComponentControlId,
   { target: string; baseline: string; mutated: string; semanticMutation: string }
