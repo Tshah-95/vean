@@ -27,6 +27,8 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
+const MACOS_RENDERER_TRIPLE: &str = "aarch64-apple-darwin";
+
 /// The live preview sidecar: the child process, the port it bound, and the project
 /// root it was started against.
 struct Sidecar {
@@ -103,7 +105,7 @@ fn free_port() -> std::io::Result<u16> {
 /// data under `Contents/Resources/sidecars`; in a source tree they're under
 /// `app/src-tauri/sidecars/bin` carrying the `-<triple>` suffix.
 fn renderer_env(app: &AppHandle) -> Vec<(String, String)> {
-    let triple = "aarch64-apple-darwin";
+    let triple = MACOS_RENDERER_TRIPLE;
     // (bin_dir, sidecars_root) candidates, packaged first then the dev tree.
     let mut roots: Vec<(PathBuf, PathBuf)> = Vec::new();
     if let Ok(res) = app.path().resource_dir() {
@@ -141,8 +143,14 @@ fn renderer_env(app: &AppHandle) -> Vec<(String, String)> {
                 let dyld = format!("{}:/usr/local/lib:/usr/lib", s(lib));
                 return vec![
                     ("VEAN_MELT".into(), s(melt)),
-                    ("VEAN_FFMPEG".into(), s(bin_dir.join(format!("ffmpeg{suffix}")))),
-                    ("VEAN_FFPROBE".into(), s(bin_dir.join(format!("ffprobe{suffix}")))),
+                    (
+                        "VEAN_FFMPEG".into(),
+                        s(bin_dir.join(format!("ffmpeg{suffix}"))),
+                    ),
+                    (
+                        "VEAN_FFPROBE".into(),
+                        s(bin_dir.join(format!("ffprobe{suffix}"))),
+                    ),
                     ("DYLD_FALLBACK_LIBRARY_PATH".into(), dyld),
                     ("MLT_REPOSITORY".into(), s(lib_mlt)),
                     ("MLT_DATA".into(), s(data.clone())),
@@ -162,6 +170,7 @@ fn renderer_env(app: &AppHandle) -> Vec<(String, String)> {
 ///   2. otherwise the build profile: `tauri dev` builds debug → HMR; `tauri build`
 ///      builds release → snapshot. This makes the dev app hot-reload the viewer
 ///      with zero config while the shipped app keeps the static snapshot.
+///
 /// Dev is then GUARDED on the `viewer/` source actually being present — a shipped
 /// bundle has no source (or `bun`/Vite) to run a dev server, so it falls back to
 /// the snapshot even if it somehow reaches here as a debug build.
@@ -299,7 +308,11 @@ fn run_action_internal(
 /// navigates the window.
 #[tauri::command]
 fn preview_port(state: State<AppState>) -> Option<u16> {
-    state.sidecar.lock().ok().and_then(|g| g.as_ref().map(|s| s.port))
+    state
+        .sidecar
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|s| s.port))
 }
 
 /// Generic action bridge exposed to the webview. The end-state hybrid transport
@@ -312,7 +325,11 @@ fn run_action(
     input: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
     let project = active_project(&app);
-    run_action_internal(&project, &id, &input.unwrap_or_else(|| serde_json::json!({})))
+    run_action_internal(
+        &project,
+        &id,
+        &input.unwrap_or_else(|| serde_json::json!({})),
+    )
 }
 
 // ── native menu gestures (handled Rust-side; survive webview navigation) ────
@@ -444,4 +461,23 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running vean app");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{free_port, MACOS_RENDERER_TRIPLE};
+
+    #[test]
+    fn free_port_returns_a_rebindable_loopback_port() {
+        let port = free_port().expect("loopback port should be available");
+        let rebound = std::net::TcpListener::bind(("127.0.0.1", port));
+        assert!(rebound.is_ok(), "free_port must release its probe listener");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn packaged_renderer_triple_matches_the_macos_build_architecture() {
+        assert_eq!(std::env::consts::ARCH, "aarch64");
+        assert_eq!(MACOS_RENDERER_TRIPLE, "aarch64-apple-darwin");
+    }
 }

@@ -39,7 +39,12 @@ import type { DissolveLayer, FootageLayer, Layer, SolidLayer } from "../resolveL
 /** A source a footage layer's frame comes from — either a decoded bitmap or any
  *  canvas-image source the compositor can `texImage2D`. `null` = decode pending /
  *  failed (the layer is skipped, the layer below shows through). */
-export type FrameImage = ImageBitmap | HTMLCanvasElement | OffscreenCanvas | HTMLVideoElement | null;
+export type FrameImage =
+  | ImageBitmap
+  | HTMLCanvasElement
+  | OffscreenCanvas
+  | HTMLVideoElement
+  | null;
 
 /** The compositor pulls each footage layer's pixels through this callback (so the
  *  cache/decode policy lives in the caller, §8.3). Synchronous: the caller has
@@ -159,17 +164,17 @@ function parseColor(resource: string): [number, number, number, number] {
   const hex = s.startsWith("#") ? s.slice(1) : null;
   if (hex && /^[0-9a-fA-F]{8}$/.test(hex)) {
     // #AARRGGBB (MLT order: alpha, red, green, blue).
-    const a = parseInt(hex.slice(0, 2), 16) / 255;
-    const r = parseInt(hex.slice(2, 4), 16) / 255;
-    const g = parseInt(hex.slice(4, 6), 16) / 255;
-    const b = parseInt(hex.slice(6, 8), 16) / 255;
+    const a = Number.parseInt(hex.slice(0, 2), 16) / 255;
+    const r = Number.parseInt(hex.slice(2, 4), 16) / 255;
+    const g = Number.parseInt(hex.slice(4, 6), 16) / 255;
+    const b = Number.parseInt(hex.slice(6, 8), 16) / 255;
     return [r, g, b, a];
   }
   if (hex && /^[0-9a-fA-F]{6}$/.test(hex)) {
     return [
-      parseInt(hex.slice(0, 2), 16) / 255,
-      parseInt(hex.slice(2, 4), 16) / 255,
-      parseInt(hex.slice(4, 6), 16) / 255,
+      Number.parseInt(hex.slice(0, 2), 16) / 255,
+      Number.parseInt(hex.slice(2, 4), 16) / 255,
+      Number.parseInt(hex.slice(4, 6), 16) / 255,
       1,
     ];
   }
@@ -240,10 +245,11 @@ export class GlCompositor {
     this.quad = buf;
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     // prettier-ignore
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-      -1, -1,  1, -1,  -1, 1,
-      -1,  1,  1, -1,   1, 1,
-    ]), gl.STATIC_DRAW);
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]),
+      gl.STATIC_DRAW,
+    );
     const vao = gl.createVertexArray();
     if (!vao) throw new Error("createVertexArray failed");
     this.vao = vao;
@@ -277,14 +283,25 @@ export class GlCompositor {
 
   private ensureTarget(slot: "from" | "to"): RenderTarget {
     const existing = slot === "from" ? this.rtFrom : this.rtTo;
-    if (existing && existing.width === this.width && existing.height === this.height) return existing;
+    if (existing && existing.width === this.width && existing.height === this.height)
+      return existing;
     if (existing) this.freeTarget(existing);
     const gl = this.gl;
     const tex = gl.createTexture();
     const fbo = gl.createFramebuffer();
     if (!tex || !fbo) throw new Error("render target alloc failed");
     gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.width, this.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA,
+      this.width,
+      this.height,
+      0,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      null,
+    );
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -320,7 +337,13 @@ export class GlCompositor {
     const gl = this.gl;
     gl.useProgram(this.progSolid);
     gl.bindVertexArray(this.vao);
-    gl.uniform4f(gl.getUniformLocation(this.progSolid, "uColor"), color[0], color[1], color[2], color[3]);
+    gl.uniform4f(
+      gl.getUniformLocation(this.progSolid, "uColor"),
+      color[0],
+      color[1],
+      color[2],
+      color[3],
+    );
     gl.uniform1f(gl.getUniformLocation(this.progSolid, "uOpacity"), opacity);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
@@ -400,7 +423,10 @@ export class GlCompositor {
       gl.uniform1i(gl.getUniformLocation(prog, "luma"), 2);
     }
     gl.uniform1f(gl.getUniformLocation(prog, "progress"), layer.progress);
-    gl.uniform1f(gl.getUniformLocation(prog, "ratio"), this.height === 0 ? 1 : this.width / this.height);
+    gl.uniform1f(
+      gl.getUniformLocation(prog, "ratio"),
+      this.height === 0 ? 1 : this.width / this.height,
+    );
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 

@@ -11,7 +11,7 @@
 // frame through the worker and returns a small JSON-able pixel sample (so the gate
 // can assert the frame is non-empty, not a black/blank decode). The returned bitmap
 // is `close()`d immediately after sampling (§8.3 — never leak a decoded frame).
-import { Decoder, type DecodedFrame } from "./decoder";
+import { type DecodedFrame, Decoder } from "./decoder";
 
 /** The shape `window.__veanDecode` resolves to — JSON-serializable so an
  *  `agent-browser eval` can read it directly. */

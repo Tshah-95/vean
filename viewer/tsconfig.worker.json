@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ESNext", "WebWorker"],
+    "types": []
+  },
+  "include": ["src/decode/decode-worker.ts", "src/decode/protocol.ts"],
+  "exclude": []
+}

@@ -1,3 +1,4 @@
+import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
 // LowerThird — the real demo composition. A dark bar anchored in the lower third
 // with an accent left border, a title and a subtitle. The bar springs in from
 // the left; the text fades up.
@@ -8,7 +9,6 @@
 // background color here, the overlay becomes opaque and the qtblend composite
 // shows only the graphic — the footage underneath disappears.
 import { z } from "zod";
-import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
 import { FONT_STACK, theme } from "../lib/theme";
 
 // Remotion bundles its own zod — import it from "zod" INSIDE this workspace

@@ -24,12 +24,7 @@
 // concurrency cap and a latest-wins queue, so a scrub burst never floods the
 // decoder. (The full worker POOL + decode-ahead LRU is Tier 2a / §9 step 5; this
 // is the correct, bounded single-worker foundation.)
-import {
-  type DecodeResponse,
-  type OpenResponse,
-  type WorkerRequest,
-  type WorkerResponse,
-} from "./protocol";
+import type { DecodeResponse, OpenResponse, WorkerRequest, WorkerResponse } from "./protocol";
 
 /** URL for the per-source short-GOP H.264 proxy of `resource` on `route` — the
  *  bytes mediabunny demuxes. The server builds it once (cached) and streams it

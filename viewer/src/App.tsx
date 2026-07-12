@@ -6,15 +6,15 @@
 // save (DESIGN-LIVE-PREVIEW §6 Tier 0). All preview layers are slaved to the one
 // master clock (see ClockProvider + PreviewPane).
 import { useEffect, useMemo, useState } from "react";
-import { fetchDiagnostics, fetchProjects, fetchTimeline, type ProjectEntry } from "./api";
 import { ClockProvider, useClockInstance } from "./ClockProvider";
-import { installDecodeBridge } from "./decode/debugBridge";
+import { PreviewProvider } from "./PreviewProvider";
+import { type ProjectEntry, fetchDiagnostics, fetchProjects, fetchTimeline } from "./api";
 import { Header } from "./components/Header";
 import { PreviewPane } from "./components/PreviewPane";
 import { Sidebar } from "./components/Sidebar";
 import { TimelineStrip } from "./components/TimelineStrip";
 import { Transport } from "./components/Transport";
-import { PreviewProvider } from "./PreviewProvider";
+import { installDecodeBridge } from "./decode/debugBridge";
 import type { TimelineResponse } from "./types";
 import { useTimelineEditor } from "./useTimelineEditor";
 
@@ -262,7 +262,10 @@ function Stage({
 
 export function App() {
   // Allow ?route= override in the URL (e.g. for testing a non-default timeline).
-  const route = useMemo(() => new URLSearchParams(window.location.search).get("route") ?? undefined, []);
+  const route = useMemo(
+    () => new URLSearchParams(window.location.search).get("route") ?? undefined,
+    [],
+  );
   // Attach the headless decode bridge (`window.__veanDecode`) so the §9-step-3 gate
   // can decode a real clip in-browser via `drive` + `agent-browser eval`. Side-
   // effect only — no UI; the Tier-1 compositor consumes the same `Decoder` directly.

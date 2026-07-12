@@ -110,8 +110,7 @@ export function ClipBlock({
   // trim wall stops the drag there. A color generator is positionless (no source
   // window) and an un-probed clip has an unknown tail, so neither flags that edge.
   const atMediaStart = item.service !== "color" && item.in <= 0;
-  const atMediaEnd =
-    item.service !== "color" && item.length != null && item.out >= item.length - 1;
+  const atMediaEnd = item.service !== "color" && item.length != null && item.out >= item.length - 1;
 
   return (
     <div
@@ -254,7 +253,8 @@ function MediaLimit({ side }: { side: "left" | "right" }) {
         height: 7,
         background: "rgba(232,234,242,0.6)",
         // A right triangle hugging this corner (top + this-side edges).
-        clipPath: side === "left" ? "polygon(0 0, 100% 0, 0 100%)" : "polygon(0 0, 100% 0, 100% 100%)",
+        clipPath:
+          side === "left" ? "polygon(0 0, 100% 0, 0 100%)" : "polygon(0 0, 100% 0, 100% 100%)",
         zIndex: 6,
       }}
     />

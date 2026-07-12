@@ -12,15 +12,15 @@
 // for the session list and the client-side diff — so no new server endpoint or
 // registry action is introduced.
 import { useCallback, useEffect, useState } from "react";
+import { useClockInstance } from "../../ClockProvider";
 import {
+  type ProjectEntry,
+  type WhereAmI,
   fetchProjects,
   fetchTimeline,
   fetchWhereAmI,
-  type ProjectEntry,
   renderStill,
-  type WhereAmI,
 } from "../../api";
-import { useClockInstance } from "../../ClockProvider";
 import { type TimelineDiff, diffTimelines } from "../timelineDiff";
 import { Btn, C, Note, PanelHead, mono } from "./ui";
 
@@ -93,7 +93,10 @@ function CompareCard({
     try {
       // Render the SAME frame on each side so the compare is apples-to-apples.
       const frame = getFrame();
-      const [a, b] = await Promise.all([renderStill(frame, baseRoute), renderStill(frame, otherRoute)]);
+      const [a, b] = await Promise.all([
+        renderStill(frame, baseRoute),
+        renderStill(frame, otherRoute),
+      ]);
       const bust = Date.now();
       setStills({ base: `${a.stillUrl}?t=${bust}`, other: `${b.stillUrl}?t=${bust}` });
     } catch (e) {
@@ -103,20 +106,43 @@ function CompareCard({
     }
   }, [baseRoute, otherRoute, getFrame]);
 
-  const art = { width: "100%", borderRadius: 4, border: `1px solid ${C.border}`, display: "block" } as const;
+  const art = {
+    width: "100%",
+    borderRadius: 4,
+    border: `1px solid ${C.border}`,
+    display: "block",
+  } as const;
 
   return (
     <div style={{ border: `1px solid ${C.border}`, borderRadius: 6, padding: 8, marginBottom: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-        <span style={{ fontSize: 12, fontWeight: 600, color: C.text, flex: 1, minWidth: 0 }}>{other.title}</span>
-        <Btn onClick={() => void doDiff()} disabled={busy !== null} title="Structural diff vs the loaded session">
+        <span style={{ fontSize: 12, fontWeight: 600, color: C.text, flex: 1, minWidth: 0 }}>
+          {other.title}
+        </span>
+        <Btn
+          onClick={() => void doDiff()}
+          disabled={busy !== null}
+          title="Structural diff vs the loaded session"
+        >
           {busy === "diff" ? "Diffing…" : "Diff"}
         </Btn>
-        <Btn onClick={() => void doStill()} disabled={busy !== null} title="Render a still at the playhead on both">
+        <Btn
+          onClick={() => void doStill()}
+          disabled={busy !== null}
+          title="Render a still at the playhead on both"
+        >
           {busy === "still" ? "Rendering…" : "Still"}
         </Btn>
       </div>
-      <div style={{ fontSize: 10, color: C.dim, fontFamily: mono, wordBreak: "break-all", marginBottom: 6 }}>
+      <div
+        style={{
+          fontSize: 10,
+          color: C.dim,
+          fontFamily: mono,
+          wordBreak: "break-all",
+          marginBottom: 6,
+        }}
+      >
         {other.rootPath}
       </div>
       {err && <Note kind="error">{err}</Note>}
@@ -136,18 +162,23 @@ function CompareCard({
                 <div key={c.id} style={{ display: "flex", gap: 6, fontSize: 10, padding: "1px 0" }}>
                   <span
                     style={{
-                      color: c.kind === "added" ? "#7fd18f" : c.kind === "removed" ? C.danger : C.accent,
+                      color:
+                        c.kind === "added" ? "#7fd18f" : c.kind === "removed" ? C.danger : C.accent,
                       width: 52,
                       flexShrink: 0,
                     }}
                   >
                     {c.kind}
                   </span>
-                  <span style={{ color: C.muted, fontFamily: mono, wordBreak: "break-word" }}>{c.detail}</span>
+                  <span style={{ color: C.muted, fontFamily: mono, wordBreak: "break-word" }}>
+                    {c.detail}
+                  </span>
                 </div>
               ))}
               {diff.clips.length > 20 && (
-                <div style={{ fontSize: 10, color: C.dim, marginTop: 2 }}>+{diff.clips.length - 20} more…</div>
+                <div style={{ fontSize: 10, color: C.dim, marginTop: 2 }}>
+                  +{diff.clips.length - 20} more…
+                </div>
               )}
             </>
           )}
@@ -216,9 +247,18 @@ export function SessionsPanel({
       <div style={{ flex: 1, overflow: "auto", padding: 10 }}>
         {/* This worktree's identity — the "which version am I?" block. */}
         {me ? (
-          <div style={{ border: `1px solid ${C.border}`, borderRadius: 6, padding: "8px 10px", marginBottom: 12 }}>
+          <div
+            style={{
+              border: `1px solid ${C.border}`,
+              borderRadius: 6,
+              padding: "8px 10px",
+              marginBottom: 12,
+            }}
+          >
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-              <span style={{ fontSize: 12, fontWeight: 650, color: C.accent, fontFamily: mono }}>{me.slug}</span>
+              <span style={{ fontSize: 12, fontWeight: 650, color: C.accent, fontFamily: mono }}>
+                {me.slug}
+              </span>
               <span
                 style={{
                   fontSize: 10,
@@ -240,8 +280,8 @@ export function SessionsPanel({
             )}
             {!me.veanBinMatchesCheckout && (
               <Note kind="dim">
-                Note: the on-PATH `vean` resolves to a different checkout ({me.veanBinResolvesTo ?? "unknown"}); inside a
-                worktree use `bun run`.
+                Note: the on-PATH `vean` resolves to a different checkout (
+                {me.veanBinResolvesTo ?? "unknown"}); inside a worktree use `bun run`.
               </Note>
             )}
           </div>
@@ -252,7 +292,9 @@ export function SessionsPanel({
         <div style={{ fontSize: 11, fontWeight: 650, color: C.muted, margin: "4px 0 8px" }}>
           Other sessions · {others.length}
         </div>
-        {others.length === 0 && <Note kind="dim">No other project sessions to compare against.</Note>}
+        {others.length === 0 && (
+          <Note kind="dim">No other project sessions to compare against.</Note>
+        )}
         {others.map((s) =>
           openId === s.id ? (
             <div key={s.id}>
@@ -279,14 +321,35 @@ export function SessionsPanel({
               }}
             >
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: C.text,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   {s.title}
                 </div>
-                <div style={{ fontSize: 10, color: C.dim, fontFamily: mono, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <div
+                  style={{
+                    fontSize: 10,
+                    color: C.dim,
+                    fontFamily: mono,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   {s.rootPath}
                 </div>
               </div>
-              <Btn onClick={() => setOpenId(s.id)} disabled={!s.timelinePath} title={s.timelinePath ? "Diff + still vs this session" : "no timeline:main"}>
+              <Btn
+                onClick={() => setOpenId(s.id)}
+                disabled={!s.timelinePath}
+                title={s.timelinePath ? "Diff + still vs this session" : "no timeline:main"}
+              >
                 Compare
               </Btn>
             </div>

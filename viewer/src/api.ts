@@ -20,7 +20,12 @@ async function getJson<T>(path: string): Promise<T> {
   return body as T;
 }
 
-export async function fetchHealth(): Promise<{ ok: true; version: string; repo: string; defaultRoute: string }> {
+export async function fetchHealth(): Promise<{
+  ok: true;
+  version: string;
+  repo: string;
+  defaultRoute: string;
+}> {
   return getJson("/api/health");
 }
 
@@ -29,7 +34,10 @@ export async function fetchTimeline(route?: string): Promise<TimelineResponse> {
   return getJson(`/api/timeline${qs}`);
 }
 
-export async function fetchTimelines(): Promise<{ ok: true; timelines: Array<{ path: string; aliases: string[] }> }> {
+export async function fetchTimelines(): Promise<{
+  ok: true;
+  timelines: Array<{ path: string; aliases: string[] }>;
+}> {
   return getJson("/api/timelines");
 }
 
@@ -44,9 +52,11 @@ export async function fetchProjects(): Promise<{ ok: true; projects: ProjectEntr
   return getJson("/api/projects");
 }
 
-export async function fetchDiagnostics(
-  route?: string,
-): Promise<{ ok: true; health: { errors: number; warnings: number } | Record<string, number>; diagnostics: unknown[] }> {
+export async function fetchDiagnostics(route?: string): Promise<{
+  ok: true;
+  health: { errors: number; warnings: number } | Record<string, number>;
+  diagnostics: unknown[];
+}> {
   const qs = route ? `?route=${encodeURIComponent(route)}` : "";
   return getJson(`/api/diagnostics${qs}`);
 }
@@ -63,7 +73,11 @@ export function mediaUrl(path: string, route?: string): string {
   return `/api/media?${qs.toString()}`;
 }
 
-export async function renderProxy(route?: string, scale?: number, force?: boolean): Promise<ProxyResponse> {
+export async function renderProxy(
+  route?: string,
+  scale?: number,
+  force?: boolean,
+): Promise<ProxyResponse> {
   const res = await fetch("/api/proxy-render", {
     method: "POST",
     headers: { "content-type": "application/json" },

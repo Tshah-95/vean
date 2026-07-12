@@ -4,7 +4,7 @@
 // renders (one master playhead per mounted viewer).
 import { createContext, useContext, useMemo, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
-import { MasterClock, type ClockState } from "./clock";
+import { type ClockState, MasterClock } from "./clock";
 
 const ClockContext = createContext<MasterClock | null>(null);
 

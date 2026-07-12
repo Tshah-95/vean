@@ -76,7 +76,9 @@ export function Header({
       ) : (
         <div style={{ fontSize: 13, color: "#9aa0ae" }}>{title}</div>
       )}
-      <div style={{ fontSize: 12, color: "#6b7280", fontFamily: "ui-monospace, monospace" }}>{route}</div>
+      <div style={{ fontSize: 12, color: "#6b7280", fontFamily: "ui-monospace, monospace" }}>
+        {route}
+      </div>
       <div style={{ flex: 1 }} />
       <Badge label={`${width}×${height}`} />
       <Badge label={`${fpsLabel(fps)} fps`} />
@@ -90,7 +92,10 @@ export function Header({
   );
 }
 
-function Badge({ label, tone = "neutral" }: { label: string; tone?: "neutral" | "ok" | "warn" | "error" }) {
+function Badge({
+  label,
+  tone = "neutral",
+}: { label: string; tone?: "neutral" | "ok" | "warn" | "error" }) {
   const colors: Record<string, { bg: string; fg: string }> = {
     neutral: { bg: "#161922", fg: "#9aa0ae" },
     ok: { bg: "#13261a", fg: "#7fd99a" },

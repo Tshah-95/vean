@@ -99,7 +99,11 @@ function overlayFor(gesture: Gesture, dxFrames: number): Overlay | null {
       if (left?.item.kind === "clip") {
         const lc = left.item;
         const newOut = Math.max(lc.in, lc.out + dxFrames);
-        return { item: { ...lc, out: newOut }, start: left.start, frame: left.start + (newOut - lc.in) };
+        return {
+          item: { ...lc, out: newOut },
+          start: left.start,
+          frame: left.start + (newOut - lc.in),
+        };
       }
       return null;
     }

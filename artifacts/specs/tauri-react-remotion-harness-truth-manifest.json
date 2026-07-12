@@ -677,28 +677,39 @@
       "claim": "All owned TS/TSX and platform-neutral plus macOS-target Rust code is statically gated on the correct toolchain.",
       "oracle_command": "bun run verify:fast --profile macos",
       "expected_predicate": "platform-neutral gates and macOS target/feature fmt-check-clippy-test records are verified",
-      "canonical_artifact_paths": ["viewer/tsconfig.json"],
+      "canonical_artifact_paths": [
+        "package.json",
+        "biome.json",
+        "viewer/tsconfig.json",
+        "viewer/tsconfig.worker.json",
+        "remotion/tsconfig.json",
+        "app/src-tauri/Cargo.toml"
+      ],
       "worker_lane_owner": "H01",
       "verifier_owner": "static-gate",
       "current_status": "open",
-      "oracle_exists": false,
+      "oracle_exists": true,
       "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": null,
       "negative_control": {
         "control_id": "nc-static-owned-code",
-        "setup_command": "bun run harness:mutate --control nc-static-owned-code",
+        "setup_command": "bun scripts/harness/static-owned-control.ts --control nc-static-owned-code",
         "mutation_or_fixture_hash": "required: recorded before_hash != mutated_hash and exact mutation manifest hash",
         "oracle_command": "bun run verify:fast --profile macos",
         "expected_oracle_exit": 1,
         "expected_status": "failed",
         "expected_reason_code": "SENSITIVITY_STATIC_OWNED_CODE",
-        "cleanup_command": "bun run harness:mutate --restore nc-static-owned-code",
+        "cleanup_command": "bun scripts/harness/static-owned-control.ts --restore nc-static-owned-code",
         "restoration_predicate": "restored_hash == before_hash and baseline oracle returns verified",
         "evidence_paths": [
           "artifacts/test-runs/<run-id>/negative-controls/nc-static-owned-code.json"
         ]
       },
-      "oracle_implementation_paths": ["package.json"]
+      "oracle_implementation_paths": [
+        "package.json",
+        "scripts/verify-fast.ts",
+        "scripts/harness/static-owned-control.ts"
+      ]
     },
     {
       "claim_id": "claim-tauri-wkwebview",

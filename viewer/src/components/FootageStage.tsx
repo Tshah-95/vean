@@ -98,6 +98,10 @@ const NEAREST_HOLD_FRAMES = 90;
  *  on-demand decode isn't stuck behind a flood of warm work. */
 const MAX_QUEUE_DEPTH = 8;
 
+function frameKey(uuid: string, sourceFrame: number): string {
+  return `${uuid}@${sourceFrame}`;
+}
+
 /** The measured perf snapshot published on `window.__veanPerf` for the Tier-2a
  *  gate (§6 Tier 2): composite fps + cache/decoder stats, read headlessly via
  *  `agent-browser` to assert steady fps + bounded GPU memory across a scrub. */
@@ -143,6 +147,8 @@ export function FootageStage({
   const revisionRef = useRef(revision);
   revisionRef.current = revision;
   const shownFrame = useRef(clock.currentFrame);
+  const clockFrameRef = useRef(clock.currentFrame);
+  clockFrameRef.current = clock.currentFrame;
 
   // The decode box — the profile size clamped to MAX_EDGE (keeps aspect).
   const boxW = useRef(0);
@@ -226,8 +232,6 @@ export function FootageStage({
   }, [stillBusy, route, clockInstance]);
 
   const secondsForFrame = useCallback((frame: number) => (frame * fps[1]) / fps[0], [fps]);
-
-  const frameKey = (uuid: string, sourceFrame: number) => `${uuid}@${sourceFrame}`;
 
   // Kick an off-thread decode for one `(uuid, sourceFrame)` through the POOL, into
   // the FrameCache, and recomposite the current playhead when it lands. Deduped by
@@ -345,10 +349,10 @@ export function FootageStage({
       recordComposite(performance.now() - t0);
       warmAhead(frame);
     },
-    // recordComposite is stable (ref-backed); warmAhead/provideFootage tracked. The
+    // warmAhead/provideFootage/recordComposite are stable callbacks. The
     // IR is read live via activeTimelineRef, so `timeline` is intentionally not a dep.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [provideFootage, warmAhead],
+    [provideFootage, recordComposite, warmAhead],
   );
 
   // Single-in-flight composite with latest-wins coalescing. `force` bypasses the
@@ -409,8 +413,8 @@ export function FootageStage({
     // Paint the current frame off the live IR immediately (the baseline frame).
     const snap = clockInstance.getSnapshot();
     lastFrame.current = snap.currentFrame;
-    lastRevision.current = revision;
-    scheduleComposite(snap.currentFrame, revision);
+    lastRevision.current = revisionRef.current;
+    scheduleComposite(snap.currentFrame, revisionRef.current);
     return () => {
       compositor.current?.dispose();
       compositor.current = null;
@@ -435,7 +439,7 @@ export function FootageStage({
     // playhead leaves that frame (or an edit changes the composite), so the live
     // compositor is always what's shown except where the user explicitly froze it.
     if ((frameChanged || revisionChanged) && stillFrame.current !== clock.currentFrame) {
-      if (stillUrl) setStillUrl(null);
+      setStillUrl(null);
       stillFrame.current = null;
     }
 
@@ -475,7 +479,7 @@ export function FootageStage({
   // real frame. Keyed on `preview` identity only (not revision), so a commit's
   // repaint stays owned by the HMR effect above (no double-composite per edit).
   useEffect(() => {
-    const frame = preview ? preview.frame : clockInstance.getSnapshot().currentFrame;
+    const frame = preview ? preview.frame : clockFrameRef.current;
     scheduleComposite(frame, revisionRef.current, true);
     // revisionRef/clockInstance are refs/stable; the reactive trigger is `preview`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -489,6 +493,7 @@ export function FootageStage({
   // its schedule is re-derived on edits + seeks. Exposed on `window.__veanAudio` so
   // the headless §9-step-6 gate can assert the graph is live + A/V-locked.
   const audioGraph = useRef<AudioGraph | null>(null);
+  const lastScheduledRevision = useRef<number | null>(null);
   // The last frame the audio path acted on — to detect a discrete SEEK (a jump) vs
   // smooth playback, so we re-schedule audio only on a real seek, never per tick.
   const prevAudioFrame = useRef(clock.currentFrame);
@@ -498,10 +503,6 @@ export function FootageStage({
   useEffect(() => {
     const graph = new AudioGraph(clockInstance, fps, route);
     audioGraph.current = graph;
-    graph.setVolume(volume);
-    graph.setMuted(muted);
-    void graph.setSinkId(sinkId);
-    graph.schedule(resolveAudio(timeline));
     (window as unknown as { __veanAudio?: () => ReturnType<AudioGraph["getStats"]> }).__veanAudio =
       () => graph.getStats();
     return () => {
@@ -530,9 +531,10 @@ export function FootageStage({
   // from the current playhead — so an edit is reflected in audio with NO save, the
   // audio twin of the footage HMR loop.
   useEffect(() => {
+    if (lastScheduledRevision.current === revision) return;
     audioGraph.current?.schedule(resolveAudio(timeline));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revision]);
+    lastScheduledRevision.current = revision;
+  }, [revision, timeline]);
 
   // Play/pause TRANSITION → start/stop the graph. Keyed on `clock.playing` ONLY (not
   // `currentFrame`), so it fires once per transition — NOT every frame. `play()`
@@ -543,12 +545,11 @@ export function FootageStage({
     const graph = audioGraph.current;
     if (!graph) return;
     if (clock.playing) {
-      void graph.play(resolveAudio(timeline));
+      void graph.play(resolveAudio(activeTimelineRef.current));
     } else {
       graph.pause();
     }
-    prevAudioFrame.current = clock.currentFrame;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    prevAudioFrame.current = clockFrameRef.current;
   }, [clock.playing]);
 
   // Seek-while-playing → re-align audio to the new position. A DISCRETE jump (a

@@ -68,7 +68,9 @@ export function Sidebar({
         height: "100%",
       }}
     >
-      <div style={{ display: "flex", alignItems: "stretch", borderBottom: `1px solid ${C.border}` }}>
+      <div
+        style={{ display: "flex", alignItems: "stretch", borderBottom: `1px solid ${C.border}` }}
+      >
         {TABS.map((t) => (
           <button
             key={t.id}
@@ -93,7 +95,13 @@ export function Sidebar({
           type="button"
           onClick={() => setOpen(false)}
           title="Hide panels"
-          style={{ width: 28, border: "none", background: "transparent", color: C.muted, cursor: "pointer" }}
+          style={{
+            width: 28,
+            border: "none",
+            background: "transparent",
+            color: C.muted,
+            cursor: "pointer",
+          }}
         >
           ›
         </button>
@@ -103,7 +111,9 @@ export function Sidebar({
         {tab === "render" && <RenderPanel route={route} />}
         {tab === "jobs" && <JobsPanel project={project} />}
         {tab === "project" && <ProjectPanel project={project} />}
-        {tab === "sessions" && <SessionsPanel project={project} route={route} baseTitle={baseTitle} />}
+        {tab === "sessions" && (
+          <SessionsPanel project={project} route={route} baseTitle={baseTitle} />
+        )}
         {tab === "setup" && <SetupPanel project={project} />}
       </div>
     </aside>

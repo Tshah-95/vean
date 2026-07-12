@@ -300,11 +300,7 @@ function clipLayer(
  * frames (so solo segments don't double-count the overlap), and a `dissolve(d)`
  * occupies `d` frames between its trimmed neighbours.
  */
-export function resolveLayerOnTrack(
-  track: Track,
-  trackIndex: number,
-  frame: number,
-): Layer | null {
+export function resolveLayerOnTrack(track: Track, trackIndex: number, frame: number): Layer | null {
   if (track.hidden) return null;
   const items = track.items;
   let cursor = 0;
@@ -376,7 +372,11 @@ export function resolveLayerOnTrack(
  *  pre-check for dissolve edges (which drop fades but may still carry a blur). */
 function clipApproximate(clip: ClipItem): boolean {
   for (const f of clip.filters ?? []) {
-    if (!EXACT_FILTER_SERVICES.has(f.service) && f.service !== "opacity" && f.service !== "qtblend") {
+    if (
+      !EXACT_FILTER_SERVICES.has(f.service) &&
+      f.service !== "opacity" &&
+      f.service !== "qtblend"
+    ) {
       return true;
     }
   }

@@ -1,3 +1,4 @@
+import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
 // Title — a centered title card: a kicker line over a big title, both springing up
 // on a TRANSPARENT background (alpha preserved so it composites over footage on an
 // upper MLT track, exactly like LowerThird).
@@ -8,7 +9,6 @@
 // filename with NO edit to the registry. It follows the going-forward convention:
 // a `default` export (the component) + a named `defaults` export (the default props).
 import { z } from "zod";
-import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
 import { FONT_STACK, theme } from "../lib/theme";
 
 export const schema = z.object({

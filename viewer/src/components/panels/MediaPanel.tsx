@@ -100,7 +100,12 @@ export function MediaPanel({ project }: { project?: string }) {
           e.preventDefault();
           void load(query);
         }}
-        style={{ padding: "8px 10px", display: "flex", gap: 6, borderBottom: `1px solid ${C.border}` }}
+        style={{
+          padding: "8px 10px",
+          display: "flex",
+          gap: 6,
+          borderBottom: `1px solid ${C.border}`,
+        }}
       >
         <input
           value={query}
@@ -141,7 +146,9 @@ export function MediaPanel({ project }: { project?: string }) {
           </div>
         ))}
       </div>
-      <div style={{ padding: "8px 10px", display: "flex", gap: 6, borderTop: `1px solid ${C.border}` }}>
+      <div
+        style={{ padding: "8px 10px", display: "flex", gap: 6, borderTop: `1px solid ${C.border}` }}
+      >
         <input
           value={newRoot}
           onChange={(e) => setNewRoot(e.target.value)}

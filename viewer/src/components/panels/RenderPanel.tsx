@@ -3,8 +3,8 @@
 // inline. Both are produced by melt; the server caches them under .vean/cache/render
 // and streams them back Range-capably so <img>/<video> just work.
 import { useState } from "react";
-import { renderStill, renderVideo } from "../../api";
 import { useClockInstance } from "../../ClockProvider";
+import { renderStill, renderVideo } from "../../api";
 import { Btn, C, Note, PanelHead } from "./ui";
 
 export function RenderPanel({ route }: { route?: string }) {
@@ -42,7 +42,12 @@ export function RenderPanel({ route }: { route?: string }) {
     }
   };
 
-  const artStyle = { width: "100%", borderRadius: 6, border: `1px solid ${C.border}`, display: "block" } as const;
+  const artStyle = {
+    width: "100%",
+    borderRadius: 6,
+    border: `1px solid ${C.border}`,
+    display: "block",
+  } as const;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -55,7 +60,16 @@ export function RenderPanel({ route }: { route?: string }) {
         </Btn>
       </PanelHead>
       {err && <Note kind="error">{err}</Note>}
-      <div style={{ flex: 1, overflow: "auto", padding: 10, display: "flex", flexDirection: "column", gap: 14 }}>
+      <div
+        style={{
+          flex: 1,
+          overflow: "auto",
+          padding: 10,
+          display: "flex",
+          flexDirection: "column",
+          gap: 14,
+        }}
+      >
         {!stillUrl && !videoUrl && !err && (
           <Note kind="dim">
             Render a still at the playhead, or export the full MP4. Artifacts are produced by melt

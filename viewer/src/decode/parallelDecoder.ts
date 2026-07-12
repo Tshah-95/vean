@@ -27,7 +27,7 @@
 //    immediately (their bitmaps, when they arrive, are `close()`d, never cached) so
 //    the pool isn't clogged decoding frames the playhead already left.
 //  • ZERO-COPY: the worker transfers the `ImageBitmap` (§5); the resolver owns it.
-import { type DecodeResponse, type OpenResponse, type WorkerResponse } from "./protocol";
+import type { DecodeResponse, OpenResponse, WorkerResponse } from "./protocol";
 
 /** A decoded frame + its actual presentation timestamp (seconds). */
 export interface DecodedFrame {

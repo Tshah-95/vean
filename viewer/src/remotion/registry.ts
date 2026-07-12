@@ -90,7 +90,9 @@ export function resolveComposition(id: string | undefined): {
     Object.keys(COMPOSITIONS)[0];
   const entry = resolvedId ? COMPOSITIONS[resolvedId] : undefined;
   if (!resolvedId || !entry) {
-    throw new Error(`no compositions registered — the glob found none (cannot resolve "${id ?? "?"}")`);
+    throw new Error(
+      `no compositions registered — the glob found none (cannot resolve "${id ?? "?"}")`,
+    );
   }
   return { id: resolvedId, component: entry.component, defaults: entry.defaults };
 }

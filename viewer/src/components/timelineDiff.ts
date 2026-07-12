@@ -49,7 +49,8 @@ function spanFrames(tl: Timeline): number {
   let max = 0;
   for (const track of [...tl.tracks.video, ...tl.tracks.audio]) {
     const placed = placeItems(track);
-    const end = placed.length > 0 ? placed[placed.length - 1].start + placed[placed.length - 1].length : 0;
+    const end =
+      placed.length > 0 ? placed[placed.length - 1].start + placed[placed.length - 1].length : 0;
     if (end > max) max = end;
   }
   return max;
@@ -88,7 +89,11 @@ export function diffTimelines(a: Timeline, b: Timeline): TimelineDiff {
   for (const [id, ca] of fa) {
     const cb = fb.get(id);
     if (!cb) {
-      clips.push({ id, kind: "removed", detail: `${ca.track} ${ca.resource.split("/").pop() ?? ca.resource}` });
+      clips.push({
+        id,
+        kind: "removed",
+        detail: `${ca.track} ${ca.resource.split("/").pop() ?? ca.resource}`,
+      });
       continue;
     }
     const parts: string[] = [];
@@ -102,7 +107,11 @@ export function diffTimelines(a: Timeline, b: Timeline): TimelineDiff {
   }
   for (const [id, cb] of fb) {
     if (!fa.has(id)) {
-      clips.push({ id, kind: "added", detail: `${cb.track} ${cb.resource.split("/").pop() ?? cb.resource}` });
+      clips.push({
+        id,
+        kind: "added",
+        detail: `${cb.track} ${cb.resource.split("/").pop() ?? cb.resource}`,
+      });
     }
   }
 

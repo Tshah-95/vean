@@ -35,7 +35,12 @@ export function TrackRow({ track, pxPerFrame, rowHeight, gutterWidth }: TrackRow
       </div>
       <div style={{ position: "relative", flex: 1, background: "#0a0b0f" }}>
         {placed.map((p, i) => (
-          <ClipBlock key={`${track.id}-${i}`} placed={p} pxPerFrame={pxPerFrame} kind={track.kind} />
+          <ClipBlock
+            key={`${track.id}-${i}`}
+            placed={p}
+            pxPerFrame={pxPerFrame}
+            kind={track.kind}
+          />
         ))}
       </div>
     </div>

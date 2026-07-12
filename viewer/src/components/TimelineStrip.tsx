@@ -264,9 +264,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
 
       // Resolve same-track neighbours (for roll + readouts).
       const placedTrack = placeItems(track);
-      const idx = placedTrack.findIndex(
-        (p) => p.item.kind === "clip" && p.item.id === uuid,
-      );
+      const idx = placedTrack.findIndex((p) => p.item.kind === "clip" && p.item.id === uuid);
       const prev = idx > 0 ? placedTrack[idx - 1] : null;
       const next = idx >= 0 && idx < placedTrack.length - 1 ? placedTrack[idx + 1] : null;
       const leftClip = prev && prev.item.kind === "clip" ? prev : null;
@@ -504,10 +502,24 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         >
           ⫶ Blade
         </button>
-        <button type="button" onClick={editor.undo} disabled={!editor.canUndo} style={zoomBtn} aria-label="Undo" title="Undo ( ⌘Z )">
+        <button
+          type="button"
+          onClick={editor.undo}
+          disabled={!editor.canUndo}
+          style={zoomBtn}
+          aria-label="Undo"
+          title="Undo ( ⌘Z )"
+        >
           ↶
         </button>
-        <button type="button" onClick={editor.redo} disabled={!editor.canRedo} style={zoomBtn} aria-label="Redo" title="Redo ( ⌘⇧Z )">
+        <button
+          type="button"
+          onClick={editor.redo}
+          disabled={!editor.canRedo}
+          style={zoomBtn}
+          aria-label="Redo"
+          title="Redo ( ⌘⇧Z )"
+        >
           ↷
         </button>
         <button
@@ -553,19 +565,38 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
           {snapEnabled ? "🧲 Snap" : "Snap off"}
         </button>
         <div style={{ width: 8 }} />
-        <button type="button" onClick={zoomOut} disabled={pxPerFrame <= minScale + 1e-9} style={zoomBtn} aria-label="Zoom out" title="Zoom out ( − )">
+        <button
+          type="button"
+          onClick={zoomOut}
+          disabled={pxPerFrame <= minScale + 1e-9}
+          style={zoomBtn}
+          aria-label="Zoom out"
+          title="Zoom out ( − )"
+        >
           −
         </button>
         <button
           type="button"
           onClick={zoomFit}
-          style={{ ...zoomBtn, width: "auto", padding: "0 8px", color: atFit ? "#c7ae7a" : "#9aa0ae" }}
+          style={{
+            ...zoomBtn,
+            width: "auto",
+            padding: "0 8px",
+            color: atFit ? "#c7ae7a" : "#9aa0ae",
+          }}
           aria-label="Zoom to fit"
           title="Zoom to fit ( \\ )"
         >
           Fit
         </button>
-        <button type="button" onClick={zoomIn} disabled={pxPerFrame >= MAX_PX_PER_FRAME - 1e-6} style={zoomBtn} aria-label="Zoom in" title="Zoom in ( = )">
+        <button
+          type="button"
+          onClick={zoomIn}
+          disabled={pxPerFrame >= MAX_PX_PER_FRAME - 1e-6}
+          style={zoomBtn}
+          aria-label="Zoom in"
+          title="Zoom in ( = )"
+        >
           +
         </button>
       </div>
@@ -603,7 +634,15 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
             onPointerUp={onRulerPointerUp}
             onPointerLeave={onRulerPointerUp}
           >
-            <div style={{ width: GUTTER, flex: "0 0 auto", background: "#0d0f14", borderRight: "1px solid #1b1e26", cursor: "default" }} />
+            <div
+              style={{
+                width: GUTTER,
+                flex: "0 0 auto",
+                background: "#0d0f14",
+                borderRight: "1px solid #1b1e26",
+                cursor: "default",
+              }}
+            />
             <div style={{ position: "relative", flex: 1 }}>
               {ticks.map((t) => (
                 <div
@@ -934,10 +973,8 @@ function applyPreview(placed: PlacedItem[], drag: DragState | null): PreviewedIt
   // Identity by clip id (robust against PlacedItem wrapper churn between renders).
   const clipId = (p: PlacedItem): string | null =>
     p.item.kind === "clip" ? (p.item as { id: string }).id : null;
-  const seamLeftId =
-    g.tool === "roll" && g.neighbours.left ? clipId(g.neighbours.left) : null;
-  const seamRightId =
-    g.tool === "roll" && g.neighbours.right ? clipId(g.neighbours.right) : null;
+  const seamLeftId = g.tool === "roll" && g.neighbours.left ? clipId(g.neighbours.left) : null;
+  const seamRightId = g.tool === "roll" && g.neighbours.right ? clipId(g.neighbours.right) : null;
 
   return placed.map((p) => {
     const id = clipId(p);
