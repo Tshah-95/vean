@@ -67,15 +67,18 @@ const projectSceneIndexModules = import.meta.glob<CompModule>("@project-comp/*/i
  *  the producer resolves the same component in live preview — no drift, no dual list. */
 export const COMPOSITIONS: Record<string, RegisteredComposition> = {};
 const discovered: Array<[string | null, CompModule]> = [
-  ...Object.entries(workspaceModules).map(
-    ([path, mod]): [string | null, CompModule] => [idFromPath(path), mod],
-  ),
-  ...Object.entries(projectModules).map(
-    ([path, mod]): [string | null, CompModule] => [idFromPath(path), mod],
-  ),
-  ...Object.entries(projectTakeModules).map(
-    ([path, mod]): [string | null, CompModule] => [sceneTakeIdFromPath(path), mod],
-  ),
+  ...Object.entries(workspaceModules).map(([path, mod]): [string | null, CompModule] => [
+    idFromPath(path),
+    mod,
+  ]),
+  ...Object.entries(projectModules).map(([path, mod]): [string | null, CompModule] => [
+    idFromPath(path),
+    mod,
+  ]),
+  ...Object.entries(projectTakeModules).map(([path, mod]): [string | null, CompModule] => [
+    sceneTakeIdFromPath(path),
+    mod,
+  ]),
 ];
 for (const [id, mod] of discovered) {
   if (!id) continue;
