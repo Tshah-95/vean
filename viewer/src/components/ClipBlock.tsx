@@ -28,6 +28,16 @@ export interface ClipBlockProps {
   onPointerDown?: (e: React.PointerEvent) => void;
   /** The hover cursor (the lane sets it per zone via pointer-move; default grab). */
   cursor?: string;
+  /** Semantic option contract for selectable clips. Structural items receive a
+   *  descriptive note instead and never enter roving focus. */
+  accessibleName?: string;
+  tabIndex?: 0 | -1;
+  editMode?: boolean;
+  editTarget?: "body" | "head" | "tail";
+  optionRef?: (node: HTMLDivElement | null) => void;
+  onFocus?: () => void;
+  onKeyDown?: (event: React.KeyboardEvent<HTMLDivElement>) => void;
+  onKeyUp?: (event: React.KeyboardEvent<HTMLDivElement>) => void;
 }
 
 function basename(resource: string): string {
@@ -47,6 +57,14 @@ export function ClipBlock({
   ghost = false,
   onPointerDown,
   cursor = "grab",
+  accessibleName,
+  tabIndex = -1,
+  editMode = false,
+  editTarget,
+  optionRef,
+  onFocus,
+  onKeyDown,
+  onKeyUp,
 }: ClipBlockProps) {
   const { item, start, length } = placed;
   const left = start * pxPerFrame;
@@ -55,6 +73,8 @@ export function ClipBlock({
   if (item.kind === "blank") {
     return (
       <div
+        role="note"
+        aria-label={`Blank gap, ${length} frames, timeline frames ${start} to ${start + length - 1}`}
         style={{
           position: "absolute",
           left,
@@ -74,6 +94,8 @@ export function ClipBlock({
   if (item.kind === "dissolve") {
     return (
       <div
+        role="note"
+        aria-label={`Dissolve, ${length} frames, timeline frames ${start} to ${start + length - 1}`}
         style={{
           position: "absolute",
           left,
@@ -113,9 +135,24 @@ export function ClipBlock({
   const atMediaEnd = item.service !== "color" && item.length != null && item.out >= item.length - 1;
 
   return (
+    // A native <option> cannot host the editor's rich clip content or roving focus;
+    // this is the ARIA listbox pattern with focusable option descendants.
+    // biome-ignore lint/a11y/useSemanticElements: rich listbox option, not a native select option.
     <div
+      role="option"
+      ref={optionRef}
+      aria-label={accessibleName}
+      aria-selected={selected}
+      aria-describedby="timeline-keyboard-help"
+      aria-roledescription={editMode ? `clip editing ${editTarget ?? "body"}` : "timeline clip"}
+      tabIndex={tabIndex}
       data-clip-id={item.id}
+      data-edit-mode={editMode ? "true" : "false"}
+      data-edit-target={editTarget}
       onPointerDown={onPointerDown}
+      onFocus={onFocus}
+      onKeyDown={onKeyDown}
+      onKeyUp={onKeyUp}
       style={{
         position: "absolute",
         left,

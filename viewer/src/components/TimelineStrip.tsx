@@ -31,6 +31,16 @@ import {
   resolveGesture,
   snapFrame,
 } from "../timelineGestures";
+import {
+  type EditTarget,
+  adjacentTrackMove,
+  browseDestination,
+  clipAccessibleName,
+  findClip,
+  keyboardInvocation,
+  selectableClips,
+  trackLabel,
+} from "../timelineKeyboard";
 import type { Diagnostic, PlacedItem, Track } from "../types";
 import { placeItems } from "../types";
 import type { TimelineEditor } from "../useTimelineEditor";
@@ -47,6 +57,17 @@ const STEP = 1.6; // per-click zoom factor
 // Trailing open time past the last clip: a bit of empty workspace to scroll into and
 // drop onto, so trimming the tail never collapses the world to hug content.
 const TRAIL_SLACK_PX = 320;
+const visuallyHidden: React.CSSProperties = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: "hidden",
+  clip: "rect(0 0 0 0)",
+  whiteSpace: "nowrap",
+  border: 0,
+};
 
 export interface TimelineStripProps {
   editor: TimelineEditor;
@@ -112,6 +133,24 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
   // Snapping toggle (magnet). On by default; turn OFF for free-frame positioning —
   // the fix for "it snaps to random points / won't stop where I want".
   const [snapEnabled, setSnapEnabled] = useState(true);
+  const [announcement, setAnnouncement] = useState("");
+  const [editMode, setEditMode] = useState<{ clipId: string; target: EditTarget } | null>(null);
+  const optionRefs = useRef(new Map<string, HTMLDivElement>());
+  const editorRef = useRef(editor);
+  editorRef.current = editor;
+  const transactionRef = useRef<{
+    author: string;
+    clipId: string;
+    expectedRevision: number;
+    undoCount: number;
+  } | null>(null);
+  const burstRef = useRef<{
+    key: "ArrowLeft" | "ArrowRight";
+    dx: number;
+    alt: boolean;
+    meta: boolean;
+    timer: number | null;
+  } | null>(null);
 
   // Measure before paint so the initial fit uses the real pane width (no scale flash).
   useLayoutEffect(() => {
@@ -246,6 +285,273 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
     set.add(clock.getSnapshot().currentFrame);
     return [...set];
   }, [timeline, drag, clock]);
+
+  const clips = useMemo(() => selectableClips(timeline), [timeline]);
+  const entryId =
+    selectedId && clips.some((clip) => clip.id === selectedId) ? selectedId : clips[0]?.id;
+
+  const focusClip = useCallback(
+    (id: string) => {
+      editor.select(id);
+      window.requestAnimationFrame(() => optionRefs.current.get(id)?.focus());
+    },
+    [editor],
+  );
+
+  const announceSelection = useCallback((id: string) => {
+    const clip = findClip(editorRef.current.timeline, id);
+    if (!clip) return;
+    const blocking = (editorRef.current.diagnosticsByClip.get(id) ?? []).filter(
+      (diagnostic) => diagnostic.severity === "error",
+    ).length;
+    setAnnouncement(clipAccessibleName(clip, editorRef.current.timeline, blocking));
+  }, []);
+
+  const flushBurst = useCallback(async (): Promise<boolean> => {
+    const burst = burstRef.current;
+    burstRef.current = null;
+    if (!burst) return true;
+    if (burst.timer != null) window.clearTimeout(burst.timer);
+    const transaction = transactionRef.current;
+    const mode = editMode;
+    if (!transaction || !mode || transaction.clipId !== mode.clipId) return false;
+    const result = keyboardInvocation({
+      timeline: editorRef.current.timeline,
+      clipId: mode.clipId,
+      target: mode.target,
+      dx: burst.dx,
+      alt: burst.alt,
+      meta: burst.meta,
+      snapEnabled,
+      pxPerFrame,
+      snapCandidates,
+    });
+    if (!result) {
+      setAnnouncement("The selected clip is no longer available");
+      return false;
+    }
+    if (!result.invocation) {
+      setAnnouncement(result.limitation ?? "No timeline change");
+      return true;
+    }
+    const response = await editorRef.current.commit(result.invocation, {
+      author: transaction.author,
+    });
+    if (!response) {
+      setAnnouncement(editorRef.current.lastError ?? "Timeline edit failed");
+      return false;
+    }
+    transaction.expectedRevision = response.revision;
+    transaction.undoCount++;
+    const direction = result.appliedDx > 0 ? "+" : "";
+    setAnnouncement(
+      `${result.tool} ${direction}${result.appliedDx} frames${result.snappedTo == null ? "" : `, snapped to frame ${result.snappedTo}`}${burst.alt ? ", ripple modifier" : ""}${burst.meta ? ", roll or slide modifier" : ""}`,
+    );
+    return true;
+  }, [editMode, pxPerFrame, snapCandidates, snapEnabled]);
+
+  const scheduleBurst = useCallback(
+    (key: "ArrowLeft" | "ArrowRight", step: number, alt: boolean, meta: boolean) => {
+      const existing = burstRef.current;
+      if (existing && (existing.key !== key || existing.alt !== alt || existing.meta !== meta)) {
+        void flushBurst();
+      }
+      const burst =
+        existing && existing.key === key && existing.alt === alt && existing.meta === meta
+          ? existing
+          : { key, dx: 0, alt, meta, timer: null };
+      burst.dx += key === "ArrowLeft" ? -step : step;
+      if (burst.timer != null) window.clearTimeout(burst.timer);
+      burst.timer = window.setTimeout(() => void flushBurst(), 500);
+      burstRef.current = burst;
+    },
+    [flushBurst],
+  );
+
+  const leaveEditMode = useCallback((clipId: string) => {
+    setEditMode(null);
+    transactionRef.current = null;
+    window.requestAnimationFrame(() => optionRefs.current.get(clipId)?.focus());
+  }, []);
+
+  const cancelEditMode = useCallback(async () => {
+    const mode = editMode;
+    const transaction = transactionRef.current;
+    if (!mode || !transaction) return;
+    await flushBurst();
+    if (editorRef.current.revision !== transaction.expectedRevision) {
+      setAnnouncement("Cancel refused: the timeline changed outside this keyboard edit session");
+      return;
+    }
+    for (let index = 0; index < transaction.undoCount; index++) {
+      const response = await editorRef.current.undo({ author: transaction.author });
+      if (!response) {
+        setAnnouncement("Cancel refused: another author owns the newest timeline edit");
+        return;
+      }
+      transaction.expectedRevision = response.revision;
+    }
+    setAnnouncement("Keyboard edit cancelled; the pre-entry timeline was restored");
+    leaveEditMode(mode.clipId);
+  }, [editMode, flushBurst, leaveEditMode]);
+
+  const bladeAndRestoreFocus = useCallback(async () => {
+    const id = editorRef.current.selectedId;
+    if (!id) return;
+    const before = findClip(editorRef.current.timeline, id);
+    const frame = clock.getSnapshot().currentFrame;
+    const response = await editorRef.current.commit({ op: "split", args: { uuid: id, frame } });
+    if (!response || !before) return;
+    const candidates = selectableClips(response.ir).filter(
+      (clip) =>
+        clip.track.id === before.track.id &&
+        frame >= clip.placed.start &&
+        frame < clip.placed.start + clip.placed.length,
+    );
+    const destination = candidates[0];
+    if (destination) focusClip(destination.id);
+    setAnnouncement(`Split at frame ${frame}`);
+  }, [clock, focusClip]);
+
+  const onClipKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>, id: string) => {
+      const meta = event.metaKey || event.ctrlKey;
+      if (!editMode) {
+        if (
+          event.key === "ArrowLeft" ||
+          event.key === "ArrowRight" ||
+          event.key === "ArrowUp" ||
+          event.key === "ArrowDown" ||
+          event.key === "Home" ||
+          event.key === "End"
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          const destination = browseDestination(editorRef.current.timeline, id, event.key, meta);
+          if (destination) {
+            focusClip(destination.id);
+            announceSelection(destination.id);
+          }
+        } else if (event.key === "Enter") {
+          event.preventDefault();
+          event.stopPropagation();
+          const author = `human:timeline-keyboard:${crypto.randomUUID()}`;
+          transactionRef.current = {
+            author,
+            clipId: id,
+            expectedRevision: editorRef.current.revision,
+            undoCount: 0,
+          };
+          setEditMode({ clipId: id, target: "body" });
+          setAnnouncement(
+            "Editing clip body. Arrow keys move; Alt slips; Command or Control slides",
+          );
+        } else if (event.key === " " || event.code === "Space") {
+          event.preventDefault();
+          event.stopPropagation();
+          clock.toggle();
+          setAnnouncement(clock.getSnapshot().playing ? "Playing" : "Paused");
+        } else if (!meta && (event.key === "n" || event.key === "N")) {
+          event.preventDefault();
+          event.stopPropagation();
+          setSnapEnabled((enabled) => {
+            setAnnouncement(`Snapping ${enabled ? "off" : "on"}`);
+            return !enabled;
+          });
+        } else if (!meta && (event.key === "b" || event.key === "B")) {
+          event.preventDefault();
+          event.stopPropagation();
+          void bladeAndRestoreFocus();
+        } else if (event.key === "Escape") {
+          setAnnouncement("");
+        }
+        return;
+      }
+
+      if (editMode.clipId !== id) return;
+      if (event.key === "Tab") {
+        event.preventDefault();
+        event.stopPropagation();
+        const order: EditTarget[] = ["body", "head", "tail"];
+        const index = order.indexOf(editMode.target);
+        const next = order[(index + (event.shiftKey ? 2 : 1)) % order.length] ?? "body";
+        setEditMode({ clipId: id, target: next });
+        setAnnouncement(`Editing clip ${next}`);
+      } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        event.stopPropagation();
+        scheduleBurst(event.key, event.shiftKey ? 10 : 1, event.altKey, meta);
+      } else if (
+        (event.key === "ArrowUp" || event.key === "ArrowDown") &&
+        editMode.target === "body"
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        void flushBurst().then(async () => {
+          const transaction = transactionRef.current;
+          const invocation = adjacentTrackMove(
+            editorRef.current.timeline,
+            id,
+            event.key === "ArrowUp" ? "up" : "down",
+          );
+          if (!transaction || !invocation) {
+            setAnnouncement("No compatible adjacent track in that direction");
+            return;
+          }
+          const response = await editorRef.current.commit(invocation, {
+            author: transaction.author,
+          });
+          if (!response) return;
+          transaction.expectedRevision = response.revision;
+          transaction.undoCount++;
+          setAnnouncement("Moved to the nearest compatible adjacent track");
+        });
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        event.stopPropagation();
+        void flushBurst().then(() => {
+          setAnnouncement("Keyboard edit committed");
+          leaveEditMode(id);
+        });
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        void cancelEditMode();
+      }
+    },
+    [
+      announceSelection,
+      bladeAndRestoreFocus,
+      cancelEditMode,
+      clock,
+      editMode,
+      flushBurst,
+      focusClip,
+      leaveEditMode,
+      scheduleBurst,
+    ],
+  );
+
+  const onClipKeyUp = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") void flushBurst();
+    },
+    [flushBurst],
+  );
+
+  useEffect(() => {
+    if (editor.lastError) setAnnouncement(editor.lastError);
+  }, [editor.lastError]);
+  useEffect(() => {
+    if (editor.justSaved) setAnnouncement("Saved; timeline is clean");
+  }, [editor.justSaved]);
+  useEffect(
+    () => () => {
+      const timer = burstRef.current?.timer;
+      if (timer != null) window.clearTimeout(timer);
+    },
+    [],
+  );
 
   // ── Clip gesture: pointerdown selects + begins the contextual drag ──────────
   const onClipPointerDown = useCallback(
@@ -470,8 +776,19 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
   const cursor = drag ? cursorFor(drag.gesture.tool) : "default";
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", background: "#0a0b0f" }}>
+    <section
+      aria-label="Timeline editor"
+      aria-describedby="timeline-keyboard-help"
+      style={{ display: "flex", flexDirection: "column", background: "#0a0b0f" }}
+    >
+      <p id="timeline-keyboard-help" style={visuallyHidden}>
+        Use arrow keys to browse clips. Press Enter to edit the clip body, then Tab to choose its
+        head or tail. Shift changes the edit step to ten frames. Press Enter to commit or Escape to
+        cancel.
+      </p>
       <div
+        role="toolbar"
+        aria-label="Timeline edit controls"
         style={{
           display: "flex",
           alignItems: "center",
@@ -504,7 +821,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         </button>
         <button
           type="button"
-          onClick={editor.undo}
+          onClick={() => void editor.undo()}
           disabled={!editor.canUndo}
           style={zoomBtn}
           aria-label="Undo"
@@ -514,7 +831,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         </button>
         <button
           type="button"
-          onClick={editor.redo}
+          onClick={() => void editor.redo()}
           disabled={!editor.canRedo}
           style={zoomBtn}
           aria-label="Redo"
@@ -618,7 +935,15 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
             poke flips overflowX:auto into a scrollbar that eats height and shoves the
             UI up. Clip them at the content edge so the scrollbar reflects width, not
             scroll/playhead position. */}
-        <div style={{ width: laneWidth, position: "relative", overflow: "hidden" }}>
+        {/* Roving options, rather than the composite itself, own the one tab stop. */}
+        {/* biome-ignore lint/a11y/useFocusableInteractive: listbox uses roving option focus. */}
+        {/* biome-ignore lint/a11y/useSemanticElements: rich timeline cannot be represented by native select. */}
+        <div
+          role="listbox"
+          aria-label="Timeline clips"
+          aria-multiselectable="false"
+          style={{ width: laneWidth, position: "relative", overflow: "hidden" }}
+        >
           {/* Ruler — the ONLY scrub zone. Distinct background + a CTI flag handle. */}
           <div
             style={{
@@ -677,6 +1002,16 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
               selectedId={selectedId}
               diagnosticsByClip={diagnosticsByClip}
               drag={drag}
+              timeline={timeline}
+              entryId={entryId}
+              editMode={editMode}
+              optionRefs={optionRefs}
+              onClipFocus={(id) => {
+                editor.select(id);
+                announceSelection(id);
+              }}
+              onClipKeyDown={onClipKeyDown}
+              onClipKeyUp={onClipKeyUp}
               onClipPointerDown={onClipPointerDown}
               onBackgroundPointerDown={onLaneBackgroundPointerDown}
             />
@@ -689,6 +1024,16 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
               selectedId={selectedId}
               diagnosticsByClip={diagnosticsByClip}
               drag={drag}
+              timeline={timeline}
+              entryId={entryId}
+              editMode={editMode}
+              optionRefs={optionRefs}
+              onClipFocus={(id) => {
+                editor.select(id);
+                announceSelection(id);
+              }}
+              onClipKeyDown={onClipKeyDown}
+              onClipKeyUp={onClipKeyUp}
               onClipPointerDown={onClipPointerDown}
               onBackgroundPointerDown={onLaneBackgroundPointerDown}
             />
@@ -714,7 +1059,10 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
           ) : null}
         </div>
       </div>
-    </div>
+      <output aria-live="polite" aria-atomic="true" style={visuallyHidden}>
+        {announcement}
+      </output>
+    </section>
   );
 }
 
@@ -748,20 +1096,34 @@ function CtiHandle({ pxPerFrame }: { pxPerFrame: number }) {
  *  gesture handlers. The label gutter (V1/A1) is fixed at the left. */
 interface TrackLaneProps {
   track: Track;
+  timeline: TimelineEditor["timeline"];
   pxPerFrame: number;
   selectedId: string | null;
   diagnosticsByClip: Map<string, Diagnostic[]>;
   drag: DragState | null;
+  entryId: string | undefined;
+  editMode: { clipId: string; target: EditTarget } | null;
+  optionRefs: React.RefObject<Map<string, HTMLDivElement>>;
+  onClipFocus: (id: string) => void;
+  onClipKeyDown: (event: React.KeyboardEvent<HTMLDivElement>, id: string) => void;
+  onClipKeyUp: (event: React.KeyboardEvent<HTMLDivElement>, id: string) => void;
   onClipPointerDown: (e: React.PointerEvent, placed: PlacedItem, track: Track) => void;
   onBackgroundPointerDown: () => void;
 }
 
 function TrackLane({
   track,
+  timeline,
   pxPerFrame,
   selectedId,
   diagnosticsByClip,
   drag,
+  entryId,
+  editMode,
+  optionRefs,
+  onClipFocus,
+  onClipKeyDown,
+  onClipKeyUp,
   onClipPointerDown,
   onBackgroundPointerDown,
 }: TrackLaneProps) {
@@ -770,7 +1132,14 @@ function TrackLane({
   const previewed = applyPreview(placed, drag);
 
   return (
-    <div style={{ display: "flex", height: ROW_HEIGHT, borderBottom: "1px solid #14171f" }}>
+    // A fieldset would add form semantics that do not exist; this is a row group
+    // inside a composite listbox.
+    // biome-ignore lint/a11y/useSemanticElements: timeline track is an ARIA group.
+    <div
+      role="group"
+      aria-label={trackLabel(track, timeline)}
+      style={{ display: "flex", height: ROW_HEIGHT, borderBottom: "1px solid #14171f" }}
+    >
       <div
         style={{
           width: GUTTER,
@@ -803,6 +1172,11 @@ function TrackLane({
           const isMoveSource = beingDragged && drag?.gesture.tool === "move";
           const diags = uuid ? diagnosticsByClip.get(uuid) : undefined;
           const readout = beingDragged && drag ? gestureReadout(drag, p) : null;
+          const clip = uuid ? findClip(timeline, uuid) : null;
+          const blockingCount =
+            (uuid ? diagnosticsByClip.get(uuid) : undefined)?.filter(
+              (diagnostic) => diagnostic.severity === "error",
+            ).length ?? 0;
           // Same-track flush neighbours decide whether an edge hover reads as a
           // roll (col-resize) or a trim (ew-resize).
           const prev = i > 0 ? placed[i - 1] : null;
@@ -818,6 +1192,21 @@ function TrackLane({
               selected={selected}
               diagnostics={diags}
               readout={readout}
+              accessibleName={clip ? clipAccessibleName(clip, timeline, blockingCount) : undefined}
+              tabIndex={uuid === entryId ? 0 : -1}
+              editMode={uuid === editMode?.clipId}
+              editTarget={uuid === editMode?.clipId ? editMode.target : undefined}
+              optionRef={
+                uuid
+                  ? (node) => {
+                      if (node) optionRefs.current.set(uuid, node);
+                      else optionRefs.current.delete(uuid);
+                    }
+                  : undefined
+              }
+              onFocus={uuid ? () => onClipFocus(uuid) : undefined}
+              onKeyDown={uuid ? (event) => onClipKeyDown(event, uuid) : undefined}
+              onKeyUp={uuid ? (event) => onClipKeyUp(event, uuid) : undefined}
               dragging={isMoveSource}
               cursor={isClip ? "grab" : "default"}
               {...(isClip
