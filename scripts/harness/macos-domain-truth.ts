@@ -103,6 +103,7 @@ export function evaluateMacosShellTruth(input: MacosShellTruthInput): Record<str
       Boolean(sidecar?.command?.includes("src/cli.ts preview")) &&
       Boolean(sidecar?.command?.includes(`--repo ${input.expected.projectRoot}`)),
     honestWindowLifecycle:
+      close?.closeAccessibleName === "_XCUI:CloseWindow" &&
       close?.windowsAfterClose === 0 &&
       close?.reopenSupportedByProduct === false &&
       close?.automationTerminateAfterClose === true &&

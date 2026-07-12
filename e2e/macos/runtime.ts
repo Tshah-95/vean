@@ -56,16 +56,31 @@ export function writeMacosResult(context: MacosRunContext, result: unknown): voi
 }
 
 export async function semanticElement(
-  elementType: string,
+  elementType: number,
   accessibleName: string,
   timeout = 15_000,
 ) {
   const escaped = accessibleName.replaceAll("\\", "\\\\").replaceAll("'", "\\'");
   const element = await $(
-    `-ios predicate string:elementType == ${elementType} AND (title == '${escaped}' OR label == '${escaped}')`,
+    nativePredicate(elementType, `title == '${escaped}' OR label == '${escaped}'`),
   );
   await element.waitForExist({ timeout });
   return element;
+}
+
+export const NATIVE_ELEMENT_TYPE = {
+  Window: 4,
+  Sheet: 5,
+  Dialog: 8,
+  Button: 9,
+  TextField: 49,
+  MenuItem: 54,
+  MenuBarItem: 56,
+} as const;
+
+export function nativePredicate(elementType: number, condition?: string): string {
+  if (!Number.isInteger(elementType)) throw new Error("native element type must be an integer");
+  return `-ios predicate string:elementType == ${elementType}${condition ? ` AND (${condition})` : ""}`;
 }
 
 export async function nativeInventory(): Promise<{

@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { countNativeElements } from "../e2e/macos/runtime";
+import { NATIVE_ELEMENT_TYPE, countNativeElements, nativePredicate } from "../e2e/macos/runtime";
 import { createFixture, hashFile } from "../scripts/harness/fixture";
 import {
   type MacosShellTruthInput,
@@ -150,6 +150,16 @@ describe("native macOS doctor classification", () => {
 });
 
 describe("Mac2 accessibility XML inventory", () => {
+  it("builds numeric Mac2 predicates rather than symbolic enum operands", () => {
+    expect(nativePredicate(NATIVE_ELEMENT_TYPE.Window, "title == 'vean'")).toBe(
+      "-ios predicate string:elementType == 4 AND (title == 'vean')",
+    );
+    expect(nativePredicate(NATIVE_ELEMENT_TYPE.TextField)).toBe(
+      "-ios predicate string:elementType == 49",
+    );
+    expect(nativePredicate(NATIVE_ELEMENT_TYPE.MenuBarItem)).not.toContain("XCUIElementType");
+  });
+
   it("counts Window, Dialog, and Sheet opening tags with attributes and newlines", () => {
     const source = `
       <XCUIElementTypeWindow title="vean">
@@ -269,6 +279,7 @@ function validTruth(): MacosShellTruthInput {
         },
         {
           id: scenarioIds[3],
+          closeAccessibleName: "_XCUI:CloseWindow",
           windowsAfterClose: 0,
           reopenSupportedByProduct: false,
           automationTerminateAfterClose: true,

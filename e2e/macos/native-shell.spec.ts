@@ -3,16 +3,18 @@ import { $, browser, expect } from "@wdio/globals";
 import { describe, it } from "mocha";
 import { bundleIdentifier, childPids, processIdentity } from "../tauri/runtime";
 import {
+  NATIVE_ELEMENT_TYPE,
   appProcess,
   nativeInventory,
+  nativePredicate,
   readMacosContext,
   semanticElement,
   writeMacosResult,
 } from "./runtime";
 
-const MENU_BAR_ITEM = "XCUIElementTypeMenuBarItem";
-const MENU_ITEM = "XCUIElementTypeMenuItem";
-const BUTTON = "XCUIElementTypeButton";
+const MENU_BAR_ITEM = NATIVE_ELEMENT_TYPE.MenuBarItem;
+const MENU_ITEM = NATIVE_ELEMENT_TYPE.MenuItem;
+const BUTTON = NATIVE_ELEMENT_TYPE.Button;
 
 describe("Vean AppKit-owned shell", () => {
   it("drives native menus, file panels, focus, window close, and quit semantically", async () => {
@@ -23,7 +25,7 @@ describe("Vean AppKit-owned shell", () => {
     if (initial.windows !== 1)
       throw new Error(`expected one native window, got ${initial.windows}`);
     const window = await $(
-      "-ios predicate string:elementType == XCUIElementTypeWindow AND (title == 'vean' OR label == 'vean')",
+      nativePredicate(NATIVE_ELEMENT_TYPE.Window, "title == 'vean' OR label == 'vean'"),
     );
     await window.waitForExist();
     await expect(window).toBeDisplayed();
@@ -38,7 +40,10 @@ describe("Vean AppKit-owned shell", () => {
     const file = await semanticElement(MENU_BAR_ITEM, "File");
     await file.click();
     let openProject = await $(
-      `-ios predicate string:elementType == ${MENU_ITEM} AND (title == '${context.expectedMenuLabel}' OR label == '${context.expectedMenuLabel}')`,
+      nativePredicate(
+        MENU_ITEM,
+        `title == '${context.expectedMenuLabel}' OR label == '${context.expectedMenuLabel}'`,
+      ),
     );
     if (!(await openProject.isExisting())) {
       throw new Error(
@@ -69,7 +74,7 @@ describe("Vean AppKit-owned shell", () => {
     await browser.keys(["Shift", "Command", "g"]);
     await browser.waitUntil(
       async () => {
-        const fields = browser.$$("-ios predicate string:elementType == XCUIElementTypeTextField");
+        const fields = browser.$$(nativePredicate(NATIVE_ELEMENT_TYPE.TextField));
         return (await fields.length) === 1;
       },
       {
@@ -77,7 +82,7 @@ describe("Vean AppKit-owned shell", () => {
         timeoutMsg: "Go-to-folder sheet did not expose exactly one semantic text field",
       },
     );
-    const fields = browser.$$("-ios predicate string:elementType == XCUIElementTypeTextField");
+    const fields = browser.$$(nativePredicate(NATIVE_ELEMENT_TYPE.TextField));
     const location = await fields[0];
     if (!location) throw new Error("Go-to-folder text field disappeared");
     await location.setValue(context.projectRoot);
@@ -111,11 +116,13 @@ describe("Vean AppKit-owned shell", () => {
     await browser.saveScreenshot(screenshotPath);
 
     const closeButton = await window.$(
-      "-ios predicate string:elementType == XCUIElementTypeButton AND (title CONTAINS[c] 'close' OR label CONTAINS[c] 'close')",
+      nativePredicate(NATIVE_ELEMENT_TYPE.Button, "identifier == '_XCUI:CloseWindow'"),
     );
     await closeButton.waitForExist();
     const closeName =
-      (await closeButton.getAttribute("title")) || (await closeButton.getAttribute("label"));
+      (await closeButton.getAttribute("identifier")) ||
+      (await closeButton.getAttribute("title")) ||
+      (await closeButton.getAttribute("label"));
     await closeButton.click();
     await browser.waitUntil(async () => (await nativeInventory()).windows === 0, {
       timeout: 15_000,
@@ -162,7 +169,7 @@ describe("Vean AppKit-owned shell", () => {
     const appMenu = await semanticElement(MENU_BAR_ITEM, "vean");
     await appMenu.click();
     const quit = await $(
-      `-ios predicate string:elementType == ${MENU_ITEM} AND (title BEGINSWITH 'Quit' OR label BEGINSWITH 'Quit')`,
+      nativePredicate(MENU_ITEM, "title BEGINSWITH 'Quit' OR label BEGINSWITH 'Quit'"),
     );
     await quit.waitForExist();
     const quitName = (await quit.getAttribute("title")) || (await quit.getAttribute("label"));
