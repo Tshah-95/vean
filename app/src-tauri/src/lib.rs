@@ -464,10 +464,25 @@ fn install_menu(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Navigation is deliberately narrower than the CSP resource policy: the app
+/// shell may load from Tauri's internal scheme, then only the exact loopback IP
+/// used by the managed preview sidecar. `localhost` and arbitrary hostnames are
+/// rejected so DNS/hosts-file rebinding cannot widen the authority origin.
+fn navigation_allowed(url: &tauri::Url) -> bool {
+    url.scheme() == "tauri" || (url.scheme() == "http" && url.host_str() == Some("127.0.0.1"))
+}
+
+fn navigation_policy_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    tauri::plugin::Builder::new("navigation-policy")
+        .on_navigation(|_webview, url| navigation_allowed(url))
+        .build()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(navigation_policy_plugin())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![preview_port, run_action])
         .setup(|app| {

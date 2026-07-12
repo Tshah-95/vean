@@ -516,7 +516,8 @@
       "canonical_artifact_paths": [
         "src/preview/server.ts",
         "src/preview/security.ts",
-        "app/src-tauri/tauri.conf.json"
+        "app/src-tauri/tauri.conf.json",
+        "app/src-tauri/src/lib.rs"
       ],
       "worker_lane_owner": "H02",
       "verifier_owner": "security",

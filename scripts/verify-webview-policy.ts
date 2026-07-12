@@ -51,12 +51,17 @@ response.headers.forEach((value, key) => {
 });
 const tauriConfigPath = join(repo, "app/src-tauri/tauri.conf.json");
 const tauriConfig = JSON.parse(readFileSync(tauriConfigPath, "utf8"));
+const tauriBootstrap = readFileSync(join(repo, "app/src-tauri/src/lib.rs"), "utf8");
+const tauriNavigationPolicyInstalled =
+  tauriBootstrap.includes('Builder::new("navigation-policy")') &&
+  tauriBootstrap.includes('url.host_str() == Some("127.0.0.1")');
 const releaseCsp = contentSecurityPolicy("release");
 const candidate = {
   ok:
     response.headers.get("content-security-policy") === releaseCsp &&
     !releaseCsp.includes("'unsafe-eval'") &&
     tauriConfig.app?.security?.csp !== null &&
+    tauriNavigationPolicyInstalled &&
     unauthorized.status === 403 &&
     isAllowedViewerNavigation(`${origin}/`, origin) &&
     !isAllowedViewerNavigation("https://example.com", origin),
@@ -65,6 +70,7 @@ const candidate = {
   responseHeaders,
   mutationWithoutAuthorityStatus: unauthorized.status,
   tauriCspNonNull: tauriConfig.app?.security?.csp !== null,
+  tauriNavigationPolicyInstalled,
   navigation: {
     exactLoopback: isAllowedViewerNavigation(`${origin}/`, origin),
     external: isAllowedViewerNavigation("https://example.com", origin),
@@ -100,7 +106,7 @@ writeVerifiedEvidence({
     join(repo, "src/preview/security.ts"),
   ],
   generatedPaths: [candidatePath],
-  artifactPaths: [tauriConfigPath],
+  artifactPaths: [tauriConfigPath, join(repo, "app/src-tauri/src/lib.rs")],
   result: candidate,
 });
 if (!process.env.VEAN_HARNESS_EVIDENCE_PATH) console.log(JSON.stringify(candidate));
