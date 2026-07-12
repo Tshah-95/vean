@@ -25,6 +25,7 @@ export const DEFAULT_IMAGE =
   "ghcr.io/cirruslabs/macos-tahoe-xcode@sha256:61f6e857a3d65dd2f8daf9c51c7b837fa458bcc9181ae8556e645b534dab6bf6";
 export const REPOSITORY_URL = "https://github.com/Tshah-95/vean.git";
 export const GUEST_REPOSITORY = "/Users/admin/Github/vean-runner";
+export const GUEST_SMOKE_PROJECT = "/Users/admin/Projects/vean-smoke";
 export const DEFAULT_SSH_KEY = join(homedir(), ".ssh/vean_tart_ed25519");
 export const DEFAULT_KNOWN_HOSTS = join(homedir(), ".ssh/known_hosts.vean-tart");
 export const DEFAULT_STATE_DIR = join(homedir(), ".local/state/vean-vm");
@@ -854,6 +855,33 @@ export function verifySharesGuestCommand(shares: readonly VmShare[]): string {
   return commands.join("; ");
 }
 
+export function seedSmokeProjectGuestCommand(sourceRef = "main"): string {
+  const ref = validateSourceRef(sourceRef);
+  const commands = [
+    "set -euo pipefail",
+    'export PATH="$HOME/.bun/bin:$HOME/.local/share/mise/shims:/opt/homebrew/bin:$PATH"',
+    `cd ${GUEST_REPOSITORY}`,
+    `test "$(git remote get-url origin)" = ${REPOSITORY_URL}`,
+    'test -z "$(git status --porcelain)"',
+    `test "$(git rev-parse HEAD)" = "$(git rev-parse origin/${ref})"`,
+    `project=${shellQuote(GUEST_SMOKE_PROJECT)}`,
+    'mkdir -p "$project/corpus"',
+    `test -f "$project/corpus/smoke.mlt" || cp ${GUEST_REPOSITORY}/corpus/shotcut-single.mlt "$project/corpus/smoke.mlt"`,
+    `test -f "$project/corpus/tone.wav" || cp ${GUEST_REPOSITORY}/corpus/tone.wav "$project/corpus/tone.wav"`,
+    'bun src/cli.ts project init --repo "$project" --json >/dev/null',
+    'bun src/cli.ts project use "$project" --json >/dev/null',
+    'bun src/cli.ts timeline use "$project/corpus/smoke.mlt" --repo "$project" --json >/dev/null',
+  ];
+  for (const role of ["library", "recordings", "mic", "acquired"]) {
+    commands.push(
+      `bun src/cli.ts media root add ${shellQuote(`/Volumes/My Shared Files/media-${role}`)} --role ${role} --repo "$project" --json >/dev/null`,
+    );
+  }
+  commands.push('bun src/cli.ts timeline current --repo "$project" --json');
+  commands.push('bun src/cli.ts media root list --repo "$project" --json');
+  return commands.join("; ");
+}
+
 function verifyShares(): void {
   assertRunning();
   const shares = readShareConfig().shares;
@@ -869,6 +897,26 @@ function verifyShares(): void {
       name,
       guestPath: `/Volumes/My Shared Files/${name}`,
     })),
+  });
+}
+
+function seedSmokeProject(sourceRef: string): void {
+  assertRunning();
+  const shares = readShareConfig().shares;
+  const required = ["media-acquired", "media-library", "media-mic", "media-recordings"];
+  const configured = shares.map(({ name }) => name).sort();
+  if (configured.join("\0") !== required.join("\0")) {
+    fail(`smoke project requires exactly the four canonical media shares: ${required.join(", ")}`);
+  }
+  runGuestCommand(verifySharesGuestCommand(shares));
+  runGuestCommand(seedSmokeProjectGuestCommand(sourceRef));
+  print({
+    ok: true,
+    vm: VM_NAME,
+    sourceRef,
+    project: GUEST_SMOKE_PROJECT,
+    activeTimeline: `${GUEST_SMOKE_PROJECT}/corpus/smoke.mlt`,
+    mediaRoots: required.map((name) => `/Volumes/My Shared Files/${name}`),
   });
 }
 
@@ -915,7 +963,7 @@ function stop(): void {
 
 function usage(): never {
   fail(
-    "usage: macos-vm.ts <doctor|configure|configure-shares|start|setup-ssh|status|bootstrap|doctor-guest|verify-shares|verify-native|collect-evidence|stop> [options]",
+    "usage: macos-vm.ts <doctor|configure|configure-shares|start|setup-ssh|status|bootstrap|doctor-guest|verify-shares|seed-smoke-project|verify-native|collect-evidence|stop> [options]",
   );
 }
 
@@ -955,6 +1003,9 @@ if (import.meta.main) {
         break;
       case "verify-shares":
         verifyShares();
+        break;
+      case "seed-smoke-project":
+        seedSmokeProject(sourceRef);
         break;
       case "verify-native":
         verifyNative(sourceRef, passthrough);

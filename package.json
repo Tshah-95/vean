@@ -106,6 +106,7 @@
     "vm:macos:bootstrap": "bun scripts/vm/macos-vm.ts bootstrap",
     "vm:macos:doctor-guest": "bun scripts/vm/macos-vm.ts doctor-guest",
     "vm:macos:verify-shares": "bun scripts/vm/macos-vm.ts verify-shares",
+    "vm:macos:seed-smoke-project": "bun scripts/vm/macos-vm.ts seed-smoke-project",
     "vm:macos:verify-native": "bun scripts/vm/macos-vm.ts verify-native",
     "vm:macos:collect-evidence": "bun scripts/vm/macos-vm.ts collect-evidence",
     "vm:macos:stop": "bun scripts/vm/macos-vm.ts stop",

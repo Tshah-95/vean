@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_KNOWN_HOSTS,
   GUEST_REPOSITORY,
+  GUEST_SMOKE_PROJECT,
   HEADLESS_RUN_ARGS,
   VM_NAME,
   assessLaunchRecord,
@@ -22,6 +23,7 @@ import {
   nativeVerifyPlan,
   parseShareSpecs,
   readShareConfig,
+  seedSmokeProjectGuestCommand,
   sshGuestExecPlan,
   sshPasswordInstallPlan,
   tartRunPlan,
@@ -218,5 +220,18 @@ describe("macOS Tart VM harness policy", () => {
     expect(command.match(/\/usr\/bin\/touch/g)).toHaveLength(2);
     expect(command).toContain("share unexpectedly writable");
     expect(command).toContain("exit 1");
+  });
+
+  it("seeds a guest-local writable smoke project without scanning or mounting host code", () => {
+    const command = seedSmokeProjectGuestCommand("main");
+    expect(command).toContain(`project='${GUEST_SMOKE_PROJECT}'`);
+    expect(command).toContain(`${GUEST_REPOSITORY}/corpus/shotcut-single.mlt`);
+    expect(command).toContain("timeline use");
+    for (const role of ["library", "recordings", "mic", "acquired"]) {
+      expect(command).toContain(`/Volumes/My Shared Files/media-${role}`);
+      expect(command).toContain(`--role ${role}`);
+    }
+    expect(command).not.toContain("media scan");
+    expect(command).not.toContain("/Users/tejas");
   });
 });

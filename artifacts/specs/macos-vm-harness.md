@@ -16,6 +16,7 @@ bun run vm:macos:setup-ssh
 bun run vm:macos:bootstrap
 bun run vm:macos:doctor-guest
 bun run vm:macos:verify-shares
+bun run vm:macos:seed-smoke-project
 ```
 
 `configure` clones the macOS Tahoe/Xcode image pinned at digest
@@ -125,6 +126,14 @@ Use this storage split for actual editing tests:
   folders;
 - small deterministic test assets: committed OSS-safe fixtures in the guest
   clone, so CI and a fresh clone get identical inputs.
+
+`bun run vm:macos:seed-smoke-project` idempotently creates the writable project
+`/Users/admin/Projects/vean-smoke`, selects its committed color-only timeline,
+copies the small tone fixture, and registers the four canonical read-only media
+roots without scanning them. It refuses any other share set and never overwrites
+an existing smoke timeline, so the guest remains useful for hands-on editing
+between harness runs. Use explicit `vean media scan --root <id>` only when a test
+actually needs the large personal corpus cataloged.
 
 For a project that already stores absolute host paths, do not recreate or
 mutate the host directory layout. Point project routes at the guest mount, for
