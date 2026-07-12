@@ -17,9 +17,12 @@ import {
   NATIVE_ELEMENT_TYPE,
   NATIVE_PANEL_ROOT_TYPES,
   OPEN_PANEL_IDENTIFIER,
+  type PreviewSidecarObservation,
+  PreviewSidecarWaitError,
   countNativeElements,
   enabledTextFieldPredicate,
   nativePredicate,
+  waitForPreviewSidecar,
 } from "../e2e/macos/runtime";
 import { createFixture, hashFile } from "../scripts/harness/fixture";
 import {
@@ -113,6 +116,23 @@ function firstLaunch(overrides: Partial<TimedCommand> = {}): TimedCommand {
     stdout: "",
     stderr: "",
     ...overrides,
+  };
+}
+
+function nativeProcessIdentity(
+  pid: number,
+  parentPid: number,
+  command: string,
+): PreviewSidecarObservation["observed"][number] {
+  return {
+    pid,
+    parentPid,
+    processGroup: pid,
+    processMarker: `process-${pid}`,
+    executable: "/opt/homebrew/bin/bun",
+    command,
+    startedAt: `start-${pid}`,
+    executableHash: `${pid}`.padStart(64, "0"),
   };
 }
 
@@ -403,6 +423,69 @@ describe("Mac2 accessibility XML inventory", () => {
       text &lt;XCUIElementTypeWindow&gt;
     `;
     expect(countNativeElements(source, "XCUIElementTypeWindow")).toBe(0);
+  });
+});
+
+describe("native preview sidecar polling", () => {
+  it("waits through a no-child observation for one exact delayed preview sidecar", async () => {
+    let polls = 0;
+    let clock = 0;
+    const sidecar = nativeProcessIdentity(
+      202,
+      101,
+      "bun src/cli.ts preview --no-open --prod --repo /tmp/project",
+    );
+    const observed = await waitForPreviewSidecar(101, "/tmp/project", {
+      timeoutMs: 1_000,
+      intervalMs: 25,
+      dependencies: {
+        listChildPids: () => (++polls === 1 ? [] : [202]),
+        observeProcess: () => sidecar,
+        now: () => clock,
+        sleep: async (durationMs) => {
+          clock += durationMs;
+        },
+      },
+    });
+    expect(observed).toEqual(sidecar);
+    expect(polls).toBe(2);
+  });
+
+  it("times out with wrong-child identity retained as evidence", async () => {
+    let clock = 0;
+    const wrong = nativeProcessIdentity(203, 101, "bun unrelated.ts --repo /tmp/project");
+    const run = waitForPreviewSidecar(101, "/tmp/project", {
+      timeoutMs: 5,
+      intervalMs: 5,
+      dependencies: {
+        listChildPids: () => [203],
+        observeProcess: () => wrong,
+        now: () => clock,
+        sleep: async (durationMs) => {
+          clock += durationMs;
+        },
+      },
+    });
+    await expect(run).rejects.toMatchObject({
+      reasonCode: "E_H06_PREVIEW_SIDECAR_TIMEOUT",
+      observation: { childPids: [203], observed: [wrong], matching: [] },
+    });
+  });
+
+  it("rejects multiple exact preview children immediately", async () => {
+    const first = nativeProcessIdentity(204, 101, "bun src/cli.ts preview --repo /tmp/project");
+    const second = nativeProcessIdentity(205, 101, "bun src/cli.ts preview --repo /tmp/project");
+    const run = waitForPreviewSidecar(101, "/tmp/project", {
+      dependencies: {
+        listChildPids: () => [204, 205],
+        observeProcess: (pid) => (pid === 204 ? first : second),
+      },
+    });
+    const error = await run.catch((caught) => caught);
+    expect(error).toBeInstanceOf(PreviewSidecarWaitError);
+    expect(error).toMatchObject({
+      reasonCode: "E_H06_PREVIEW_SIDECAR_AMBIGUOUS",
+    });
   });
 });
 

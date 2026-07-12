@@ -44,11 +44,26 @@ export function listenerPid(port: number): number {
   return pid;
 }
 
-export function childPids(parentPid: number): number[] {
-  const result = execFileSync("pgrep", ["-P", String(parentPid)], {
+export type ChildPidQuery = (parentPid: number) => string;
+
+const queryChildPids: ChildPidQuery = (parentPid) =>
+  execFileSync("pgrep", ["-P", String(parentPid)], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   });
+
+export function childPids(parentPid: number, query: ChildPidQuery = queryChildPids): number[] {
+  let result: string;
+  try {
+    result = query(parentPid);
+  } catch (error) {
+    // pgrep documents exit 1 as a valid no-match result. Fixed arguments make
+    // every other status an execution/configuration error that must stay loud.
+    if (typeof error === "object" && error !== null && "status" in error && error.status === 1) {
+      return [];
+    }
+    throw error;
+  }
   return result
     .trim()
     .split("\n")

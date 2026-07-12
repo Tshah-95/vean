@@ -2,12 +2,13 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { $, browser, expect } from "@wdio/globals";
 import { describe, it } from "mocha";
-import { bundleIdentifier, childPids, processIdentity } from "../tauri/runtime";
+import { bundleIdentifier, type processIdentity } from "../tauri/runtime";
 import {
   GO_TO_FOLDER_KEYSTROKE,
   NATIVE_ELEMENT_TYPE,
   NATIVE_PANEL_ROOT_TYPES,
   OPEN_PANEL_IDENTIFIER,
+  PreviewSidecarWaitError,
   appProcess,
   enabledTextFieldPredicate,
   nativeInventory,
@@ -15,6 +16,7 @@ import {
   nativePredicate,
   readMacosContext,
   semanticElement,
+  waitForPreviewSidecar,
   writeMacosResult,
 } from "./runtime";
 
@@ -216,22 +218,28 @@ describe("Vean AppKit-owned shell", () => {
 
     const app = appProcess(context);
     const appBundleId = bundleIdentifier(app.pid);
-    const sidecars = childPids(app.pid)
-      .map(processIdentity)
-      .filter(
-        (candidate) =>
-          candidate.command.includes("src/cli.ts preview") &&
-          candidate.command.includes(`--repo ${context.projectRoot}`),
+    let sidecar: ReturnType<typeof processIdentity>;
+    try {
+      sidecar = await waitForPreviewSidecar(app.pid, context.projectRoot);
+    } catch (error) {
+      const diagnostic =
+        error instanceof PreviewSidecarWaitError
+          ? {
+              reasonCode: error.reasonCode,
+              observation: error.observation,
+            }
+          : { reasonCode: "E_H06_PREVIEW_SIDECAR_OBSERVATION", error: String(error) };
+      writeFileSync(
+        join(context.artifactDir, "preview-sidecar-timeout.json"),
+        `${JSON.stringify(diagnostic, null, 2)}\n`,
+        { mode: 0o600 },
       );
-    if (sidecars.length !== 1) {
-      throw new Error(
-        `selected project did not own exactly one sidecar: ${JSON.stringify(sidecars)}`,
-      );
+      throw error;
     }
     scenarios.push({
       id: "macos-open-project-real-folder",
       selectedFolder: context.projectRoot,
-      sidecar: sidecars[0],
+      sidecar,
       focusRestored: (await window.getAttribute("focused")) === "true",
     });
 
