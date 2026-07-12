@@ -264,7 +264,7 @@
       "worker_lane_owner": "H02",
       "verifier_owner": "runtime-foundation",
       "current_status": "open",
-      "oracle_exists": false,
+      "oracle_exists": true,
       "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": null,
       "negative_control": {
@@ -279,7 +279,7 @@
         "restoration_predicate": "restored_hash == before_hash and baseline oracle returns verified",
         "evidence_paths": ["artifacts/test-runs/<run-id>/negative-controls/nc-hermetic-runs.json"]
       },
-      "oracle_implementation_paths": ["package.json"]
+      "oracle_implementation_paths": ["scripts/verify-fixture.ts", "scripts/harness/"]
     },
     {
       "claim_id": "claim-live-export-semantic-parity",
@@ -341,11 +341,15 @@
       "claim": "Only the launch-authorized viewer can invoke mutating loopback routes.",
       "oracle_command": "bun run verify:fixture --suite loopback-authority",
       "expected_predicate": "black-box bound-server matrix rejects every unauthorized Host/Origin/token/content-type/replay case before body parsing and leaks no authority material",
-      "canonical_artifact_paths": ["src/preview/server.ts"],
+      "canonical_artifact_paths": [
+        "src/preview/server.ts",
+        "src/preview/security.ts",
+        "scripts/harness/"
+      ],
       "worker_lane_owner": "H02",
       "verifier_owner": "security",
       "current_status": "open",
-      "oracle_exists": false,
+      "oracle_exists": true,
       "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": null,
       "negative_control": {
@@ -362,7 +366,7 @@
           "artifacts/test-runs/<run-id>/negative-controls/nc-loopback-authority.json"
         ]
       },
-      "oracle_implementation_paths": ["package.json"]
+      "oracle_implementation_paths": ["scripts/verify-fixture.ts", "scripts/harness/"]
     },
     {
       "claim_id": "claim-manual-accessibility",
@@ -483,11 +487,11 @@
       "claim": "No harness child or descendant survives teardown/failure.",
       "oracle_command": "bun run verify:fixture --json --scenario teardown",
       "expected_predicate": "independent watchdog finds zero run markers, PGIDs, executable/start tuples, owned sockets, or open fixture files after all exit modes",
-      "canonical_artifact_paths": ["app/src-tauri/src/"],
+      "canonical_artifact_paths": ["scripts/harness/"],
       "worker_lane_owner": "H02",
       "verifier_owner": "runtime-foundation",
       "current_status": "open",
-      "oracle_exists": false,
+      "oracle_exists": true,
       "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": null,
       "negative_control": {
@@ -502,20 +506,23 @@
         "restoration_predicate": "restored_hash == before_hash and baseline oracle returns verified",
         "evidence_paths": ["artifacts/test-runs/<run-id>/negative-controls/nc-process-cleanup.json"]
       },
-      "oracle_implementation_paths": ["package.json"]
+      "oracle_implementation_paths": ["scripts/verify-fixture.ts", "scripts/harness/"]
     },
     {
       "claim_id": "claim-production-webview-policy",
-      "claim": "Release viewer CSP/navigation/resource policy is enforced in actual WKWebView and installed package.",
+      "claim": "The release-mode bound server and Tauri source configuration enforce the approved CSP/navigation/resource policy candidate.",
       "oracle_command": "bun run verify:webview-policy --profile release",
-      "expected_predicate": "approved response/effective CSP and navigation matrix blocks external navigation/resource/eval/cross-origin authority without csp:null equivalence",
-      "canonical_artifact_paths": ["src/preview/server.ts", "app/src-tauri/tauri.conf.json"],
+      "expected_predicate": "release-mode bound-server headers and Tauri source configuration enforce the approved navigation/resource/eval/cross-origin matrix and csp:null cannot satisfy the claim",
+      "canonical_artifact_paths": [
+        "src/preview/server.ts",
+        "src/preview/security.ts",
+        "app/src-tauri/tauri.conf.json"
+      ],
       "worker_lane_owner": "H02",
-      "finalizer_owner": "H08R",
       "verifier_owner": "security",
       "dispatch_class": "security",
       "current_status": "open",
-      "oracle_exists": false,
+      "oracle_exists": true,
       "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
       "scenario_manifest": null,
       "negative_control": {
@@ -532,7 +539,7 @@
           "artifacts/test-runs/<run-id>/negative-controls/nc-production-webview-policy.json"
         ]
       },
-      "oracle_implementation_paths": ["package.json"]
+      "oracle_implementation_paths": ["scripts/verify-webview-policy.ts", "src/preview/security.ts"]
     },
     {
       "claim_id": "claim-react-components",

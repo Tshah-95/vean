@@ -103,5 +103,8 @@ describe("preview server read endpoints (via bun probe)", () => {
     expect(out.isolationApi.coop).toBe("same-origin");
     expect(out.isolationApi.coep).toBe("require-corp");
     expect(out.isolationApi.corp).toBe("same-origin");
+    expect(out.mutationAuthority.bootstrapCookieHttpOnly).toBe(true);
+    expect(out.mutationAuthority.unauthorizedStatus).toBe(403);
+    expect(out.mutationAuthority.authorizedStatus).not.toBe(403);
   });
 });

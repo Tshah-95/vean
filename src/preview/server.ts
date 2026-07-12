@@ -30,6 +30,7 @@
 //   POST /api/redo {route}                → re-applies the top undone op (same shape)
 //   POST /api/save {route}                → serializes the working IR to the .mlt
 //                                           { ok, path } | { ok:false, … }
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
 import { createActionContext, executeAction } from "../actions";
@@ -44,6 +45,14 @@ import { findByOutPath, remotionCacheDir } from "../state/remotionCache";
 import { resolveTimelineTarget } from "../state/timeline";
 import { listTimelines } from "../state/timeline";
 import { buildFootageProxy, proxyCacheDir, totalFrames } from "./proxy";
+import {
+  MUTATION_PATHS,
+  type MutationAuthority,
+  type PreviewPolicyProfile,
+  applyPreviewPolicy,
+  authorizeMutation,
+  createNonceConsumer,
+} from "./security";
 import {
   SessionStore,
   applyOp,
@@ -86,6 +95,10 @@ export type PreviewServerOptions = {
   vitePort?: number;
   /** Repo root holding the viewer/ workspace (default: the vean repo root). */
   veanRoot?: string;
+  /** Launch-scoped authority for mutating routes. Omitted only by legacy/read-only
+   * callers; release/test launchers must supply it. The secret is never serialized. */
+  mutationAuthority?: MutationAuthority;
+  policyProfile?: PreviewPolicyProfile;
 };
 
 export type PreviewServerHandle = {
@@ -145,8 +158,19 @@ function applyCrossOriginIsolation(res: Response): Response {
  *  in the served viewer regardless of which code path produced the Response. */
 function withCrossOriginIsolation(
   handler: (req: Request) => Promise<Response>,
+  profile: PreviewPolicyProfile,
+  authority?: MutationAuthority,
 ): (req: Request) => Promise<Response> {
-  return async (req: Request): Promise<Response> => applyCrossOriginIsolation(await handler(req));
+  return async (req: Request): Promise<Response> => {
+    const response = applyPreviewPolicy(applyCrossOriginIsolation(await handler(req)), profile);
+    if (authority && req.method === "GET" && new URL(req.url).pathname === "/") {
+      response.headers.set(
+        "Set-Cookie",
+        `vean-authority=${authority.token}; Path=/; HttpOnly; SameSite=Strict`,
+      );
+    }
+    return response;
+  };
 }
 
 function jsonResponse(value: unknown, status = 200): Response {
@@ -328,6 +352,17 @@ export function createPreviewHandler(
   const handle = async function handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const path = url.pathname;
+
+    if (req.method === "POST" && MUTATION_PATHS.has(path) && opts.mutationAuthority) {
+      const authorized = authorizeMutation(req, opts.mutationAuthority);
+      if (!authorized.ok) {
+        // Deliberately uniform: no route, credential, or parser detail is exposed.
+        return jsonResponse(
+          { ok: false, kind: "unauthorized", detail: "mutation authority required" },
+          403,
+        );
+      }
+    }
 
     // ── API ──────────────────────────────────────────────────────────────
     if (path === "/api/health") {
@@ -791,7 +826,11 @@ export function createPreviewHandler(
   // Stamp cross-origin isolation on EVERY response so the served viewer reports
   // `crossOriginIsolated === true` (the gate for WebCodecs-in-workers +
   // SharedArrayBuffer the live-preview compositor needs — DESIGN-LIVE-PREVIEW §8.5).
-  return withCrossOriginIsolation(handle);
+  return withCrossOriginIsolation(
+    handle,
+    opts.policyProfile ?? (opts.dev ? "dev" : "release"),
+    opts.mutationAuthority,
+  );
 }
 
 // ─── Backend HMR (bun --hot) state preservation ──────────────────────────────
@@ -809,6 +848,7 @@ type HotPreviewState = {
   vite?: ViteDevHandle | null;
   server?: ReturnType<typeof Bun.serve>;
   handle?: PreviewServerHandle;
+  mutationAuthority?: MutationAuthority;
   sessionMap?: Map<string, TimelineSession>;
 };
 declare global {
@@ -834,6 +874,14 @@ export async function startPreviewServer(opts: PreviewServerOptions): Promise<Pr
     globalThis.__veanPreviewHot ??= {};
     g = globalThis.__veanPreviewHot;
   }
+  const mutationAuthority = opts.mutationAuthority ??
+    g?.mutationAuthority ?? {
+      host: `127.0.0.1:${opts.port}`,
+      origin: `http://127.0.0.1:${opts.port}`,
+      token: randomBytes(32).toString("base64url"),
+      consumeNonce: createNonceConsumer(),
+    };
+  if (g) g.mutationAuthority = mutationAuthority;
 
   // Dev (default): bring up a managed Vite child and proxy to its actual port.
   // Prod (--prod): no Vite — serve the viewer/dist snapshot. Under --hot the Vite
@@ -863,7 +911,7 @@ export async function startPreviewServer(opts: PreviewServerOptions): Promise<Pr
     sessionMap = new Map();
   }
   const fetchHandler = createPreviewHandler(
-    { ...opts, veanRoot, ...(vite ? { vitePort: vite.port } : {}) },
+    { ...opts, mutationAuthority, veanRoot, ...(vite ? { vitePort: vite.port } : {}) },
     new SessionStore(sessionMap),
   );
 
@@ -884,6 +932,8 @@ export async function startPreviewServer(opts: PreviewServerOptions): Promise<Pr
     idleTimeout: 0,
   });
   const boundPort = server.port ?? opts.port;
+  mutationAuthority.host = `127.0.0.1:${boundPort}`;
+  mutationAuthority.origin = `http://127.0.0.1:${boundPort}`;
   const handle: PreviewServerHandle = {
     url: `http://127.0.0.1:${boundPort}`,
     port: boundPort,

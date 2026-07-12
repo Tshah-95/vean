@@ -18,6 +18,7 @@
 // incrementally behind viewer/src/api.ts; media stays on loopback HTTP because
 // WKWebView's custom-scheme handler is the weak link for <video> Range seeking.
 
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::sync::Mutex;
@@ -35,6 +36,7 @@ const MACOS_RENDERER_TRIPLE: &str = "aarch64-apple-darwin";
 /// root it was started against.
 struct Sidecar {
     child: Option<Child>,
+    process_group: i32,
     port: u16,
     project: PathBuf,
 }
@@ -42,7 +44,18 @@ struct Sidecar {
 impl Drop for Sidecar {
     fn drop(&mut self) {
         if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
+            // The preview process may own Vite/render descendants. Killing only
+            // the direct Child leaks those descendants after project switch/quit.
+            // Every sidecar starts a fresh process group; terminate the group,
+            // then reap the direct child so no zombie remains.
+            unsafe {
+                libc::kill(-self.process_group, libc::SIGTERM);
+            }
+            std::thread::sleep(Duration::from_millis(100));
+            unsafe {
+                libc::kill(-self.process_group, libc::SIGKILL);
+            }
+            let _ = child.wait();
         }
     }
 }
@@ -194,6 +207,11 @@ fn spawn_sidecar(project: &PathBuf, port: u16, env: &[(String, String)]) -> std:
     let cli = vean_repo().join("src").join("cli.ts");
     let mut cmd = Command::new(vean_bin());
     cmd.arg(cli).arg("preview").arg("--no-open");
+    cmd.process_group(0);
+    cmd.env(
+        "VEAN_PROCESS_MARKER",
+        format!("vean-sidecar-{}-{port}", std::process::id()),
+    );
     // `vean preview` defaults to the live Vite/HMR dev server; `--prod` pins it to
     // the static viewer/dist snapshot. Pass `--prod` only when NOT dev-from-source —
     // so the dev native window hot-reloads the viewer (the whole point) while the
@@ -252,12 +270,14 @@ fn restart_sidecar(app: &AppHandle, project: PathBuf) -> Result<u16, String> {
     let port = free_port().map_err(|e| e.to_string())?;
     let env = renderer_env(app);
     let child = spawn_sidecar(&project, port, &env).map_err(|e| e.to_string())?;
+    let process_group = child.id() as i32;
     {
         let state = app.state::<AppState>();
         let mut guard = state.sidecar.lock().map_err(|e| e.to_string())?;
         // Replacing the Option drops the previous Sidecar → kills the old child.
         *guard = Some(Sidecar {
             child: Some(child),
+            process_group,
             port,
             project,
         });

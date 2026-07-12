@@ -80,7 +80,7 @@ export async function renderProxy(
 ): Promise<ProxyResponse> {
   const res = await fetch("/api/proxy-render", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-vean-nonce": crypto.randomUUID() },
     body: JSON.stringify({ route, scale, force }),
   });
   const body = (await res.json()) as ProxyResponse | ApiError;
@@ -96,7 +96,7 @@ export async function renderProxy(
 async function postJson<T>(path: string, payload: unknown): Promise<T> {
   const res = await fetch(path, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-vean-nonce": crypto.randomUUID() },
     body: JSON.stringify(payload),
   });
   const body = (await res.json()) as T | ApiError;
@@ -195,7 +195,7 @@ export async function runAction<T = unknown>(
 ): Promise<T> {
   const res = await fetch("/api/action", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-vean-nonce": crypto.randomUUID() },
     body: JSON.stringify({ id, input, project }),
   });
   const env = (await res.json()) as { ok: true; output: T } | ApiError;

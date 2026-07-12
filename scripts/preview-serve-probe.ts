@@ -71,6 +71,24 @@ async function main() {
     // is a representative subresource that must stay CORP-compatible under COEP.
     const isolationHtml = await coiHeaders("/");
     const isolationApi = await coiHeaders("/api/health");
+    const bootstrap = await fetch(`${out.url}/`);
+    await bootstrap.arrayBuffer();
+    const cookie = bootstrap.headers.get("set-cookie")?.split(";", 1)[0] ?? "";
+    const unauthorizedMutation = await fetch(`${out.url}/api/action`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: out.url },
+      body: JSON.stringify({ id: "missing.action" }),
+    });
+    const authorizedMutation = await fetch(`${out.url}/api/action`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: out.url,
+        cookie,
+        "x-vean-nonce": crypto.randomUUID(),
+      },
+      body: JSON.stringify({ id: "missing.action" }),
+    });
 
     const result = {
       ok: true,
@@ -98,6 +116,11 @@ async function main() {
       badEndpointStatus: bad.status,
       isolationHtml,
       isolationApi,
+      mutationAuthority: {
+        bootstrapCookieHttpOnly: bootstrap.headers.get("set-cookie")?.includes("HttpOnly") ?? false,
+        unauthorizedStatus: unauthorizedMutation.status,
+        authorizedStatus: authorizedMutation.status,
+      },
     };
     console.log(JSON.stringify(result));
   } finally {
