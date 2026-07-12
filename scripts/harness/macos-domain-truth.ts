@@ -143,6 +143,9 @@ export function evaluateResidualDialogControl(input: {
     actualResidualRecord: input.record?.residualDialogControl === true,
     nativeDialogObserved:
       (input.record?.residual?.dialogs ?? 0) + (input.record?.residual?.sheets ?? 0) > 0,
-    cleanupAfterDetection: input.cleanupDetected.length === 0,
+    // fixture.close() returns only after a second inspection proves nothing
+    // remains. This control deliberately leaves the dialog/app alive, so the
+    // first reap must detect at least one owned resource.
+    cleanupAfterDetection: input.cleanupDetected.length > 0,
   };
 }

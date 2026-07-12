@@ -754,10 +754,20 @@ describe("native macOS domain truth", () => {
         evaluateResidualDialogControl({
           markerSeen: true,
           record: { residualDialogControl: true, residual: { dialogs: 1, sheets: 0 } },
-          cleanupDetected: [],
+          cleanupDetected: ["owned app process detected and reaped"],
         }),
       ).every(Boolean),
     ).toBe(true);
+  });
+
+  it("rejects a residual-dialog control when the watchdog detects nothing to reap", () => {
+    expect(
+      evaluateResidualDialogControl({
+        markerSeen: true,
+        record: { residualDialogControl: true, residual: { dialogs: 1, sheets: 0 } },
+        cleanupDetected: [],
+      }).cleanupAfterDetection,
+    ).toBe(false);
   });
 });
 
