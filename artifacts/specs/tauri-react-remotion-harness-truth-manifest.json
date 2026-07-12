@@ -85,6 +85,7 @@
         "claim-release-evidence-current",
         "claim-failure-evidence",
         "claim-installed-webview-policy",
+        "claim-installed-native-macos-shell",
         "claim-guidance-current"
       ],
       "implicit_skips_allowed": false
@@ -428,22 +429,22 @@
     },
     {
       "claim_id": "claim-native-macos-shell",
-      "claim": "Native menus, file panels, windows, and machine-detectable shell accessibility pass in development and against the exact installed release candidate.",
-      "oracle_command": "bun run verify:release --suite packaged-macos-smoke --lineage <manifest>",
-      "expected_predicate": "dev H06 and package-bound H08R Mac2 ledgers pass with exact app hash, bundle ID, driver session, and focus restoration",
+      "claim": "Native menus, file panels, windows, and machine-detectable shell accessibility pass in the H06 development app.",
+      "oracle_command": "bun run verify:macos",
+      "expected_predicate": "the H06 development Mac2 ledger passes with exact source/app hash, bundle ID, driver session, semantic accessibility locators, focus restoration, and cleanup",
       "canonical_artifact_paths": ["e2e/macos/"],
       "worker_lane_owner": "H06",
       "verifier_owner": "native-ui",
       "current_status": "open",
       "oracle_exists": false,
       "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
-      "finalizer_owner": "H08R",
+      "finalizer_owner": "PM",
       "scenario_manifest": "artifacts/specs/harness-scenarios/macos.json",
       "negative_control": {
         "control_id": "nc-native-macos-shell",
         "setup_command": "bun run harness:mutate --control nc-native-macos-shell",
         "mutation_or_fixture_hash": "required: recorded before_hash != mutated_hash and exact mutation manifest hash",
-        "oracle_command": "bun run verify:release --suite packaged-macos-smoke --lineage <manifest>",
+        "oracle_command": "bun run verify:macos",
         "expected_oracle_exit": 1,
         "expected_status": "failed",
         "expected_reason_code": "SENSITIVITY_NATIVE_MACOS_SHELL",
@@ -453,7 +454,37 @@
           "artifacts/test-runs/<run-id>/negative-controls/nc-native-macos-shell.json"
         ]
       },
-      "oracle_implementation_paths": ["package.json"]
+      "oracle_implementation_paths": ["package.json", "scripts/verify-macos.ts", "e2e/macos/"]
+    },
+    {
+      "claim_id": "claim-installed-native-macos-shell",
+      "claim": "Native menus, file panels, windows, and machine-detectable shell accessibility pass against the exact installed release package.",
+      "oracle_command": "bun run verify:release --suite packaged-macos-smoke --lineage <manifest>",
+      "expected_predicate": "package-bound H08R Mac2 ledger passes with exact signed app/DMG lineage, bundle ID, driver session, semantic accessibility locators, focus restoration, and cleanup",
+      "canonical_artifact_paths": ["e2e/release/", "artifacts/release-evidence/native-macos/"],
+      "worker_lane_owner": "H08R",
+      "verifier_owner": "native-ui-release",
+      "dispatch_class": "release-manual",
+      "current_status": "open",
+      "oracle_exists": false,
+      "allowed_terminal_states": ["verified", "blocked_with_user_decision"],
+      "finalizer_owner": "H08R",
+      "scenario_manifest": "artifacts/specs/harness-scenarios/release.json",
+      "negative_control": {
+        "control_id": "nc-installed-native-macos-shell",
+        "setup_command": "bun run harness:mutate --control nc-installed-native-macos-shell",
+        "mutation_or_fixture_hash": "required: substituted installed app/DMG lineage hash differs from the approved package",
+        "oracle_command": "bun run verify:release --suite packaged-macos-smoke --lineage <manifest>",
+        "expected_oracle_exit": 1,
+        "expected_status": "failed",
+        "expected_reason_code": "SENSITIVITY_INSTALLED_NATIVE_MACOS_SHELL",
+        "cleanup_command": "bun run harness:mutate --restore nc-installed-native-macos-shell",
+        "restoration_predicate": "restored lineage hashes match and exact installed-package Mac2 oracle returns verified",
+        "evidence_paths": [
+          "artifacts/test-runs/<run-id>/negative-controls/nc-installed-native-macos-shell.json"
+        ]
+      },
+      "oracle_implementation_paths": ["scripts/verify-release.ts", "e2e/release/"]
     },
     {
       "claim_id": "claim-performance-budget",
