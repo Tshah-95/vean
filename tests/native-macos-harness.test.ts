@@ -356,7 +356,10 @@ describe("Mac2 accessibility XML inventory", () => {
 
   it("wires focus as a post-selection attribute and never as the shortcut predicate", () => {
     const source = readFileSync(join(process.cwd(), "e2e/macos/native-shell.spec.ts"), "utf8");
-    expect(source).toContain('browser.execute("macos: keys"');
+    expect(source).toContain('browser.execute("macos: keys", { keys: [GO_TO_FOLDER_KEYSTROKE] })');
+    expect(source).not.toContain(
+      'browser.execute("macos: keys", [{ keys: [GO_TO_FOLDER_KEYSTROKE] }])',
+    );
     expect(source).toContain('location.getAttribute("focused")');
     expect(source).toContain("excludedAsOpenPanel");
     expect(source).not.toContain('browser.keys(["Shift", "Command", "g"])');
