@@ -13,7 +13,9 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_KNOWN_HOSTS,
   GUEST_REPOSITORY,
+  GUEST_SMOKE_FIXTURES,
   GUEST_SMOKE_PROJECT,
+  GUEST_SMOKE_SEED_VERSION,
   HEADLESS_RUN_ARGS,
   PROJECT_ARTIFACT_ALLOWLIST,
   READY_STEPS,
@@ -373,10 +375,22 @@ describe("macOS Tart VM harness policy", () => {
     expect(command).toContain("exit 1");
   });
 
-  it("seeds a guest-local writable smoke project without scanning or mounting host code", () => {
+  it("seeds a versioned guest-local audiovisual H07 smoke project without overwriting", () => {
     const command = seedSmokeProjectGuestCommand("main");
     expect(command).toContain(`project='${GUEST_SMOKE_PROJECT}'`);
-    expect(command).toContain(`${GUEST_REPOSITORY}/corpus/shotcut-single.mlt`);
+    expect(GUEST_SMOKE_SEED_VERSION).toBe(2);
+    expect(GUEST_SMOKE_PROJECT).toContain("vean-smoke-v2");
+    expect(command).toContain(`${GUEST_REPOSITORY}/corpus/harness/media/assets`);
+    expect(command).toContain("timeline add-footage");
+    expect(command).toContain("timeline add-audio");
+    expect(command).toContain("timeline add-graphic");
+    for (const fixture of Object.values(GUEST_SMOKE_FIXTURES)) {
+      expect(command).toContain(fixture);
+    }
+    expect(command).toContain("existing project is not owned by the vean smoke seed");
+    expect(command).toContain("harness-owned smoke timeline changed; refusing overwrite");
+    expect(command).toContain("cmp -s");
+    expect(command).toContain("harness-seed-v2.json");
     expect(command).toContain("timeline use");
     for (const role of ["library", "recordings", "mic", "acquired"]) {
       expect(command).toContain(`/Volumes/My Shared Files/media-${role}`);
@@ -384,5 +398,6 @@ describe("macOS Tart VM harness policy", () => {
     }
     expect(command).not.toContain("media scan");
     expect(command).not.toContain("/Users/tejas");
+    expect(command).not.toContain("shotcut-single.mlt");
   });
 });

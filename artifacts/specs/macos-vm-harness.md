@@ -182,13 +182,23 @@ Use this storage split for actual editing tests:
 - small deterministic test assets: committed OSS-safe fixtures in the guest
   clone, so CI and a fresh clone get identical inputs.
 
-`bun run vm:macos:seed-smoke-project` idempotently creates the writable project
-`/Users/admin/Projects/vean-smoke`, selects its committed color-only timeline,
-copies the small tone fixture, and registers the four canonical read-only media
-roots without scanning them. It refuses any other share set and never overwrites
-an existing smoke timeline, so the guest remains useful for hands-on editing
-between harness runs. Use explicit `vean media scan --root <id>` only when a test
-actually needs the large personal corpus cataloged.
+`bun run vm:macos:seed-smoke-project` idempotently creates the versioned writable
+project `/Users/admin/Projects/vean-smoke-v2`. Through the real action runtime it
+builds and selects a landscape-29.97 timeline containing committed H07 synthetic
+H.264/AAC footage, a separate PCM audio clip, and a ProRes 4444 alpha overlay.
+It registers the four canonical read-only media roots without scanning them.
+
+The v2 path intentionally leaves the older `/Users/admin/Projects/vean-smoke`
+project untouched. A seed marker owns only the v2 timeline and three copied
+fixtures. Repeated seeding verifies their hashes/content and fails rather than
+overwriting any edit; an existing v2 directory without that marker is treated
+as user-owned and refused. A failed first creation is removed atomically. This
+preserves hands-on projects while making a fresh daily seed exercise real video,
+audio, and alpha paths. The committed lower-third parity document still depends
+on a generated Remotion render, so the daily seed does not claim Remotion parity;
+`bun run verify:media` owns that proof. Use explicit
+`vean media scan --root <id>` only when a test actually needs the large personal
+corpus cataloged.
 
 For a project that already stores absolute host paths, do not recreate or
 mutate the host directory layout. Point project routes at the guest mount, for

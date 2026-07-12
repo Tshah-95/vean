@@ -253,7 +253,8 @@ bun run vm:macos:collect-evidence
 `vm:macos:ready` is the normal daily entry point. It starts only the hidden
 guest, synchronizes `main` against the remote's independently advertised commit,
 checks key-only SSH and guest disk headroom, verifies read-only media shares,
-and refreshes the guest-local smoke project. See
+and refreshes the versioned guest-local H07 audiovisual smoke project (footage,
+PCM audio, and an alpha overlay, without overwriting edits). See
 [`artifacts/specs/macos-vm-harness.md`](artifacts/specs/macos-vm-harness.md) for
 safe project provisioning and allowlisted artifact collection.
 

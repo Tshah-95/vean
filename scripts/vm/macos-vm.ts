@@ -26,7 +26,13 @@ export const DEFAULT_IMAGE =
   "ghcr.io/cirruslabs/macos-tahoe-xcode@sha256:61f6e857a3d65dd2f8daf9c51c7b837fa458bcc9181ae8556e645b534dab6bf6";
 export const REPOSITORY_URL = "https://github.com/Tshah-95/vean.git";
 export const GUEST_REPOSITORY = "/Users/admin/Github/vean-runner";
-export const GUEST_SMOKE_PROJECT = "/Users/admin/Projects/vean-smoke";
+export const GUEST_SMOKE_SEED_VERSION = 2;
+export const GUEST_SMOKE_PROJECT = `/Users/admin/Projects/vean-smoke-v${GUEST_SMOKE_SEED_VERSION}`;
+export const GUEST_SMOKE_FIXTURES = {
+  footage: "source-h264-aac.mp4",
+  audio: "audio-pcm.wav",
+  alpha: "source-prores4444-alpha.mov",
+} as const;
 export const GUEST_PROJECTS_ROOT = "/Users/admin/Projects";
 export const MIN_GUEST_ROOT_FREE_KB = 40 * 1024 * 1024;
 export const MIN_GUEST_PROJECT_FREE_KB = 20 * 1024 * 1024;
@@ -1217,6 +1223,10 @@ export function verifySharesGuestCommand(shares: readonly VmShare[]): string {
 
 export function seedSmokeProjectGuestCommand(sourceRef = "main"): string {
   const ref = validateSourceRef(sourceRef);
+  const fixtureRoot = `${GUEST_REPOSITORY}/corpus/harness/media/assets`;
+  const timeline = `${GUEST_SMOKE_PROJECT}/corpus/smoke.mlt`;
+  const media = `${GUEST_SMOKE_PROJECT}/media`;
+  const marker = `${GUEST_SMOKE_PROJECT}/.vean/harness-seed-v${GUEST_SMOKE_SEED_VERSION}.json`;
   const commands = [
     "set -euo pipefail",
     'export PATH="$HOME/.bun/bin:$HOME/.local/share/mise/shims:/opt/homebrew/bin:$PATH"',
@@ -1225,12 +1235,28 @@ export function seedSmokeProjectGuestCommand(sourceRef = "main"): string {
     'test -z "$(git status --porcelain)"',
     ...remoteRefTruthCommands(ref, true),
     `project=${shellQuote(GUEST_SMOKE_PROJECT)}`,
-    'mkdir -p "$project/corpus"',
-    `test -f "$project/corpus/smoke.mlt" || cp ${GUEST_REPOSITORY}/corpus/shotcut-single.mlt "$project/corpus/smoke.mlt"`,
-    `test -f "$project/corpus/tone.wav" || cp ${GUEST_REPOSITORY}/corpus/tone.wav "$project/corpus/tone.wav"`,
+    `timeline=${shellQuote(timeline)}`,
+    `media=${shellQuote(media)}`,
+    `marker=${shellQuote(marker)}`,
+    `fixture_root=${shellQuote(fixtureRoot)}`,
+    `seed_version=${GUEST_SMOKE_SEED_VERSION}`,
+    "fresh=0",
+    'if test ! -e "$project"; then fresh=1; mkdir -p "$project/corpus" "$media"; fi',
+    'if test "$fresh" -eq 0 && test ! -f "$marker"; then printf "existing project is not owned by the vean smoke seed: %s\\n" "$project" >&2; exit 1; fi',
+    'if test "$fresh" -eq 1; then trap \'test "$fresh" -eq 0 || rm -rf "$project"\' EXIT; fi',
+    ...Object.entries(GUEST_SMOKE_FIXTURES).flatMap(([role, file]) => [
+      `test -f "$fixture_root/${file}"`,
+      `if test "$fresh" -eq 1; then cp "$fixture_root/${file}" "$media/${file}"; else cmp -s "$fixture_root/${file}" "$media/${file}" || { printf "harness-owned %s fixture changed; refusing overwrite\\n" ${shellQuote(role)} >&2; exit 1; }; fi`,
+    ]),
+    'if test "$fresh" -eq 0; then expected_timeline_sha="$(/usr/bin/plutil -extract timeline_sha256 raw -o - "$marker")"; actual_timeline_sha="$(shasum -a 256 "$timeline" | /usr/bin/awk \'{print $1}\')"; test "$actual_timeline_sha" = "$expected_timeline_sha" || { printf "harness-owned smoke timeline changed; refusing overwrite: %s\\n" "$timeline" >&2; exit 1; }; fi',
     'bun src/cli.ts project init --repo "$project" --json >/dev/null',
     'bun src/cli.ts project use "$project" --json >/dev/null',
-    'bun src/cli.ts timeline use "$project/corpus/smoke.mlt" --repo "$project" --json >/dev/null',
+    'if test "$fresh" -eq 1; then bun src/cli.ts timeline new "$timeline" --profile landscape-2997 --title "vean H07 audiovisual smoke" --video-tracks 1 --audio-tracks 1 --repo "$project" --json >/dev/null; fi',
+    `if test "$fresh" -eq 1; then bun src/cli.ts timeline add-footage --resource "$media/${GUEST_SMOKE_FIXTURES.footage}" --timeline "$timeline" --label "H07 H.264/AAC footage" --json >/dev/null; fi`,
+    `if test "$fresh" -eq 1; then bun src/cli.ts timeline add-audio --resource "$media/${GUEST_SMOKE_FIXTURES.audio}" --duration 30 --timeline "$timeline" --json >/dev/null; fi`,
+    `if test "$fresh" -eq 1; then bun src/cli.ts timeline add-graphic --clip-path "$media/${GUEST_SMOKE_FIXTURES.alpha}" --position 15 --duration 44 --new-track --label "H07 ProRes 4444 alpha" --timeline "$timeline" --json >/dev/null; fi`,
+    'if test "$fresh" -eq 1; then timeline_sha="$(shasum -a 256 "$timeline" | /usr/bin/awk \'{print $1}\')"; printf \'{"schema_version":1,"seed_version":%s,"timeline_sha256":"%s"}\\n\' "$seed_version" "$timeline_sha" > "$marker"; fresh=0; trap - EXIT; fi',
+    'bun src/cli.ts timeline use "$timeline" --repo "$project" --json >/dev/null',
   ];
   for (const role of ["library", "recordings", "mic", "acquired"]) {
     commands.push(
@@ -1276,6 +1302,8 @@ function seedSmokeProject(sourceRef: string): void {
     sourceRef,
     project: GUEST_SMOKE_PROJECT,
     activeTimeline: `${GUEST_SMOKE_PROJECT}/corpus/smoke.mlt`,
+    seedVersion: GUEST_SMOKE_SEED_VERSION,
+    fixtures: GUEST_SMOKE_FIXTURES,
     mediaRoots: required.map((name) => `/Volumes/My Shared Files/${name}`),
   });
 }
