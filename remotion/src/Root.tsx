@@ -10,7 +10,8 @@
 // glob-driven too (id/dims from a per-comp `meta` export) is a small follow-up.
 import { Composition } from "remotion";
 import { LowerThird, lowerThirdDefaults, lowerThirdSchema } from "./compositions/LowerThird";
-import Title, { defaults as titleDefaults, schema as titleSchema } from "./compositions/Title";
+import Title from "./compositions/Title";
+import { titleDefaults, titleSchema } from "./compositions/Title.config";
 
 export const RemotionRoot: React.FC = () => (
   <>
