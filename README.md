@@ -6,8 +6,9 @@
 diagnostics layer for video editing on top of [MLT](https://www.mltframework.org/) —
 a *language server for video*.
 
-> Status: early. Scaffolded ahead of implementation, building behind verification
-> gates. See [ROADMAP.md](ROADMAP.md).
+> Status: active development. The headless core, action runtime, React/Remotion
+> viewer, and local Tauri app are implemented behind verification gates. Package,
+> release, and remaining breadth work is tracked in [ROADMAP.md](ROADMAP.md).
 
 ## Why
 
@@ -35,15 +36,15 @@ vean's core is **not** a renderer, a motion-graphics engine, or a GUI. It
 delegates:
 
 - **Render** → `melt` (MLT/FFmpeg), driven as a separate process. The CLI/source
-  install uses system deps; the future Mac app may bundle pinned renderer
+  install uses system deps; the Mac app can bundle pinned renderer
   sidecars.
 - **Motion graphics** → [Remotion](https://www.remotion.dev/), as a *producer*
   (pre-rendered alpha clips for export; `@remotion/player` for live preview).
-- **UI** → a local Tauri Mac app built on this core (planned). The website is for
+- **UI** → the local Tauri Mac app in `app/`, built on this core. The website is for
   download/docs, not a web editor.
 
 The timeline core is **stateless**: files in, files out. Product coordination
-state is local-only: CLI/LSP/MCP/future UI metadata lives in gitignored
+state is local-only: CLI/LSP/MCP/app metadata lives in gitignored
 `.vean/vean.db` and never replaces committed timeline files.
 
 ## Architecture
@@ -53,7 +54,7 @@ Four layers:
 1. **Core** (headless) — the typed document + serialize/parse + keyframes +
    edit algebra + diagnostics + the `melt`/ffmpeg driver.
 2. **Action runtime** — one typed registry for product behaviors, projected to
-   Commander CLI, MCP tools, deterministic LSP code actions, and the future
+   Commander CLI, MCP tools, deterministic LSP code actions, and the
    Tauri app. Every public action is available through ergonomic commands or
    `vean action run <id> --input-json ...`.
 3. **Agent bridge** — `vean-lsp` for ambient diagnostics/navigation/code
@@ -200,8 +201,8 @@ For explicit routing, every path-bearing timeline command also accepts
 project-local route alias in `.vean/vean.db`; the `.mlt` file remains the
 canonical edit document.
 
-The local Mac app scaffold lives in `app/`. Verify the scaffold, Tauri config,
-capabilities, sidecar manifest, and action-registry linkage with:
+The local Mac app lives in `app/`. Verify its Tauri config, capabilities,
+sidecar manifest, and action-registry linkage with:
 
 ```bash
 bun run app:doctor
@@ -215,6 +216,42 @@ bun run app:doctor -- --native
 
 That gate requires Rust/Cargo and produces the local macOS `.app` bundle. DMG
 packaging is a later distribution task, not the seed harness target.
+
+## Verification harness
+
+The canonical developer profile covers owned static checks plus the React
+component and real loopback-editor browser claims:
+
+```bash
+bun run verify:harness --profile developer --json
+```
+
+For focused UI work, `bun run drive verify` (the same oracle as
+`bun run verify:browser`) uses the repository's pinned Playwright/Chromium
+dependency in headless mode. It drives both Vite/HMR and production-dist
+scenarios and checks the independently parsed, persisted `.mlt`; `agent-browser`
+is not required.
+
+Actual Tauri/WKWebView development behavior has its own focused gates:
+
+```bash
+bun run verify:tauri --provider auto
+bun run verify:tauri-release-negative
+```
+
+Native menus, focus, and file dialogs must never be automated in the host login
+session. Route them through the hidden Tart guest:
+
+```bash
+bun run vm:macos:status
+bun run vm:macos:doctor-guest
+bun run vm:macos:verify-native
+bun run vm:macos:collect-evidence
+```
+
+Those are development-app claims. They do not claim that unsigned packaging,
+signing/notarization, updater, release-lineage, or manual accessibility gates are
+complete.
 
 ## License
 

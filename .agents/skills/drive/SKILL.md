@@ -1,6 +1,6 @@
 ---
 name: drive
-description: Drive the vean app to PROVE a UI change works — open the real editor in a headless (or headed) browser, click/inspect the thing you changed, record a screenshot/video clip into the temp dir, and reference it back in chat as proof. Use whenever you make a material UI change to viewer/ or the preview server and want to demonstrate the effect (not just assert it), confirm a feature behaves as imagined, or show before/after. Headless vs headed is indifferent — pick whichever proves it.
+description: Prove a vean UI change in the real loopback editor without taking over the desktop. Use the packaged H04 Playwright/Chromium runner for completion evidence; use the optional agent-browser path only for ad-hoc headless inspection. Native shell automation routes to the hidden Tart guest, never the host login session.
 ---
 
 # Drive the vean app (prove your UI changes)
@@ -14,6 +14,25 @@ This is the visual sibling of the `editing` skill: `editing` mutates a `.mlt`
 through the bridge tools and trusts the ambient LSP; `drive` opens the **product
 UI** and verifies the change with eyes (screenshot/video) **and** structure
 (DOM + `/api/diagnostics`).
+
+## Canonical completion oracle
+
+Run this for every material `viewer/` or preview-server change:
+
+```bash
+bun run drive verify
+```
+
+`drive verify` is the `bun run verify:browser` H04 oracle. It uses the
+repository's pinned Playwright/Chromium dependency, always headless, and does not
+depend on `agent-browser`. It creates an H02-isolated project, drives both the
+Vite/HMR and freshly built production-dist paths, executes the six approved
+browser scenarios, and rejects UI-only success unless the action envelope,
+touched URI, independently reparsed persisted `.mlt`, diagnostics, and DOM all
+agree. Structured evidence is written under `.vean/harness/browser-runs/`.
+
+The manual `drive up` path below is for focused exploration and screenshots. It
+does not replace `drive verify` in a completion claim.
 
 ## The one fact that makes this work
 
@@ -30,24 +49,24 @@ HMR**, auto-started for you (no second terminal): edits under `viewer/` hot-relo
 into the open page. This is exactly what you want when proving a UI change — the
 proof reflects the code you just wrote, not a stale build. Pass **`--prod`** (`bun
 run drive up --prod`) to instead serve the pre-built `viewer/dist` snapshot — the
-same static viewer the **shipped Mac app** renders (the WKWebView always runs
+same static viewer the production-mode Mac app renders (the WKWebView always runs
 `--prod`). So the one nuance: `drive` shows your *latest* UI by default; the native
 app window shows the *built* snapshot. Reach for `--prod` only when you need to
-reproduce exactly what the shipped app draws.
+reproduce exactly what the production-mode app draws.
 
 Consequence:
 
 - You **cannot** attach a CDP/Chromium agent to the **native WKWebView window** —
   WKWebView speaks Apple's Web Inspector protocol, not CDP, and macOS ships no
   WebDriver for embedded WKWebView. (Don't waste time trying.)
-- You **don't need to.** Point `agent-browser` (Playwright/Chromium) at the **same
+- For ad-hoc inspection, point `agent-browser` (Playwright/Chromium) at the **same
   loopback URL** and you drive the byte-identical frontend + backend the WKWebView
   renders — headless, DOM-aware, scriptable, and **recordable**. Because vean's UI
   is HTTP-not-`invoke`, there is **zero Tauri-IPC mocking** to do (unusual; most
   Tauri apps must mock `window.__TAURI__`).
 
-So "drive the app" == "drive `vean preview` in a real browser." Headful only buys
-you a visible window; the proof is identical.
+So "drive the app" == "drive `vean preview` in a real browser." A visible window
+adds no authority and is forbidden for agent-driven verification.
 
 ## ⛔ HEADLESS IS NON-NEGOTIABLE — never open a visible window
 
@@ -71,7 +90,7 @@ over the computer every half-second"). This is a hard rule:
 - The only legitimate `--headed` use anywhere is a human-driven OAuth login — which
   does not apply to vean's loopback viewer (no auth). So here: **never.**
 
-## The harness (three commands)
+## Optional ad-hoc harness (three commands)
 
 The drive `--name` and the `agent-browser --session` **default to this
 checkout's worktree slug** (e.g. `main` on the canonical tree,
@@ -114,16 +133,10 @@ explicit `--name` to override (it wins everywhere), and run several at once with
 distinct `--name`s. `bun scripts/drive.ts status` reports which tree+session
 you're looking at (`slug`, `name`, `port`, `url`).
 
-For the repeatable acceptance suite, run `bun run drive verify` (equivalent to
-`bun run verify:browser`). It is always headless, creates an H02-isolated project,
-drives both the Vite/HMR and freshly built production-dist paths, migrates every
-legacy live-viewer scenario, and rejects a UI-only edit unless the current `.mlt`
-hash, independently reparsed IR, action envelope, diagnostics, and touched URI all
-agree. Use ad-hoc `up`/`down` for exploration; use `verify` for a completion claim.
-
-Everything else is raw `agent-browser` (see the `agent-browser` skill for the full
-command set: `snapshot`, `find`, `click`, `fill`, `get`, `is`, `diff`, `wait`,
-`network`, `set viewport`, …).
+Everything after `up` in this optional path is raw `agent-browser` (see its skill
+for `snapshot`, `find`, `click`, `fill`, `get`, `is`, `diff`, `wait`, `network`,
+and viewport commands). If it is not installed, skip ad-hoc driving and use the
+packaged `drive verify` oracle; H04 loses no coverage.
 
 ## Recording video proof → reference it in chat
 
@@ -174,10 +187,11 @@ and never render in the webview.
   are thin wrappers over the registry: `vean action run media.root.add --input-json
   '{"path":"…"}' --json`, `vean action run project.current --json`, or POST
   `/api/action`. Same code path, no native dialog needed.
-- To smoke-test the **native shell itself** (the window actually opens, the menu
-  fires, the sidecar boots and navigates), that's the heavier `app:doctor --native`
-  / `tauri:dev` path, or an OS-level pixel tier (computer-use / `screencapture`).
-  Reach for it only when the native wrapper — not the UI — is what changed.
+- To test the **native shell itself** (the window actually opens, the menu fires,
+  a file panel is dismissed, focus is restored), use
+  `bun run vm:macos:verify-native`. It drives Appium/Mac2 inside the hidden Tart
+  guest and cannot take over the user's host desktop. `app:doctor -- --native` is
+  a build prerequisite check, not native interaction evidence.
 
 ## When to escalate past this skill
 
@@ -187,10 +201,10 @@ isn't the web UI:
 
 | Need | Use | Notes |
 |---|---|---|
-| Prove a `viewer/` or preview-server UI change (the 95% case) | **this skill** (`drive` + `agent-browser`) | headless, video, DOM + `/api/*` assertions, zero IPC mocking |
+| Prove a `viewer/` or preview-server UI change (the 95% case) | `bun run drive verify` | packaged headless Playwright, DOM + persisted-document assertions, zero IPC mocking |
 | CI E2E that exercises the **native shell** incl. macOS | WebdriverIO `@wdio/tauri-service`, **embedded** provider (`tauri-plugin-wdio-webdriver`) | macOS WebDriver is supported *only* via the embedded server — `tauri-driver`/Selenium direct is Windows/Linux only (Apple ships no WKWebView driver) |
 | Real Playwright over the native webview | community `srsholmes/tauri-playwright` (in-app socket bridge) | not official; genuine CDP path is Windows/WebView2 only |
-| Native window / menu / dialog smoke test | computer-use (pixel) or `screencapture -v` | engine-independent; slow, no DOM, pixel-fragile — last resort |
+| Native window / menu / dialog smoke test | `bun run vm:macos:verify-native` | Appium/Mac2 in the hidden Tart guest; never host computer-use |
 
 The reason the cheap path wins: vean deliberately keeps the app a thin HTTP
 consumer, so the thing worth testing (the editing UI) is a plain web app. Lean on
