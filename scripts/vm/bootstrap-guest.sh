@@ -60,6 +60,9 @@ fi
 export PATH="$HOME/.cargo/bin:$PATH"
 rustup toolchain install 1.95.0 --profile minimal
 [[ "$(rustup run 1.95.0 rustc --version)" == rustc\ 1.95.0* ]]
+rust_bin="$(dirname "$(rustup which --toolchain 1.95.0 cargo)")"
+export PATH="$rust_bin:$PATH"
+[[ "$(cargo --version)" == cargo\ 1.95.0* ]]
 
 mkdir -p "$(dirname "$repository_path")"
 if [[ ! -d "$repository_path/.git" ]]; then

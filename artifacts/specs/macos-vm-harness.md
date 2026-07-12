@@ -48,6 +48,11 @@ prepends the Apple Silicon Homebrew path, runs `brew update`, installs `mlt`,
 `/Users/admin/Github/vean-runner`. It refuses to erase a dirty guest clone. The
 host checkout is neither mounted nor executed.
 
+The bootstrap and guest commands resolve `cargo` from the pinned 1.95.0
+toolchain directory explicitly. This is required on images that already ship a
+Homebrew `rustup` binary without installing the usual `~/.cargo/bin` proxy
+commands; native Tauri builds must not depend on an interactive shell default.
+
 Use `--source-ref <remote-branch>` with bootstrap and native verification when
 the target is not `origin/main`. The ref must already exist on GitHub; no host
 credentials or secrets are copied into the guest.

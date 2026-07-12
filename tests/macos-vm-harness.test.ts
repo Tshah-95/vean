@@ -1,4 +1,11 @@
-import { mkdirSync, mkdtempSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -96,6 +103,7 @@ describe("macOS Tart VM harness policy", () => {
     expect(command).toContain('test -z "$(git status --porcelain)"');
     expect(command).toContain("VEAN_ALLOW_INTERACTIVE_MACOS_AUTOMATION=1");
     expect(command).toContain("VEAN_MACOS_RUNNER_CLASS=dedicated");
+    expect(command).toContain("rustup which --toolchain 1.95.0 cargo");
     expect(command).not.toContain("ssh ");
     expect(command).not.toContain("/Users/tejas/Github/vean");
   });
@@ -104,7 +112,14 @@ describe("macOS Tart VM harness policy", () => {
     const plan = guestDoctorPlan("main");
     expect(plan.slice(0, 3)).toEqual(["tart", "exec", VM_NAME]);
     expect(plan.at(-1)).toContain("bun run doctor:macos-driver");
+    expect(plan.at(-1)).toContain('cargo_version="$(cargo --version)"');
     expect(plan.at(-1)).not.toContain("| grep -q");
+  });
+
+  it("makes bare cargo resolve to the pinned toolchain during clean guest bootstrap", () => {
+    const bootstrap = readFileSync(join(process.cwd(), "scripts/vm/bootstrap-guest.sh"), "utf8");
+    expect(bootstrap).toContain("rustup which --toolchain 1.95.0 cargo");
+    expect(bootstrap).toContain('[[ "$(cargo --version)" == cargo\\ 1.95.0* ]]');
   });
 
   it("rejects refs that could inject guest shell commands", () => {

@@ -453,6 +453,9 @@ function runGuestCommand(command: string): CommandResult {
       );
 }
 
+const PINNED_RUST_PATH =
+  'rust_bin="$(dirname "$(rustup which --toolchain 1.95.0 cargo)")"; export PATH="$rust_bin:$PATH"';
+
 export function nativeVerifyPlan(
   sourceRef = "main",
   extraArgs: readonly string[] = [],
@@ -467,6 +470,7 @@ export function nativeVerifyPlan(
     `test \"$(git rev-parse HEAD)\" = \"$(git rev-parse origin/${ref})\"`,
     'test "$(uname -s)" = Darwin',
     'export PATH="$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.local/share/mise/shims:/opt/homebrew/opt/libxml2/bin:/opt/homebrew/bin:$PATH"',
+    PINNED_RUST_PATH,
     "export VEAN_ALLOW_INTERACTIVE_MACOS_AUTOMATION=1",
     "export VEAN_MACOS_RUNNER_CLASS=dedicated",
     `bun run verify:macos${encodedArgs ? ` -- ${encodedArgs}` : ""}`,
@@ -483,10 +487,13 @@ export function guestDoctorPlan(sourceRef = "main"): readonly string[] {
     'test -z "$(git status --porcelain)"',
     `test \"$(git rev-parse HEAD)\" = \"$(git rev-parse origin/${ref})\"`,
     'export PATH="$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.local/share/mise/shims:/opt/homebrew/opt/libxml2/bin:/opt/homebrew/bin:$PATH"',
+    PINNED_RUST_PATH,
     'test "$(bun --version)" = 1.3.14',
     'test "$(node --version)" = v24.15.0',
     'rust_version="$(rustup run 1.95.0 rustc --version)"',
     'case "$rust_version" in "rustc 1.95.0 "*) ;; *) printf "unexpected rustc version: %s\\n" "$rust_version" >&2; exit 1 ;; esac',
+    'cargo_version="$(cargo --version)"',
+    'case "$cargo_version" in "cargo 1.95.0 "*) ;; *) printf "unexpected cargo version: %s\\n" "$cargo_version" >&2; exit 1 ;; esac',
     'test "$(sw_vers -productVersion)" = 26.4',
     'test "$(sw_vers -buildVersion)" = 25E246',
     'test "$(sysctl -n hw.model)" = VirtualMac2,1',
