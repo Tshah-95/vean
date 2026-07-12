@@ -114,7 +114,8 @@ export function evaluateMacosShellTruth(input: MacosShellTruthInput): Record<str
       close?.closeAccessibleName === "_XCUI:CloseWindow" &&
       close?.windowsAfterClose === 0 &&
       close?.reopenSupportedByProduct === false &&
-      close?.automationTerminateAfterClose === true &&
+      ((close?.appExitedAfterClose === true && close?.automationTerminateAfterClose === false) ||
+        (close?.appExitedAfterClose === false && close?.automationTerminateAfterClose === true)) &&
       close?.automationRelaunchForQuit === true,
     semanticQuit:
       typeof quit?.accessibleName === "string" && quit.accessibleName.startsWith("Quit"),

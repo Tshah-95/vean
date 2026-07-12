@@ -599,6 +599,7 @@ function validTruth(): MacosShellTruthInput {
           closeAccessibleName: "_XCUI:CloseWindow",
           windowsAfterClose: 0,
           reopenSupportedByProduct: false,
+          appExitedAfterClose: false,
           automationTerminateAfterClose: true,
           automationRelaunchForQuit: true,
         },
@@ -617,6 +618,17 @@ function validTruth(): MacosShellTruthInput {
 describe("native macOS domain truth", () => {
   it("accepts a fully bound semantic shell result", () => {
     expect(Object.values(evaluateMacosShellTruth(validTruth())).every(Boolean)).toBe(true);
+  });
+
+  it("accepts the observed last-window lifecycle when close exits the app itself", () => {
+    const input = validTruth();
+    const close = input.observed.scenarios?.find(
+      (candidate) => candidate.id === "macos-window-close-reopen-classification",
+    );
+    if (!close) throw new Error("close scenario missing from valid fixture");
+    close.appExitedAfterClose = true;
+    close.automationTerminateAfterClose = false;
+    expect(evaluateMacosShellTruth(input).honestWindowLifecycle).toBe(true);
   });
 
   for (const [name, mutate, failedPredicate] of [

@@ -261,32 +261,58 @@ describe("Vean AppKit-owned shell", () => {
       (await closeButton.getAttribute("title")) ||
       (await closeButton.getAttribute("label"));
     await closeButton.click();
-    await browser.waitUntil(async () => (await nativeInventory()).windows === 0, {
-      timeout: 15_000,
-      timeoutMsg: "native close button left the Vean window open",
-    });
-    const afterClose = await nativeInventory();
-    await browser.execute("macos: terminateApp", [
-      { bundleId: context.bundleId, path: context.bundlePath },
-    ]);
+    const processIsAlive = (pid: number): boolean => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    let appExitedAfterClose = false;
     await browser.waitUntil(
       async () => {
         try {
-          process.kill(app.pid, 0);
-          return false;
-        } catch {
+          return (await nativeInventory()).windows === 0;
+        } catch (error) {
+          if (processIsAlive(app.pid)) throw error;
+          appExitedAfterClose = true;
           return true;
         }
       },
-      { timeout: 15_000, timeoutMsg: "automation cleanup did not terminate the closed app" },
+      { timeout: 15_000, timeoutMsg: "native close button left the Vean window open" },
     );
+    const afterClose = appExitedAfterClose
+      ? { source: "", windows: 0, dialogs: 0, sheets: 0 }
+      : await nativeInventory();
+    if (!appExitedAfterClose) {
+      await browser.execute("macos: terminateApp", [
+        { bundleId: context.bundleId, path: context.bundlePath },
+      ]);
+      await browser.waitUntil(
+        async () => {
+          try {
+            process.kill(app.pid, 0);
+            return false;
+          } catch {
+            return true;
+          }
+        },
+        { timeout: 15_000, timeoutMsg: "automation cleanup did not terminate the closed app" },
+      );
+    } else if (processIsAlive(app.pid)) {
+      throw new Error(
+        "close lifecycle was classified as exited while the app process remained alive",
+      );
+    }
     scenarios.push({
       id: "macos-window-close-reopen-classification",
       closeAccessibleName: closeName,
       windowsAfterClose: afterClose.windows,
       reopenSupportedByProduct: false,
       reason: "the current Tauri shell does not implement macOS reopen activation",
-      automationTerminateAfterClose: true,
+      appExitedAfterClose,
+      automationTerminateAfterClose: !appExitedAfterClose,
       automationRelaunchForQuit: true,
     });
 
