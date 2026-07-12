@@ -156,6 +156,137 @@ export function isProvenanceProp(name: string): boolean {
   return name.startsWith(PROVENANCE_PROP_PREFIX);
 }
 
+// ─── A/V stream selectors ────────────────────────────────────────────────────
+// MLT's avformat producer chooses which streams of a multi-stream file to decode
+// via four selectors (mined from `producer_avformat.yml`, see
+// artifacts/research/shotcut-detach-audio-2026-07-01.md):
+//   • `audio_index` / `video_index` — ABSOLUTE stream index; `-1` = that side OFF.
+//   • `astream` / `vstream` — RELATIVE stream index; `-1` = OFF; these OVERRIDE
+//     the absolute `*_index` when both are set.
+// Shotcut's "Detach Audio" sets BOTH the absolute and the relative selector on
+// each half (belt-and-suspenders, since relative overrides): the video-only copy
+// gets `audio_index=-1` + `astream=-1`; the audio-only copy gets `video_index=-1`
+// + `vstream=-1`. `shotcut:defaultAudioIndex` is preserved so the audio can later
+// be re-attached. vean models all five as OPTIONAL clip fields, absent-by-default,
+// so a document with no split emits ZERO new bytes and round-trips byte-identically.
+export const streamSelectorsSchema = z.object({
+  /** ABSOLUTE audio stream index; `-1` = audio off. Overridden by `astream` when set. */
+  audioIndex: z.number().int().optional(),
+  /** ABSOLUTE video stream index; `-1` = video off. Overridden by `vstream` when set. */
+  videoIndex: z.number().int().optional(),
+  /** RELATIVE audio stream index; `-1` = audio off. OVERRIDES `audioIndex`. */
+  astream: z.number().int().optional(),
+  /** RELATIVE video stream index; `-1` = video off. OVERRIDES `videoIndex`. */
+  vstream: z.number().int().optional(),
+  /** The audio stream to restore on re-attach (Shotcut's `shotcut:defaultAudioIndex`). */
+  defaultAudioIndex: z.number().int().optional(),
+});
+export type StreamSelectors = z.infer<typeof streamSelectorsSchema>;
+
+/** The producer `<property>` name each stream selector serializes to. Shared by
+ *  serialize + parse so the two halves never drift on the wire name. The four
+ *  MLT-native selectors are plain names; the reattach hint is Shotcut-namespaced. */
+export const STREAM_SELECTOR_PROP: Record<keyof StreamSelectors, string> = {
+  audioIndex: "audio_index",
+  videoIndex: "video_index",
+  astream: "astream",
+  vstream: "vstream",
+  defaultAudioIndex: "shotcut:defaultAudioIndex",
+};
+
+/** The set of producer-property names carrying stream selectors, so the parser
+ *  keeps them out of the generic `extraProps` map (modeled structurally; they'd
+ *  otherwise double-emit). */
+export const STREAM_SELECTOR_PROP_NAMES: ReadonlySet<string> = new Set(
+  Object.values(STREAM_SELECTOR_PROP),
+);
+
+// The fixed emission order (schema order) so serialization is deterministic:
+// audio_index, video_index, astream, vstream, shotcut:defaultAudioIndex.
+const STREAM_SELECTOR_KEYS: Array<keyof StreamSelectors> = [
+  "audioIndex",
+  "videoIndex",
+  "astream",
+  "vstream",
+  "defaultAudioIndex",
+];
+
+/** Encode the PRESENT stream selectors into ordered `[name, value]` producer-
+ *  property pairs. Only present fields emit (an absent selector = zero bytes), in
+ *  the fixed schema order, so a clip with any subset round-trips deterministically.
+ *  A round-trip with `decodeStreamSelectors` is a fixpoint. */
+export function encodeStreamSelectorProps(s: StreamSelectors): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  for (const key of STREAM_SELECTOR_KEYS) {
+    const v = s[key];
+    if (v != null) out.push([STREAM_SELECTOR_PROP[key], String(v)]);
+  }
+  return out;
+}
+
+/** Reconstruct the `StreamSelectors` from the selector subset of a producer's
+ *  properties. Returns `undefined` when NONE are present (so a document with no
+ *  selectors leaves the field absent — byte-identical). Each value is coerced to
+ *  an integer and validated against the schema, so a malformed selector fails
+ *  loudly like the rest of the IR. */
+export function decodeStreamSelectorProps(
+  props: Record<string, PropertyValue>,
+): StreamSelectors | undefined {
+  const candidate: Record<string, number> = {};
+  let any = false;
+  for (const key of STREAM_SELECTOR_KEYS) {
+    const raw = props[STREAM_SELECTOR_PROP[key]];
+    if (raw == null) continue;
+    const n = typeof raw === "number" ? raw : Number(raw);
+    candidate[key] = n;
+    any = true;
+  }
+  if (!any) return undefined;
+  return streamSelectorsSchema.parse(candidate);
+}
+
+// ─── Typed A/V link ──────────────────────────────────────────────────────────
+// vean's answer to Shotcut's loose `shotcut:group` INT: a TYPED link on the clip.
+// Where Shotcut only has an integer group (so "an A/V pair from one detach" and
+// "the user grouped 5 unrelated clips" are indistinguishable, and trim/split
+// silently desync a detached pair — see the research doc), vean carries an
+// explicit link with a stable id, a role, and the partner clip ids. Two clips are
+// linked IFF they share `link.id`; the `role` distinguishes the video side from
+// the audio side of a detach; `partnerIds` names the other members so diagnostics
+// can flag a dangling link or an A/V desync after a trim. Serialized as a single
+// `vean:link` JSON property on the clip's playlist ENTRY (the cut) — present ONLY
+// when the clip is linked, so an unlinked clip emits zero new bytes.
+export const linkRole = z.enum(["video", "audio"]);
+export type LinkRole = z.infer<typeof linkRole>;
+
+export const clipLinkSchema = z.object({
+  /** Stable link-group id. Two clips are linked iff they share this id. */
+  id: z.string().min(1),
+  /** Which side of the A/V pair this clip is. */
+  role: linkRole,
+  /** The other clip ids in this link group. */
+  partnerIds: z.array(z.string()),
+});
+export type ClipLink = z.infer<typeof clipLinkSchema>;
+
+/** The playlist-entry `<property>` name carrying the typed link as JSON. Namespaced
+ *  (`vean:`) like the composition/provenance props; shared by serialize + parse so
+ *  the wire name never drifts. */
+export const LINK_PROP = "vean:link";
+
+/** Encode a `ClipLink` to its `vean:link` JSON string. The key order is fixed
+ *  (`id`, `role`, `partnerIds`) so emission is deterministic and the round-trip
+ *  with `decodeClipLink` is a byte-stable fixpoint. */
+export function encodeClipLink(link: ClipLink): string {
+  return JSON.stringify({ id: link.id, role: link.role, partnerIds: link.partnerIds });
+}
+
+/** Reconstruct a `ClipLink` from a `vean:link` JSON string. Validated against the
+ *  schema so a malformed link fails loudly like the rest of the IR. */
+export function decodeClipLink(raw: string): ClipLink {
+  return clipLinkSchema.parse(JSON.parse(raw));
+}
+
 // ─── Clip ────────────────────────────────────────────────────────────────
 // A window `[in, out]` (INCLUSIVE, 0-based source frames) onto a producer.
 // playtime = out - in + 1. `length` is a SEPARATE source-duration property (not
@@ -207,8 +338,35 @@ export const clipSchema = z.object({
    *  it survives export — modeled structurally (like `gain`/`label`), never in
    *  `extraProps`. */
   provenance: provenanceSchema.optional(),
+  /** Optional MLT stream selectors (`audio_index`/`video_index`/`astream`/`vstream`
+   *  + Shotcut's `shotcut:defaultAudioIndex`). Absent-by-default; present only on a
+   *  producer that decodes a stream subset — e.g. the video-only / audio-only halves
+   *  of an A/V split (`astream=-1` / `vstream=-1`). Round-tripped as producer
+   *  properties, modeled structurally (never in `extraProps`). */
+  streams: streamSelectorsSchema.optional(),
+  /** Optional typed A/V link — vean's answer to Shotcut's loose group int. Two clips
+   *  are linked iff they share `link.id`; `role` names the video vs audio side of a
+   *  detach and `partnerIds` names the other members. Absent-by-default; serialized
+   *  as a single `vean:link` JSON property on the clip's playlist entry (the cut). */
+  link: clipLinkSchema.optional(),
 });
 export type Clip = z.infer<typeof clipSchema>;
+
+/** Whether a clip's producer decodes an audio stream (a DERIVED predicate, never a
+ *  stored field). Audio is OFF iff a stream selector turns it off — the relative
+ *  `astream` overrides the absolute `audioIndex`, so `astream === -1` wins even if
+ *  `audioIndex >= 0`, and `audioIndex === -1` turns it off when `astream` is unset.
+ *  With no selectors, audio defaults ON (the file's default audio stream). This is
+ *  intentionally selector-only: it says nothing about whether the underlying media
+ *  actually CONTAINS audio (that needs a probe) — only whether this clip is
+ *  configured to decode it. */
+export function hasAudio(clip: Clip): boolean {
+  const s = clip.streams;
+  if (s == null) return true;
+  if (s.astream != null) return s.astream !== -1; // relative overrides absolute
+  if (s.audioIndex != null) return s.audioIndex !== -1;
+  return true;
+}
 
 // ─── Blank ───────────────────────────────────────────────────────────────
 // A literal gap on a track (`<blank length="N"/>`), N frames long. A clip's

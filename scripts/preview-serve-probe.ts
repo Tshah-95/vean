@@ -11,14 +11,25 @@ import { copyFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createActionContext, executeAction } from "../src/actions";
+import { encodeTranscribeOutput } from "../src/state/job-types";
+import { encodeTranscribeInput } from "../src/state/job-types";
+import { completeJob, enqueueJob } from "../src/state/jobs";
 
 const REPO = resolve(import.meta.dir, "..");
+
+// The audio clip id the multitrack fixture parses to (producer2 → tone.wav). Stable
+// per the fixture; used to address /api/peaks + /api/transcript by clip.
+const AUDIO_CLIP_ID = "{7c1a0e2a-0004-4abc-9d00-000000000032}";
 
 async function main() {
   const projectRoot = mkdtempSync(join(tmpdir(), "vean-preview-probe-"));
   const configHome = mkdtempSync(join(tmpdir(), "vean-preview-probe-config-"));
   const mlt = join(projectRoot, "main.mlt");
   copyFileSync(join(REPO, "corpus", "shotcut-multitrack.mlt"), mlt);
+  // The fixture's audio clip references `tone.wav` (a relative resource) — copy the
+  // real 4s WAV next to the .mlt so the peaks/audioStreams probe has a real source.
+  const tonePath = join(projectRoot, "tone.wav");
+  copyFileSync(join(REPO, "corpus", "tone.wav"), tonePath);
 
   const ctx = createActionContext({
     cwd: projectRoot,
@@ -27,6 +38,32 @@ async function main() {
   });
   await executeAction("project.init", { repo: projectRoot }, ctx);
   await executeAction("timeline.use", { repo: projectRoot, target: mlt }, ctx);
+
+  // Seed a COMPLETED transcribe job for tone.wav so /api/transcript returns a real
+  // transcript (the read-side wiring: a done job row IS the transcript store). The
+  // job payload path must equal the clip's RESOLVED absolute resource, which the
+  // server compares against.
+  const transcribed = enqueueJob(projectRoot, {
+    kind: "transcribe",
+    payloadJson: encodeTranscribeInput({ path: tonePath }),
+  });
+  completeJob(
+    projectRoot,
+    transcribed.id,
+    encodeTranscribeOutput({
+      segments: [
+        {
+          startFrame: 0,
+          endFrame: 2,
+          text: "tone check",
+          words: [
+            { startFrame: 0, endFrame: 1, text: "tone" },
+            { startFrame: 1, endFrame: 2, text: "check" },
+          ],
+        },
+      ],
+    }),
+  );
 
   // dev:false — this probe exercises the READ API + the dist static host, not the
   // live viewer. preview.serve now DEFAULTS to dev (auto-starts a Vite child); the
@@ -90,6 +127,31 @@ async function main() {
       body: JSON.stringify({ id: "missing.action" }),
     });
 
+    // ── Phase-3b endpoints ────────────────────────────────────────────────
+    // The parsed timeline's audio clip (tone.wav) should carry audioStreams/hasAudio
+    // from the ffprobe probe; a color clip carries neither.
+    const allClips: Array<Record<string, unknown>> = [
+      ...(timeline.body?.timeline?.tracks?.video ?? []),
+      ...(timeline.body?.timeline?.tracks?.audio ?? []),
+    ].flatMap((t: { items?: Array<Record<string, unknown>> }) => t.items ?? []);
+    const audioClip = allClips.find((c) => c.id === AUDIO_CLIP_ID);
+    const colorClip = allClips.find((c) => typeof c.service === "string" && c.service === "color");
+
+    // /api/peaks by clipId for the tone.wav clip (a real 4s WAV → a non-empty
+    // waveform). Addressing by clipId resolves the relative resource correctly.
+    const peaks = await getJson(`/api/peaks?clipId=${encodeURIComponent(AUDIO_CLIP_ID)}&bins=64`);
+    // Path-allowlist rejection: an arbitrary path is 403 (mirrors /api/media).
+    const peaksForbidden = await fetch(
+      `${out.url}/api/peaks?path=${encodeURIComponent("/etc/hosts")}`,
+    );
+
+    // /api/transcript by clipId → the seeded transcript (real words).
+    const transcript = await getJson(`/api/transcript?clipId=${encodeURIComponent(AUDIO_CLIP_ID)}`);
+    // /api/transcript for a color clip (non-file producer) → the never-faked empty case.
+    const transcriptEmpty = colorClip
+      ? await getJson(`/api/transcript?clipId=${encodeURIComponent(String(colorClip.id))}`)
+      : { status: 200, body: { ok: true, words: [], transcript: null } };
+
     const result = {
       ok: true,
       url: out.url,
@@ -102,6 +164,10 @@ async function main() {
         totalFrames: timeline.body?.totalFrames,
         videoTracks: timeline.body?.timeline?.tracks?.video?.length,
         audioTracks: timeline.body?.timeline?.tracks?.audio?.length,
+        // audioStreams/hasAudio surfaced on the audio clip; omitted on a color clip.
+        audioClipHasAudio: audioClip?.hasAudio,
+        audioClipStreams: audioClip?.audioStreams,
+        colorClipHasAudioKey: colorClip ? "hasAudio" in colorClip : null,
       },
       timelines: {
         status: timelines.status,
@@ -113,6 +179,27 @@ async function main() {
         ok: diagnostics.body?.ok,
         clean: diagnostics.body?.health?.clean,
       },
+      peaks: {
+        status: peaks.status,
+        ok: peaks.body?.ok,
+        bins: peaks.body?.bins,
+        pairCount: Array.isArray(peaks.body?.peaks) ? peaks.body.peaks.length : null,
+        sampleRate: peaks.body?.sampleRate,
+        forbiddenStatus: peaksForbidden.status,
+      },
+      transcript: {
+        status: transcript.status,
+        ok: transcript.body?.ok,
+        wordCount: Array.isArray(transcript.body?.words) ? transcript.body.words.length : null,
+        firstWord: transcript.body?.words?.[0]?.text,
+        hasStableIds: transcript.body?.words?.every?.(
+          (w: { id?: unknown }) => typeof w.id === "string" && w.id.length > 0,
+        ),
+        emptyWordCount: Array.isArray(transcriptEmpty.body?.words)
+          ? transcriptEmpty.body.words.length
+          : null,
+        emptyTranscriptNull: transcriptEmpty.body?.transcript === null,
+      },
       badEndpointStatus: bad.status,
       isolationHtml,
       isolationApi,
@@ -122,6 +209,8 @@ async function main() {
         authorizedStatus: authorizedMutation.status,
       },
     };
+    // Release the forbidden-peaks response body before teardown.
+    await peaksForbidden.arrayBuffer().catch(() => undefined);
     console.log(JSON.stringify(result));
   } finally {
     out._stop();

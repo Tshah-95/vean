@@ -18,7 +18,14 @@
 //   compositions`; remotion/react are DEDUPED there (a second copy breaks the Player's
 //   frame context — see vite.config.ts). The module → `{component, defaults}` mapping
 //   is the pure `./resolve` helper (unit-tested without the glob).
-import { type CompModule, idFromPath, pickComposition } from "./resolve";
+import {
+  type CompModule,
+  idFromPath,
+  pickComposition,
+  sceneDirFromPath,
+  sceneTakeIdFromPath,
+  takesFromSceneModule,
+} from "./resolve";
 
 /** A registered composition: the React component the `<Player>` mounts plus the
  *  default props it renders with when a graphic clip names this id but carries no
@@ -39,21 +46,54 @@ const workspaceModules = import.meta.glob<CompModule>("@remotion-comp/*.tsx", { 
 // shared dir. A project comp SHADOWS a workspace comp of the same id (registered LAST),
 // so a project can override a shared comp with its own.
 const projectModules = import.meta.glob<CompModule>("@project-comp/*.tsx", { eager: true });
+// PER-PROJECT scene TAKES: the nested takes convention (`compositions/<Scene>/<Take>.tsx`,
+// registered by the project's producer as `<Scene>-<Take>` — e.g. carlo-demo's
+// `S03ChatbotFail/B.tsx` → "S03ChatbotFail-B"). Discovered alongside the flat comps so
+// a timeline that binds a take previews the REAL take, not the fallback card.
+const projectTakeModules = import.meta.glob<CompModule>("@project-comp/*/*.tsx", {
+  eager: true,
+});
+// The AUTHORITATIVE per-scene take registry: each scene folder's `index.ts` exports
+// `VARIANTS: [{ id, label, component }]` — the same array the producer's Root.tsx
+// flatMaps into `<Composition id={`${scene}-${take.id}`}>`. Registered LAST so it wins
+// over the per-file heuristic (covering takes whose export name doesn't follow the
+// `<Scene><Take>` shape, e.g. S07CreditsOffer's S07TakeA/S07TakeB).
+const projectSceneIndexModules = import.meta.glob<CompModule>("@project-comp/*/index.ts", {
+  eager: true,
+});
 
 /** The id → composition map, discovered from the globs. Keys are the comp filenames
  *  (== the `<Composition id=…>` ids the producer stamps), so a clip authored against
  *  the producer resolves the same component in live preview — no drift, no dual list. */
 export const COMPOSITIONS: Record<string, RegisteredComposition> = {};
-for (const [path, mod] of [
-  ...Object.entries(workspaceModules),
-  ...Object.entries(projectModules),
-]) {
-  const id = idFromPath(path);
+const discovered: Array<[string | null, CompModule]> = [
+  ...Object.entries(workspaceModules).map(
+    ([path, mod]): [string | null, CompModule] => [idFromPath(path), mod],
+  ),
+  ...Object.entries(projectModules).map(
+    ([path, mod]): [string | null, CompModule] => [idFromPath(path), mod],
+  ),
+  ...Object.entries(projectTakeModules).map(
+    ([path, mod]): [string | null, CompModule] => [sceneTakeIdFromPath(path), mod],
+  ),
+];
+for (const [id, mod] of discovered) {
+  if (!id) continue;
   const picked = pickComposition(id, mod);
   if (picked) {
     COMPOSITIONS[id] = {
       component: picked.component as React.ComponentType<Record<string, unknown>>,
       defaults: picked.defaults,
+    };
+  }
+}
+for (const [path, mod] of Object.entries(projectSceneIndexModules)) {
+  const scene = sceneDirFromPath(path);
+  if (!scene) continue;
+  for (const take of takesFromSceneModule(mod)) {
+    COMPOSITIONS[`${scene}-${take.id}`] = {
+      component: take.component as React.ComponentType<Record<string, unknown>>,
+      defaults: {},
     };
   }
 }

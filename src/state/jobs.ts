@@ -133,6 +133,19 @@ export function listJobs(repo = process.cwd()): JobRecord[] {
   }
 }
 
+/** All jobs of one `kind`, newest-created last (the same order `listJobs` uses).
+ *  A focused read for consumers that only care about one job family (e.g. the
+ *  transcript-read query scanning `transcribe` jobs) — cheaper than `listJobs` +
+ *  a client-side filter, and it keeps the DB access in the state layer. */
+export function listJobsByKind(repo: string, kind: string): JobRecord[] {
+  const handle = openStateDb(repo);
+  try {
+    return handle.db.select().from(jobs).where(eq(jobs.kind, kind)).orderBy(jobs.createdAt).all();
+  } finally {
+    handle.sqlite.close();
+  }
+}
+
 export function getJob(repo: string, id: string): JobRecord | undefined {
   const handle = openStateDb(repo);
   try {

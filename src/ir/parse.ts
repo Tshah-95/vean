@@ -30,16 +30,22 @@ import { FADE_IN_SERVICE, FADE_OUT_SERVICE } from "./builder";
 import { isAnimated, normalizeAnimDecimals } from "./keyframes";
 import {
   type Clip,
+  type ClipLink,
   type Dissolve,
   type Filter,
   type Item,
+  LINK_PROP,
   type Profile,
   type PropertyValue,
   type Provenance,
+  STREAM_SELECTOR_PROP_NAMES,
+  type StreamSelectors,
   type Timeline,
   type Track,
   type Transition,
+  decodeClipLink,
   decodeProvenanceProps,
+  decodeStreamSelectorProps,
   isProvenanceProp,
   timelineSchema,
 } from "./types";
@@ -168,6 +174,17 @@ function propValue(raw: string): PropertyValue {
   return raw;
 }
 
+/** Read the typed A/V link off a playlist `<entry>` (the cut). vean writes it as a
+ *  single `vean:link` JSON `<property>` child; absent on an unlinked clip (the
+ *  common case), so this returns `undefined` and the round-trip stays byte-stable.
+ *  Validated by `decodeClipLink`, so a malformed link fails loudly like the rest
+ *  of the IR. */
+function readEntryLink(entry: Node): ClipLink | undefined {
+  const raw = readProperties(entry)[LINK_PROP];
+  if (raw == null || raw === "") return undefined;
+  return decodeClipLink(raw);
+}
+
 function readFilters(node: Node): Filter[] {
   const out: Filter[] = [];
   for (const f of childrenNamed(node, "filter")) {
@@ -213,6 +230,10 @@ type ResolvedProducer = {
   /** Origin metadata reconstructed from the `vean:provenance.*` producer
    *  properties (modeled structurally, kept out of `extraProps`). */
   provenance?: Provenance;
+  /** MLT stream selectors reconstructed from the `audio_index`/`video_index`/
+   *  `astream`/`vstream`/`shotcut:defaultAudioIndex` producer properties (modeled
+   *  structurally, kept out of `extraProps`). */
+  streams?: StreamSelectors;
 };
 
 /** Producer `<property>` names the serializer carries STRUCTURALLY (modeled by a
@@ -392,13 +413,29 @@ function resolveProducer(node: Node): ResolvedProducer {
   // structurally — see below for why they're then skipped from extraProps).
   const provenance = decodeProvenanceProps(props);
   if (provenance) out.provenance = provenance;
+  // Reconstruct MLT stream selectors (audio_index/video_index/astream/vstream +
+  // shotcut:defaultAudioIndex), modeled structurally onto Clip.streams and skipped
+  // from extraProps below (or they'd double-emit). Coerce the raw strings so the
+  // decoder sees numbers.
+  const selectorProps: Record<string, PropertyValue> = {};
+  for (const [k, v] of Object.entries(props)) {
+    if (STREAM_SELECTOR_PROP_NAMES.has(k)) selectorProps[k] = propValue(v);
+  }
+  const streams = decodeStreamSelectorProps(selectorProps);
+  if (streams) out.streams = streams;
   // Preserve every non-structural producer property (caption, eof, aspect_ratio,
   // proxy hints, …) in document order, so the round-trip is genuinely lossless.
-  // The `vean:provenance.*` properties are carried structurally above, so they're
-  // skipped here — otherwise they'd double-emit (extraProps + the structural field).
+  // The `vean:provenance.*` + stream-selector properties are carried structurally
+  // above, so they're skipped here — otherwise they'd double-emit (extraProps + the
+  // structural field).
   const extraProps: Record<string, PropertyValue> = {};
   for (const [k, v] of Object.entries(props)) {
-    if (STRUCTURAL_PRODUCER_PROPS.has(k) || isProvenanceProp(k)) continue;
+    if (
+      STRUCTURAL_PRODUCER_PROPS.has(k) ||
+      isProvenanceProp(k) ||
+      STREAM_SELECTOR_PROP_NAMES.has(k)
+    )
+      continue;
     extraProps[k] = propValue(v);
   }
   if (Object.keys(extraProps).length > 0) out.extraProps = extraProps;
@@ -493,6 +530,7 @@ function buildClip(
   if (prod.extraProps != null) clip.extraProps = prod.extraProps;
   if (prod.composition != null) clip.composition = prod.composition;
   if (prod.provenance != null) clip.provenance = prod.provenance;
+  if (prod.streams != null) clip.streams = prod.streams;
   // A color producer's authored window is always 0-based; its `length` is the
   // played count (the serializer regenerates it). Keep an explicit `length` when
   // present and meaningful (it's required for color in the IR? — optional there,
@@ -736,6 +774,11 @@ function walkPlaylist(
     const ref = attr(child, "producer") ?? "";
     const inn = toFrames(attr(child, "in") ?? "0", fps);
     const out = toFrames(attr(child, "out") ?? "0", fps);
+    // The typed A/V link rides on the ENTRY (the cut) as a `vean:link` JSON
+    // property — read it once here so it lands on whichever clip this entry
+    // resolves to (plain producer or fade wrapper). A dissolve entry references a
+    // nested tractor, not a single clip, so a link there is intentionally ignored.
+    const link = readEntryLink(child);
 
     // (a) Entry → a nested tractor? Could be a dissolve OR a fade wrapper.
     const nested = tractors.get(ref);
@@ -754,10 +797,9 @@ function walkPlaylist(
       if (wrap) {
         const prod = producers.get(wrap.producer);
         if (prod) {
-          work.push({
-            t: "clip",
-            clip: buildClip(prod, wrap.in, wrap.out, wrap.filters),
-          });
+          const clip = buildClip(prod, wrap.in, wrap.out, wrap.filters);
+          if (link) clip.link = link;
+          work.push({ t: "clip", clip });
           continue;
         }
       }
@@ -768,7 +810,9 @@ function walkPlaylist(
     // (b) Entry → a plain producer.
     const prod = producers.get(ref);
     if (!prod) continue; // dangling ref — drop (the validator would reject it)
-    work.push({ t: "clip", clip: buildClip(prod, inn, out) });
+    const clip = buildClip(prod, inn, out);
+    if (link) clip.link = link;
+    work.push({ t: "clip", clip });
   }
 
   // Second pass: resolve dissolves by stitching the tail onto the preceding clip

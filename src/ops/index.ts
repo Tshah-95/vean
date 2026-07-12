@@ -25,7 +25,23 @@ import { addFilter, removeFilter, samplesAddFilter, samplesRemoveFilter } from "
 import { gain, samples as gainSamples, setGain, setGainArgs } from "./gain";
 import { insert, samples as insertSamples, uninsert, uninsertArgs } from "./insert";
 import { lift, samples as liftSamples, unlift, unliftArgs } from "./lift";
-import { move, samples as moveSamples, spanTransition, spanTransitionArgs } from "./move";
+import {
+  detachAudio,
+  linkClips,
+  reattachAudio,
+  reattachAudioInternal,
+  reattachAudioInternalArgs,
+  redetachAudio,
+  redetachAudioArgs,
+  restoreLinks,
+  restoreLinksArgs,
+  samplesDetachAudio,
+  samplesLinkClips,
+  samplesReattachAudio,
+  samplesUnlinkClips,
+  unlinkClips,
+} from "./link";
+import { move, moveOne, samples as moveSamples, spanTransition, spanTransitionArgs } from "./move";
 import {
   overwrite,
   samples as overwriteSamples,
@@ -75,21 +91,25 @@ import {
   addFilterArgs,
   addTrackArgs,
   appendArgs,
+  detachAudioArgs,
   dissolveArgs,
   fadeArgs,
   gainArgs,
   insertArgs,
   isEditError,
   liftArgs,
+  linkClipsArgs,
   moveArgs,
   noConsequences,
   overwriteArgs,
+  reattachAudioArgs,
   removeArgs,
   removeFilterArgs,
   removeTrackArgs,
   replaceArgs,
   splitArgs,
   trimArgs,
+  unlinkClipsArgs,
 } from "./types";
 
 // ─── The registry ────────────────────────────────────────────────────────────
@@ -184,6 +204,12 @@ export const REGISTRY: Record<string, OpEntry<unknown>> = {
   removeTrack: reg(removeTrack, removeTrackArgs),
   pushTransition: reg(pushTransition, pushTransitionArgs),
   popTransition: reg(popTransition, popTransitionArgs),
+  // A/V split (the detachAudio family) — split an A/V clip into a video-only +
+  // audio-only pair joined by a typed link, and the link primitives.
+  detachAudio: reg(detachAudio, detachAudioArgs),
+  reattachAudio: reg(reattachAudio, reattachAudioArgs),
+  linkClips: reg(linkClips, linkClipsArgs),
+  unlinkClips: reg(unlinkClips, unlinkClipsArgs),
   // Word-level cut (transcript-driven; targets are stable-id-resolved frame
   // ranges, never indices). Internal inverse `_restoreWords` below.
   removeWords: reg(removeWords, removeWordsArgs),
@@ -205,6 +231,14 @@ export const REGISTRY: Record<string, OpEntry<unknown>> = {
   _popTransition: reg(popTransition, popTransitionArgs),
   _restoreTransitions: reg(restoreTransitions, restoreTransitionsArgs),
   _restoreWords: reg(restoreWords, restoreWordsArgs),
+  // A/V-split inverses: detachAudio↔_reattachAudio, reattachAudio↔_redetachAudio,
+  // link/unlink↔_restoreLinks.
+  _reattachAudio: reg(reattachAudioInternal, reattachAudioInternalArgs),
+  _redetachAudio: reg(redetachAudio, redetachAudioArgs),
+  _restoreLinks: reg(restoreLinks, restoreLinksArgs),
+  // The link-UNAWARE single-clip move core: the link-aware public `move` drives
+  // partner sub-moves through this so a partner never re-expands its own link.
+  _moveOne: reg(moveOne, moveArgs),
 };
 
 /** The set of PUBLIC op names (excludes the `_`-prefixed internal restore ops) —
@@ -263,6 +297,10 @@ export const SAMPLES: Record<string, OpSample[]> = {
   removeTrack: samplesRemoveTrack as OpSample[],
   pushTransition: samplesPushTransition as OpSample[],
   popTransition: samplesPopTransition as OpSample[],
+  detachAudio: samplesDetachAudio as OpSample[],
+  reattachAudio: samplesReattachAudio as OpSample[],
+  linkClips: samplesLinkClips as OpSample[],
+  unlinkClips: samplesUnlinkClips as OpSample[],
   removeWords: removeWordsSamples as OpSample[],
 };
 
@@ -293,6 +331,10 @@ export {
   removeTrack,
   pushTransition,
   popTransition,
+  detachAudio,
+  reattachAudio,
+  linkClips,
+  unlinkClips,
   removeWords,
 };
 export { isEditError };

@@ -1,3 +1,6 @@
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 // Sessions / worktree panel — the agent-session + git-worktree exploration surface
 // (DESIGN-WORKTREE §4.5 / roadmap T10, T9-UI). Because vean's entire edit state is
 // text and every worktree is just another checkout of the same project documents,
@@ -22,24 +25,14 @@ import {
   renderStill,
 } from "../../api";
 import { type TimelineDiff, diffTimelines } from "../timelineDiff";
-import { Btn, C, Note, PanelHead, mono } from "./ui";
+import { Note, PanelHead } from "./ui";
 
 /** A row in the "label: value" identity block. */
-function Field({ k, v, mono: monoVal }: { k: string; v: string; mono?: boolean }) {
+function Field({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
   return (
-    <div style={{ display: "flex", gap: 8, fontSize: 11, padding: "2px 0" }}>
-      <span style={{ color: C.muted, flexShrink: 0, width: 78 }}>{k}</span>
-      <span
-        style={{
-          color: C.text,
-          fontFamily: monoVal ? mono : undefined,
-          wordBreak: "break-all",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-        }}
-      >
-        {v}
-      </span>
+    <div className="flex gap-2 py-0.5 text-[11px]">
+      <span className="w-[78px] shrink-0 text-muted-foreground">{k}</span>
+      <span className={cn("truncate break-all text-foreground", mono && "font-mono")}>{v}</span>
     </div>
   );
 }
@@ -106,79 +99,54 @@ function CompareCard({
     }
   }, [baseRoute, otherRoute, getFrame]);
 
-  const art = {
-    width: "100%",
-    borderRadius: 4,
-    border: `1px solid ${C.border}`,
-    display: "block",
-  } as const;
+  const deltaClass = (kind: string) =>
+    kind === "added" ? "text-track-audio" : kind === "removed" ? "text-red" : "text-primary";
 
   return (
-    <div style={{ border: `1px solid ${C.border}`, borderRadius: 6, padding: 8, marginBottom: 10 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-        <span style={{ fontSize: 12, fontWeight: 600, color: C.text, flex: 1, minWidth: 0 }}>
-          {other.title}
-        </span>
-        <Btn
+    <div className="mb-2.5 rounded-md border border-border p-2">
+      <div className="mb-1.5 flex items-center gap-2">
+        <span className="min-w-0 flex-1 text-xs font-medium text-foreground">{other.title}</span>
+        <Button
+          size="sm"
+          variant="outline"
           onClick={() => void doDiff()}
           disabled={busy !== null}
           title="Structural diff vs the loaded session"
         >
           {busy === "diff" ? "Diffing…" : "Diff"}
-        </Btn>
-        <Btn
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
           onClick={() => void doStill()}
           disabled={busy !== null}
           title="Render a still at the playhead on both"
         >
           {busy === "still" ? "Rendering…" : "Still"}
-        </Btn>
+        </Button>
       </div>
-      <div
-        style={{
-          fontSize: 10,
-          color: C.dim,
-          fontFamily: mono,
-          wordBreak: "break-all",
-          marginBottom: 6,
-        }}
-      >
-        {other.rootPath}
-      </div>
+      <div className="mb-1.5 break-all font-mono text-[10px] text-fg-3">{other.rootPath}</div>
       {err && <Note kind="error">{err}</Note>}
 
       {diff && (
-        <div style={{ marginBottom: stills ? 10 : 0 }}>
+        <div className={stills ? "mb-2.5" : undefined}>
           {diff.identical ? (
             <Note kind="dim">No structural difference from {baseTitle}.</Note>
           ) : (
             <>
-              <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>
+              <div className="mb-1 text-[11px] text-muted-foreground">
                 Δ duration {diff.durationDelta >= 0 ? "+" : ""}
                 {diff.durationDelta}f · Δ clips {diff.clipDelta >= 0 ? "+" : ""}
                 {diff.clipDelta}
               </div>
               {diff.clips.slice(0, 20).map((c) => (
-                <div key={c.id} style={{ display: "flex", gap: 6, fontSize: 10, padding: "1px 0" }}>
-                  <span
-                    style={{
-                      color:
-                        c.kind === "added" ? "#7fd18f" : c.kind === "removed" ? C.danger : C.accent,
-                      width: 52,
-                      flexShrink: 0,
-                    }}
-                  >
-                    {c.kind}
-                  </span>
-                  <span style={{ color: C.muted, fontFamily: mono, wordBreak: "break-word" }}>
-                    {c.detail}
-                  </span>
+                <div key={c.id} className="flex gap-1.5 py-px text-[10px]">
+                  <span className={cn("w-[52px] shrink-0", deltaClass(c.kind))}>{c.kind}</span>
+                  <span className="break-words font-mono text-muted-foreground">{c.detail}</span>
                 </div>
               ))}
               {diff.clips.length > 20 && (
-                <div style={{ fontSize: 10, color: C.dim, marginTop: 2 }}>
-                  +{diff.clips.length - 20} more…
-                </div>
+                <div className="mt-0.5 text-[10px] text-fg-3">+{diff.clips.length - 20} more…</div>
               )}
             </>
           )}
@@ -186,14 +154,22 @@ function CompareCard({
       )}
 
       {stills && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+        <div className="grid grid-cols-2 gap-1.5">
           <div>
-            <div style={{ fontSize: 10, color: C.dim, marginBottom: 3 }}>{baseTitle} (this)</div>
-            <img src={stills.base} alt={`${baseTitle} still`} style={art} />
+            <div className="mb-0.5 text-[10px] text-fg-3">{baseTitle} (this)</div>
+            <img
+              src={stills.base}
+              alt={`${baseTitle} still`}
+              className="block w-full rounded border border-border"
+            />
           </div>
           <div>
-            <div style={{ fontSize: 10, color: C.dim, marginBottom: 3 }}>{other.title}</div>
-            <img src={stills.other} alt={`${other.title} still`} style={art} />
+            <div className="mb-0.5 text-[10px] text-fg-3">{other.title}</div>
+            <img
+              src={stills.other}
+              alt={`${other.title} still`}
+              className="block w-full rounded border border-border"
+            />
           </div>
         </div>
       )}
@@ -239,37 +215,22 @@ export function SessionsPanel({
   const others = sessions.filter((s) => s.rootPath !== me?.worktreePath);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+    <div className="flex h-full flex-col">
       <PanelHead title="Sessions">
-        <Btn onClick={() => void load()}>Refresh</Btn>
+        <Button size="sm" variant="outline" onClick={() => void load()}>
+          Refresh
+        </Button>
       </PanelHead>
       {err && <Note kind="error">{err}</Note>}
-      <div style={{ flex: 1, overflow: "auto", padding: 10 }}>
+      <div className="flex-1 overflow-auto p-2.5">
         {/* This worktree's identity — the "which version am I?" block. */}
         {me ? (
-          <div
-            style={{
-              border: `1px solid ${C.border}`,
-              borderRadius: 6,
-              padding: "8px 10px",
-              marginBottom: 12,
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-              <span style={{ fontSize: 12, fontWeight: 650, color: C.accent, fontFamily: mono }}>
-                {me.slug}
-              </span>
-              <span
-                style={{
-                  fontSize: 10,
-                  color: me.isPrimary ? "#7fd18f" : C.muted,
-                  border: `1px solid ${C.border}`,
-                  borderRadius: 4,
-                  padding: "1px 5px",
-                }}
-              >
+          <div className="mb-3 rounded-md border border-border px-2.5 py-2">
+            <div className="mb-1 flex items-center gap-2">
+              <span className="font-mono text-xs font-medium text-primary">{me.slug}</span>
+              <Badge tone={me.isPrimary ? "ok" : "neutral"}>
                 {me.isPrimary ? "primary" : "worktree"}
-              </span>
+              </Badge>
             </div>
             <Field k="branch" v={me.branch ?? "(detached)"} mono />
             <Field k="path" v={me.worktreePath} mono />
@@ -289,7 +250,7 @@ export function SessionsPanel({
           <Note kind="dim">Worktree identity unavailable.</Note>
         )}
 
-        <div style={{ fontSize: 11, fontWeight: 650, color: C.muted, margin: "4px 0 8px" }}>
+        <div className="mb-2 mt-1 text-[11px] font-medium text-muted-foreground">
           Other sessions · {others.length}
         </div>
         {others.length === 0 && (
@@ -298,8 +259,10 @@ export function SessionsPanel({
         {others.map((s) =>
           openId === s.id ? (
             <div key={s.id}>
-              <Btn onClick={() => setOpenId(null)}>‹ Close {s.title}</Btn>
-              <div style={{ height: 8 }} />
+              <Button size="sm" variant="outline" onClick={() => setOpenId(null)}>
+                ‹ Close {s.title}
+              </Button>
+              <div className="h-2" />
               <CompareCard
                 other={s}
                 baseRoute={route}
@@ -310,48 +273,21 @@ export function SessionsPanel({
           ) : (
             <div
               key={s.id}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "6px 8px",
-                marginBottom: 6,
-                border: `1px solid ${C.border}`,
-                borderRadius: 6,
-              }}
+              className="mb-1.5 flex items-center gap-2 rounded-md border border-border px-2 py-1.5"
             >
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div
-                  style={{
-                    fontSize: 12,
-                    color: C.text,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {s.title}
-                </div>
-                <div
-                  style={{
-                    fontSize: 10,
-                    color: C.dim,
-                    fontFamily: mono,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {s.rootPath}
-                </div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-xs text-foreground">{s.title}</div>
+                <div className="truncate font-mono text-[10px] text-fg-3">{s.rootPath}</div>
               </div>
-              <Btn
+              <Button
+                size="sm"
+                variant="outline"
                 onClick={() => setOpenId(s.id)}
                 disabled={!s.timelinePath}
                 title={s.timelinePath ? "Diff + still vs this session" : "no timeline:main"}
               >
                 Compare
-              </Btn>
+              </Button>
             </div>
           ),
         )}

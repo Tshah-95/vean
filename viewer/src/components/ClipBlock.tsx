@@ -8,6 +8,8 @@
 // stay inert (no selection, no gesture).
 import type { Diagnostic, PlacedItem } from "../types";
 import { isGraphicClip, isRemotionOverlay } from "../types";
+import { TranscriptPeek } from "./TranscriptPeek";
+import { Waveform } from "./Waveform";
 
 export interface ClipBlockProps {
   placed: PlacedItem;
@@ -38,6 +40,8 @@ export interface ClipBlockProps {
   onFocus?: () => void;
   onKeyDown?: (event: React.KeyboardEvent<HTMLDivElement>) => void;
   onKeyUp?: (event: React.KeyboardEvent<HTMLDivElement>) => void;
+  /** Active timeline route — scopes the /api/peaks fetch for the audio waveform. */
+  route?: string;
 }
 
 function basename(resource: string): string {
@@ -65,6 +69,7 @@ export function ClipBlock({
   onFocus,
   onKeyDown,
   onKeyUp,
+  route,
 }: ClipBlockProps) {
   const { item, start, length } = placed;
   const left = start * pxPerFrame;
@@ -86,7 +91,7 @@ export function ClipBlock({
           bottom: 0,
           // Gaps read as empty space (a faint hatch).
           background:
-            "repeating-linear-gradient(45deg, transparent, transparent 5px, #14171f 5px, #14171f 6px)",
+            "repeating-linear-gradient(45deg, transparent, transparent 5px, var(--vean-border-faint) 5px, var(--vean-border-faint) 6px)",
           pointerEvents: "none",
         }}
         title={`blank · ${length}f`}
@@ -108,7 +113,8 @@ export function ClipBlock({
           width,
           top: 0,
           bottom: 0,
-          background: "linear-gradient(90deg, #2a2e3a, #c7ae7a55, #2a2e3a)",
+          background:
+            "linear-gradient(90deg, var(--vean-bg-hover), color-mix(in srgb, var(--vean-gold) 33%, transparent), var(--vean-bg-hover))",
           borderRadius: 3,
           pointerEvents: "none",
         }}
@@ -121,12 +127,16 @@ export function ClipBlock({
   // the strip (purple gradient + ◆ marker), even though it composites as footage.
   const graphic = isGraphicClip(item) || isRemotionOverlay(item);
   const bg = graphic
-    ? "linear-gradient(180deg, #3a2f5e, #2c244a)"
+    ? "var(--vean-clip-graphic-fill)"
     : kind === "audio"
-      ? "linear-gradient(180deg, #1f3a34, #173029)"
-      : "linear-gradient(180deg, #233042, #1a2533)";
-  const baseBorder = graphic ? "#7a6bd0" : kind === "audio" ? "#2f6b5c" : "#345070";
-  const border = selected ? "#c7ae7a" : baseBorder;
+      ? "var(--vean-clip-audio-fill)"
+      : "var(--vean-clip-video-fill)";
+  const baseBorder = graphic
+    ? "var(--vean-clip-graphic-edge)"
+    : kind === "audio"
+      ? "var(--vean-clip-audio-edge)"
+      : "var(--vean-clip-video-edge)";
+  const border = selected ? "var(--vean-gold)" : baseBorder;
 
   const errs = diagnostics?.filter((d) => d.severity === "error") ?? [];
   const warns = diagnostics?.filter((d) => d.severity === "warning") ?? [];
@@ -167,17 +177,19 @@ export function ClipBlock({
         bottom: 2,
         // A ghost is a translucent shell: a see-through fill + a dashed accent border
         // so the target content shows through and the "this is a preview" reads.
-        background: ghost ? "rgba(199,174,122,0.14)" : bg,
-        border: ghost ? "1.5px dashed #c7ae7a" : `1px solid ${border}`,
+        background: ghost ? "color-mix(in srgb, var(--vean-gold) 14%, transparent)" : bg,
+        border: ghost ? "1.5px dashed var(--vean-gold)" : `1px solid ${border}`,
         boxShadow:
-          !ghost && selected ? "0 0 0 1px #c7ae7a, 0 0 8px rgba(199,174,122,0.35)" : "none",
+          !ghost && selected
+            ? "0 0 0 1px var(--vean-gold), 0 0 8px color-mix(in srgb, var(--vean-gold) 35%, transparent)"
+            : "none",
         borderRadius: 4,
         overflow: "visible",
         display: "flex",
         alignItems: "center",
         paddingLeft: 6,
         fontSize: 11,
-        color: ghost ? "#e6d6b0" : "#cfd3dc",
+        color: ghost ? "var(--vean-gold-bright)" : "var(--vean-fg-1)",
         whiteSpace: "nowrap",
         opacity: dragging ? 0.4 : 1,
         // The moving shell floats above the static rows (and their collision tints).
@@ -188,8 +200,31 @@ export function ClipBlock({
       }}
       title={`${item.composition ? `${item.composition.id} · comp` : (item.label ?? basename(item.resource))} · ${length}f · src[${item.in}-${item.out}]`}
     >
+      {kind === "audio" && !ghost ? <Waveform clipId={item.id} route={route} /> : null}
+      {/* Embedded (linked) audio on a video clip: a thin waveform strip at the clip's
+          foot so you can SEE the mp4 carries audio (Detach promotes it to its own track). */}
+      {!ghost && kind === "video" && item.hasAudio ? (
+        <div
+          title="this clip carries embedded audio — Detach audio to edit it on its own track"
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: 12,
+            opacity: 0.55,
+            pointerEvents: "none",
+          }}
+        >
+          <Waveform clipId={item.id} route={route} color="var(--vean-track-audio)" />
+        </div>
+      ) : null}
+      {!ghost && (kind === "audio" || item.hasAudio) ? (
+        <TranscriptPeek clipId={item.id} route={route} />
+      ) : null}
       <span
         style={{
+          position: "relative",
           overflow: "hidden",
           textOverflow: "ellipsis",
           // leave room for the edge brackets so the label never sits under them
@@ -233,8 +268,8 @@ export function ClipBlock({
             width: 15,
             height: 15,
             borderRadius: "50%",
-            background: badge === "error" ? "#e2574c" : "#e2c275",
-            color: "#1a1206",
+            background: badge === "error" ? "var(--vean-red)" : "var(--vean-amber)",
+            color: "var(--vean-bg-inset)",
             fontSize: 10,
             fontWeight: 700,
             lineHeight: "15px",
@@ -256,9 +291,9 @@ export function ClipBlock({
             top: -20,
             left: "50%",
             transform: "translateX(-50%)",
-            background: "#0b0c0f",
-            border: "1px solid #c7ae7a",
-            color: "#e6d6b0",
+            background: "var(--vean-bg)",
+            border: "1px solid var(--vean-gold)",
+            color: "var(--vean-gold-bright)",
             fontFamily: "ui-monospace, monospace",
             fontSize: 10,
             padding: "2px 6px",
@@ -294,7 +329,7 @@ function MediaLimit({ side }: { side: "left" | "right" }) {
         [side]: 1,
         width: 7,
         height: 7,
-        background: "rgba(232,234,242,0.6)",
+        background: "color-mix(in srgb, var(--vean-fg-1) 60%, transparent)",
         // A right triangle hugging this corner (top + this-side edges).
         clipPath:
           side === "left" ? "polygon(0 0, 100% 0, 0 100%)" : "polygon(0 0, 100% 0, 100% 100%)",
@@ -315,7 +350,7 @@ function EdgeBracket({ side }: { side: "left" | "right" }) {
         bottom: 0,
         [side]: 0,
         width: 5,
-        background: "#c7ae7a",
+        background: "var(--vean-gold)",
         opacity: 0.85,
         borderTopLeftRadius: side === "left" ? 3 : 0,
         borderBottomLeftRadius: side === "left" ? 3 : 0,

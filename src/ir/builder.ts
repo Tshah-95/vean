@@ -13,11 +13,13 @@
 import type {
   Blank,
   Clip,
+  ClipLink,
   Dissolve,
   Filter,
   Item,
   Profile,
   Provenance,
+  StreamSelectors,
   Timeline,
   Track,
   Tracks,
@@ -105,6 +107,12 @@ type ClipOpts = {
   /** Optional origin metadata (import / generative / capture / remotion),
    *  round-tripped as `vean:provenance.*` producer properties. */
   provenance?: Provenance;
+  /** Optional MLT stream selectors — the video-only/audio-only decode config of an
+   *  A/V split (`astream=-1` / `vstream=-1`, …). Round-tripped as producer props. */
+  streams?: StreamSelectors;
+  /** Optional typed A/V link (`{ id, role, partnerIds }`) — two clips are linked
+   *  iff they share `link.id`. Round-tripped as a `vean:link` entry property. */
+  link?: ClipLink;
 };
 
 // Fades are stored as a marker filter the serializer resolves into the proven
@@ -146,6 +154,8 @@ function baseClip(
     label: opts.label,
     composition: opts.composition,
     provenance: opts.provenance,
+    streams: opts.streams,
+    link: opts.link,
   };
 }
 

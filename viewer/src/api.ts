@@ -4,10 +4,12 @@
 import type {
   ApiError,
   OpInvocation,
+  PeaksResponse,
   ProxyResponse,
   SaveResult,
   SessionEditResult,
   TimelineResponse,
+  TranscriptResponse,
 } from "./types";
 
 export class ViewerApiError extends Error {
@@ -88,6 +90,43 @@ export function mediaUrl(path: string, route?: string): string {
   const qs = new URLSearchParams({ path });
   if (route) qs.set("route", route);
   return `/api/media?${qs.toString()}`;
+}
+
+/** Fetch the downsampled audio waveform ([min,max] peak pairs) for a SOURCE clip —
+ *  addressed either by stable `clipId` (the robust address; the server resolves the
+ *  clip's real source path even for a root-relative resource) or by absolute `path`
+ *  (validated against the route's referenced-resource allowlist). `bins` is the
+ *  target bucket count (size it to the clip's on-screen width). A source with no
+ *  audio returns `{ bins:0, peaks:[] }` — the waveform lane renders nothing.
+ *  Extracted once server-side with ffmpeg and cached, so repeat calls for an
+ *  unchanged file are cheap. */
+export async function fetchPeaks(
+  target: { clipId: string } | { path: string },
+  route?: string,
+  bins?: number,
+): Promise<PeaksResponse> {
+  const qs = new URLSearchParams();
+  if ("clipId" in target) qs.set("clipId", target.clipId);
+  else qs.set("path", target.path);
+  if (route) qs.set("route", route);
+  if (bins != null) qs.set("bins", String(bins));
+  return getJson(`/api/peaks?${qs.toString()}`);
+}
+
+/** Fetch the frame-exact transcript for a clip's SOURCE — addressed either by
+ *  stable `clipId` (looked up in the live timeline) or by absolute `path`. Returns
+ *  `{ words, transcript }`; when the source was never transcribed the server returns
+ *  the never-faked empty case (`words: []`, `transcript: null`) so the peek renders
+ *  nothing rather than fabricating text. */
+export async function fetchTranscript(
+  target: { clipId: string } | { path: string },
+  route?: string,
+): Promise<TranscriptResponse> {
+  const qs = new URLSearchParams();
+  if ("clipId" in target) qs.set("clipId", target.clipId);
+  else qs.set("path", target.path);
+  if (route) qs.set("route", route);
+  return getJson(`/api/transcript?${qs.toString()}`);
 }
 
 export async function renderProxy(
