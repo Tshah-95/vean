@@ -35,9 +35,10 @@ describe("H03 real-browser component harness contract", () => {
     expect(config).toContain('browser: "chromium"');
     expect(config).toContain('mode: "retain-on-failure"');
     expect(config).toContain("screenshotFailures: true");
+    expect(read("vitest.config.ts")).toContain('"viewer/test/**"');
   });
 
-  it("binds all eight scenarios to the immutable approved product contract", () => {
+  it("binds all preflight scenarios to the immutable approved product contract", () => {
     const ledger = JSON.parse(read("artifacts/specs/harness-scenarios/component.json"));
     expect(ledger.interaction_contract).toEqual({
       version: "timeline-a11y-v1",
@@ -45,7 +46,7 @@ describe("H03 real-browser component harness contract", () => {
       sha256: "90e92872cc4df0dc12705ee560d2e2e5e3a916210c2a2eebb73e2cbd15c9a6d1",
     });
     expect(hash(ledger.interaction_contract.path)).toBe(ledger.interaction_contract.sha256);
-    expect(new Set(ledger.scenarios.map((scenario: { id: string }) => scenario.id)).size).toBe(8);
+    expect(new Set(ledger.scenarios.map((scenario: { id: string }) => scenario.id)).size).toBe(23);
   });
 
   it.each(["nc-react-components", "nc-dom-accessibility"] as const)(

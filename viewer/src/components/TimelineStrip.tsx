@@ -360,7 +360,8 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
       author: transaction.author,
     });
     if (!response) {
-      setAnnouncement(editorRef.current.lastError ?? "Timeline edit failed");
+      const error = editorRef.current.lastError;
+      setAnnouncement(error ? `${error.kind}: ${error.detail}` : "Timeline edit failed");
       return false;
     }
     transaction.expectedRevision = response.revision;
@@ -572,7 +573,7 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
   );
 
   useEffect(() => {
-    if (editor.lastError) setAnnouncement(editor.lastError);
+    if (editor.lastError) setAnnouncement(`${editor.lastError.kind}: ${editor.lastError.detail}`);
   }, [editor.lastError]);
   useEffect(() => {
     if (editor.justSaved) setAnnouncement("Saved; timeline is clean");
@@ -900,9 +901,11 @@ export function TimelineStrip({ editor }: TimelineStripProps) {
         {editor.lastError ? (
           <span
             style={{ color: "#e08585", fontFamily: "ui-monospace, monospace", fontSize: 10 }}
-            title={editor.lastError}
+            title={`${editor.lastError.kind}: ${editor.lastError.detail}`}
           >
-            {editor.lastError.length > 36 ? `${editor.lastError.slice(0, 33)}…` : editor.lastError}
+            {`${editor.lastError.kind}: ${editor.lastError.detail}`.length > 36
+              ? `${`${editor.lastError.kind}: ${editor.lastError.detail}`.slice(0, 33)}…`
+              : `${editor.lastError.kind}: ${editor.lastError.detail}`}
           </span>
         ) : null}
 

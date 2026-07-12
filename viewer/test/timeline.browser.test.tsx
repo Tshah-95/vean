@@ -1,9 +1,9 @@
 import axe from "axe-core";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { describe, expect, test, vi } from "vitest";
 import { cleanup } from "vitest-browser-react";
 import { page, userEvent } from "vitest/browser";
-import { ClockProvider } from "../src/ClockProvider";
+import { ClockProvider, useClockInstance } from "../src/ClockProvider";
 import { PreviewProvider } from "../src/PreviewProvider";
 import type { EditAuthorOpts } from "../src/api";
 import { TimelineStrip } from "../src/components/TimelineStrip";
@@ -185,6 +185,7 @@ function Harness({ calls, forceConflict = false }: { calls: Call[]; forceConflic
 
   return (
     <ClockProvider>
+      <TimelineClockConfiguration />
       <PreviewProvider>
         <TimelineStrip editor={editor} />
       </PreviewProvider>
@@ -192,12 +193,18 @@ function Harness({ calls, forceConflict = false }: { calls: Call[]; forceConflic
   );
 }
 
+function TimelineClockConfiguration() {
+  const clock = useClockInstance();
+  useEffect(() => clock.configure([30, 1], 60), [clock]);
+  return null;
+}
+
 async function renderHarness(calls: Call[], forceConflict = false) {
   return page.render(<Harness calls={calls} forceConflict={forceConflict} />);
 }
 
 describe("approved timeline-a11y-v1 contract", () => {
-  test("component-semantic-listbox-roving-selection", async () => {
+  test("a11y.timeline.structure", async () => {
     const calls: Call[] = [];
     await renderHarness(calls);
     await expect.element(page.getByRole("region", { name: "Timeline editor" })).toBeVisible();
@@ -216,7 +223,76 @@ describe("approved timeline-a11y-v1 contract", () => {
     expect(calls).toEqual([]);
   });
 
-  test("component-keyboard-target-step-action-parity", async () => {
+  test("a11y.timeline.roving-selection", async () => {
+    await renderHarness([]);
+    const options = [...document.querySelectorAll<HTMLElement>('[role="option"]')].filter(
+      (option) => option.getAttribute("aria-disabled") !== "true",
+    );
+    expect(options.filter((option) => option.tabIndex === 0)).toHaveLength(1);
+    const beta = page.getByRole("option", { name: /Beta, Video track V1/ });
+    beta.element().focus();
+    await expect.element(beta).toHaveAttribute("aria-selected", "true");
+    expect(
+      options.filter((option) => option.tabIndex === 0).map((option) => option.dataset.clipId),
+    ).toEqual(["clip-b"]);
+  });
+
+  test("a11y.timeline.browse-horizontal", async () => {
+    await renderHarness([]);
+    const alpha = page.getByRole("option", { name: /Alpha, Video track V1/ });
+    alpha.element().focus();
+    await userEvent.keyboard("{ArrowRight}");
+    await expect.element(page.getByRole("option", { name: /Beta, Video track V1/ })).toHaveFocus();
+    await userEvent.keyboard("{ArrowLeft}");
+    await expect.element(alpha).toHaveFocus();
+  });
+
+  test("a11y.timeline.browse-home-end", async () => {
+    await renderHarness([]);
+    const alpha = page.getByRole("option", { name: /Alpha, Video track V1/ });
+    alpha.element().focus();
+    await userEvent.keyboard("{End}");
+    await expect.element(page.getByRole("option", { name: /Beta, Video track V1/ })).toHaveFocus();
+    await userEvent.keyboard("{Control>}{End}{/Control}");
+    await expect
+      .element(page.getByRole("option", { name: /Dialogue, Audio track A1/ }))
+      .toHaveFocus();
+    await userEvent.keyboard("{Control>}{Home}{/Control}");
+    await expect.element(alpha).toHaveFocus();
+  });
+
+  test("a11y.timeline.global-shortcuts", async () => {
+    const calls: Call[] = [];
+    await renderHarness(calls);
+    const alpha = page.getByRole("option", { name: /Alpha, Video track V1/ });
+    alpha.element().focus();
+    await userEvent.keyboard("n");
+    await expect
+      .element(page.getByRole("button", { name: "Toggle snapping" }))
+      .toHaveAttribute("aria-pressed", "false");
+    await userEvent.keyboard(" ");
+    await expect.element(page.getByRole("status")).toHaveTextContent("Playing");
+    await userEvent.keyboard("b");
+    await vi.waitFor(() => expect(calls.at(-1)?.invocation?.op).toBe("split"));
+  });
+
+  test("a11y.timeline.edit-target-cycle", async () => {
+    await renderHarness([]);
+    const alpha = page.getByRole("option", { name: /Alpha, Video track V1/ });
+    alpha.element().focus();
+    await userEvent.keyboard("{Enter}");
+    await expect.element(alpha).toHaveAttribute("data-edit-target", "body");
+    await userEvent.keyboard("{Tab}");
+    await expect.element(alpha).toHaveAttribute("data-edit-target", "head");
+    await userEvent.keyboard("{Tab}");
+    await expect.element(alpha).toHaveAttribute("data-edit-target", "tail");
+    await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
+    await expect.element(alpha).toHaveAttribute("data-edit-target", "head");
+    await userEvent.keyboard("{Enter}");
+    await expect.element(alpha).toHaveAttribute("data-edit-mode", "false");
+  });
+
+  test("a11y.timeline.document-truth", async () => {
     const calls: Call[] = [];
     await renderHarness(calls);
     const alpha = page.getByRole("option", { name: /Alpha, Video track V1/ });
@@ -237,7 +313,7 @@ describe("approved timeline-a11y-v1 contract", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        scenarioId: "component-pointer-keyboard-action-parity",
+        scenarioId: "a11y.timeline.document-truth",
         invocation: calls[0]?.invocation,
         actionId: calls[0]?.invocation?.op,
         route: "timeline:fixture",
@@ -256,7 +332,7 @@ describe("approved timeline-a11y-v1 contract", () => {
     expect(calls.every((call) => call.opts?.author === "human")).toBe(true);
   });
 
-  test("component-repeat-burst-coalescing", async () => {
+  test("a11y.timeline.commit-cancel-coalesce", async () => {
     const calls: Call[] = [];
     await renderHarness(calls);
     const alpha = page.getByRole("option", { name: /Alpha, Video track V1/ });
@@ -271,7 +347,7 @@ describe("approved timeline-a11y-v1 contract", () => {
     await expect.element(alpha).toHaveFocus();
   });
 
-  test("component-body-edge-modifiers-use-the-pointer-edit-algebra", async () => {
+  test("a11y.timeline.pointer-keyboard-parity", async () => {
     const calls: Call[] = [];
     await renderHarness(calls);
     const alpha = page.getByRole("option", { name: /Alpha, Video track V1/ });
@@ -304,7 +380,63 @@ describe("approved timeline-a11y-v1 contract", () => {
     ]);
   });
 
-  test("component-compatible-track-navigation", async () => {
+  test("a11y.timeline.body-operations", async () => {
+    const calls: Call[] = [];
+    await renderHarness(calls);
+    const alpha = page.getByRole("option", { name: /Alpha, Video track V1/ });
+    alpha.element().focus();
+    await userEvent.keyboard("{Enter}{Alt>}{ArrowRight}{/Alt}{Enter}");
+    await vi.waitFor(() => expect(calls.at(-1)?.invocation?.op).toBe("slip"));
+    alpha.element().focus();
+    await userEvent.keyboard("{Enter}{Control>}{ArrowRight}{/Control}{Enter}");
+    await vi.waitFor(() => expect(calls.at(-1)?.invocation?.op).toBe("slide"));
+  });
+
+  test("a11y.timeline.edge-operations", async () => {
+    const calls: Call[] = [];
+    await renderHarness(calls);
+    const alpha = page.getByRole("option", { name: /Alpha, Video track V1/ });
+    alpha.element().focus();
+    await userEvent.keyboard("{Enter}{Tab}{Alt>}{ArrowRight}{/Alt}{Enter}");
+    await vi.waitFor(() => expect(calls.at(-1)?.invocation?.op).toBe("trimIn"));
+    expect(calls.at(-1)?.invocation?.args.rippleAllTracks).toBe(true);
+    alpha.element().focus();
+    await userEvent.keyboard("{Enter}{Tab}{Tab}{Control>}{ArrowRight}{/Control}{Enter}");
+    await vi.waitFor(() => expect(calls.at(-1)?.invocation?.op).toBe("roll"));
+  });
+
+  test("a11y.timeline.compatible-track-move", async () => {
+    const calls: Call[] = [];
+    await renderHarness(calls);
+    const alpha = page.getByRole("option", { name: /Alpha, Video track V1/ });
+    alpha.element().focus();
+    await userEvent.keyboard("{Enter}{ArrowDown}");
+    await vi.waitFor(() =>
+      expect(calls.at(-1)?.invocation).toMatchObject({
+        op: "move",
+        args: { uuid: ALPHA_ID, toTrack: { trackId: "v2" }, toPosition: 0 },
+      }),
+    );
+    await userEvent.keyboard("{Enter}");
+  });
+
+  test("a11y.timeline.snapping-and-bounds", async () => {
+    const calls: Call[] = [];
+    await renderHarness(calls);
+    const alpha = page.getByRole("option", { name: /Alpha, Video track V1/ });
+    alpha.element().focus();
+    await userEvent.keyboard("{Enter}{ArrowLeft>3}{/ArrowLeft}");
+    await expect
+      .element(page.getByRole("status"))
+      .toHaveTextContent(/media, adjacency, or minimum-length boundary/);
+    expect(calls).toEqual([]);
+    await userEvent.keyboard("{Enter}");
+    await expect
+      .element(page.getByRole("button", { name: "Toggle snapping" }))
+      .toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("a11y.timeline.browse-vertical", async () => {
     const calls: Call[] = [];
     await renderHarness(calls);
     const alpha = page.getByRole("option", { name: /Alpha, Video track V1/ });
@@ -320,7 +452,7 @@ describe("approved timeline-a11y-v1 contract", () => {
     expect(calls).toEqual([]);
   });
 
-  test("component-escape-cancel-conflict-protection", async () => {
+  test("a11y.timeline.announcements", async () => {
     const calls: Call[] = [];
     await renderHarness(calls, true);
     const alpha = page.getByRole("option", { name: /Alpha, Video track V1/ });
@@ -335,7 +467,20 @@ describe("approved timeline-a11y-v1 contract", () => {
     await expect.element(alpha).toHaveAttribute("data-edit-mode", "true");
   });
 
-  test("component-strictmode-listener-cleanup", async () => {
+  test("a11y.timeline.focus-restoration", async () => {
+    const calls: Call[] = [];
+    await renderHarness(calls);
+    const alpha = page.getByRole("option", { name: /Alpha, Video track V1/ });
+    alpha.element().focus();
+    await userEvent.keyboard("{Enter}{ArrowRight}");
+    await vi.waitFor(() => expect(calls.filter((call) => call.kind === "commit")).toHaveLength(1));
+    await userEvent.keyboard("{Escape}");
+    await vi.waitFor(() => expect(calls.filter((call) => call.kind === "undo")).toHaveLength(1));
+    await expect.element(alpha).toHaveFocus();
+    await expect.element(alpha).toHaveAttribute("data-edit-mode", "false");
+  });
+
+  test("component.strict-mode.cleanup", async () => {
     const added: string[] = [];
     const removed: string[] = [];
     const add = vi
@@ -360,7 +505,7 @@ describe("approved timeline-a11y-v1 contract", () => {
     );
   });
 
-  test("component-toolbar-announces-save-undo-redo-and-dirty-state", async () => {
+  test("component.editor.undo-redo-save", async () => {
     const calls: Call[] = [];
     await renderHarness(calls);
     const alpha = page.getByRole("option", { name: /Alpha, Video track V1/ });
@@ -381,7 +526,7 @@ describe("approved timeline-a11y-v1 contract", () => {
       .toHaveTextContent(/Redo complete; timeline is dirty/);
   });
 
-  test("component-axe-structural-semantics", async () => {
+  test("a11y.timeline.axe", async () => {
     await renderHarness([]);
     await expect
       .element(page.getByRole("option", { name: /Blank gap, 8 frames/ }))

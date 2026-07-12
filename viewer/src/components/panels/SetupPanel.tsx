@@ -147,6 +147,7 @@ export function SetupPanel({ project }: { project?: string }) {
         </Btn>
         <div style={{ display: "flex", gap: 6 }}>
           <input
+            aria-label="Setup media root path"
             value={newRoot}
             onChange={(e) => setNewRoot(e.target.value)}
             placeholder="/path/to/media"

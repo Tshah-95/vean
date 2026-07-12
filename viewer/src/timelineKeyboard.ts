@@ -187,15 +187,26 @@ export function keyboardInvocation(options: {
   let appliedDx = options.dx;
   let snappedTo: number | null = null;
   if (options.snapEnabled && tool !== "slip") {
-    const edge =
-      tool === "trimOut"
-        ? clip.placed.start + clip.placed.length + options.dx
-        : tool === "roll"
-          ? (rollRight?.start ?? clip.placed.start) + options.dx
-          : clip.placed.start + options.dx;
-    const snapped = snapFrame(edge, options.snapCandidates, options.pxPerFrame);
-    appliedDx += snapped.frame - edge;
-    snappedTo = snapped.snappedTo;
+    const edges =
+      tool === "move"
+        ? [clip.placed.start + options.dx, clip.placed.start + clip.placed.length + options.dx]
+        : tool === "trimOut"
+          ? [clip.placed.start + clip.placed.length + options.dx]
+          : tool === "roll"
+            ? [(rollRight?.start ?? clip.placed.start) + options.dx]
+            : [clip.placed.start + options.dx];
+    let bestAdjustment = 0;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const edge of edges) {
+      const snapped = snapFrame(edge, options.snapCandidates, options.pxPerFrame);
+      const distance = Math.abs(snapped.frame - edge);
+      if (snapped.snappedTo != null && distance < bestDistance) {
+        bestAdjustment = snapped.frame - edge;
+        bestDistance = distance;
+        snappedTo = snapped.snappedTo;
+      }
+    }
+    appliedDx += bestAdjustment;
   }
   const bounds = gestureDxBounds(gesture);
   const bounded = Math.max(bounds.min, Math.min(bounds.max, appliedDx));

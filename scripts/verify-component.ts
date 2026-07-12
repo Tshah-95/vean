@@ -59,9 +59,9 @@ const executedScenarioIds = (scenarioLedger.scenarios ?? []).map((scenario) => s
 if (
   executedScenarioIds.some((id) => !id) ||
   new Set(executedScenarioIds).size !== executedScenarioIds.length ||
-  executedScenarioIds.length !== 8
+  executedScenarioIds.length !== 23
 ) {
-  throw new Error("component scenario IDs must be eight unique non-empty IDs");
+  throw new Error("component scenario IDs must be 23 unique non-empty IDs");
 }
 
 const negativePhase = process.env.VEAN_HARNESS_PHASE === "negative-control";
@@ -125,9 +125,7 @@ try {
     console.error(browserLog);
     throw new Error(`real-browser component suite failed with exit ${browser.exitCode}`);
   }
-  const browserScenarioIds = (executedScenarioIds as string[]).filter(
-    (id) => id !== "component-independent-mlt-truth",
-  );
+  const browserScenarioIds = executedScenarioIds as string[];
   const missingBrowserScenarios = browserScenarioIds.filter((id) => !browserLog.includes(id));
   if (missingBrowserScenarios.length > 0) {
     throw new Error(`browser reporter omitted scenario IDs: ${missingBrowserScenarios.join(", ")}`);
@@ -141,7 +139,7 @@ try {
     invocation?: { op?: string; args?: Record<string, unknown> };
   };
   if (
-    recorded.scenarioId !== "component-pointer-keyboard-action-parity" ||
+    recorded.scenarioId !== "a11y.timeline.document-truth" ||
     recorded.actionId !== "move" ||
     recorded.invocation?.op !== "move" ||
     recorded.route !== "timeline:fixture"
@@ -187,7 +185,7 @@ try {
     truthPath,
     `${JSON.stringify(
       {
-        scenario_id: "component-independent-mlt-truth",
+        scenario_id: "a11y.timeline.document-truth",
         browser_invocation_hash: hashPath(invocationPath),
         action_id: recorded.actionId,
         browser_route: recorded.route,
@@ -213,7 +211,7 @@ try {
     browser: "playwright/chromium/headless",
     host: "127.0.0.1",
     strictPort: fixture.descriptor.vitePort,
-    tests: 9,
+    tests: 23,
     interactionContractHash: approvedContractHash,
     invocationHash: hashPath(invocationPath),
     independentMltTruthHash: hashPath(truthPath),

@@ -103,6 +103,7 @@ export function Transport({
 
       <input
         type="range"
+        aria-label="Playhead frame"
         min={0}
         max={lastFrame}
         step={1}
@@ -112,7 +113,8 @@ export function Transport({
         style={{ flex: 1, accentColor: "#c7ae7a", cursor: "pointer" }}
       />
 
-      <div
+      <output
+        aria-label="Playhead timecode"
         style={{
           fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
           fontSize: 13,
@@ -122,7 +124,7 @@ export function Transport({
         }}
       >
         {timecode(clock.currentFrame, clock.fps)}
-      </div>
+      </output>
       <div
         style={{
           fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",

@@ -10,7 +10,14 @@
 // per-clip badge. Frame math stays integer everywhere — the hook never invents a
 // float frame; it passes the UI's already-rounded integers to the edit algebra.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { type EditAuthorOpts, applyOp, redoEdit, saveTimeline, undoEdit } from "./api";
+import {
+  type EditAuthorOpts,
+  ViewerApiError,
+  applyOp,
+  redoEdit,
+  saveTimeline,
+  undoEdit,
+} from "./api";
 import type { Diagnostic, OpInvocation, SessionEditResult, Timeline } from "./types";
 
 export interface TimelineEditor {
@@ -43,7 +50,7 @@ export interface TimelineEditor {
   /** Transient "Saved" pulse for the indicator. */
   justSaved: boolean;
   /** The last op/undo/redo error (clip-not-found, frame-out-of-range, …), if any. */
-  lastError: string | null;
+  lastError: { kind: string; detail: string } | null;
   /** True while a commit/undo/redo/save request is in flight. */
   busy: boolean;
   /** Author on top of the shared session history. Used to keep cancellation from
@@ -102,7 +109,7 @@ export function useTimelineEditor(
   const [canRedo, setCanRedo] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
-  const [lastError, setLastError] = useState<string | null>(null);
+  const [lastError, setLastError] = useState<{ kind: string; detail: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [nextUndoAuthor, setNextUndoAuthor] = useState<string | null>(null);
   const [lastEvent, setLastEvent] = useState<TimelineEditor["lastEvent"]>(null);
@@ -154,6 +161,17 @@ export function useTimelineEditor(
     setLastError(null);
   }, []);
 
+  const ingestError = useCallback((error: unknown) => {
+    if (error instanceof ViewerApiError) {
+      setLastError({ kind: error.kind, detail: error.detail });
+      return;
+    }
+    setLastError({
+      kind: "unexpected-viewer-error",
+      detail: String((error as Error)?.message ?? error),
+    });
+  }, []);
+
   const commit = useCallback(
     (invocation: OpInvocation, opts?: EditAuthorOpts): Promise<SessionEditResult | null> => {
       return serialize(async () => {
@@ -163,12 +181,12 @@ export function useTimelineEditor(
           setLastEvent({ kind: "commit", revision: res.revision, dirty: res.dirty });
           return res;
         } catch (e) {
-          setLastError(String((e as Error)?.message ?? e));
+          ingestError(e);
           return null;
         }
       });
     },
-    [route, ingest, serialize],
+    [route, ingest, ingestError, serialize],
   );
 
   const undo = useCallback(
@@ -180,11 +198,11 @@ export function useTimelineEditor(
           setLastEvent({ kind: "undo", revision: res.revision, dirty: res.dirty });
           return res;
         } catch (e) {
-          setLastError(String((e as Error)?.message ?? e));
+          ingestError(e);
           return null;
         }
       }),
-    [route, ingest, serialize],
+    [route, ingest, ingestError, serialize],
   );
 
   const redo = useCallback(
@@ -196,11 +214,11 @@ export function useTimelineEditor(
           setLastEvent({ kind: "redo", revision: res.revision, dirty: res.dirty });
           return res;
         } catch (e) {
-          setLastError(String((e as Error)?.message ?? e));
+          ingestError(e);
           return null;
         }
       }),
-    [route, ingest, serialize],
+    [route, ingest, ingestError, serialize],
   );
 
   const save = useCallback(
@@ -215,11 +233,11 @@ export function useTimelineEditor(
           savedTimer.current = window.setTimeout(() => setJustSaved(false), 1600);
           return true;
         } catch (e) {
-          setLastError(String((e as Error)?.message ?? e));
+          ingestError(e);
           return false;
         }
       }),
-    [revision, route, serialize],
+    [ingestError, revision, route, serialize],
   );
 
   useEffect(

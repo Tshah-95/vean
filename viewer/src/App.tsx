@@ -18,6 +18,15 @@ import { installDecodeBridge } from "./decode/debugBridge";
 import type { TimelineResponse } from "./types";
 import { useTimelineEditor } from "./useTimelineEditor";
 
+function isTextEntry(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
+  );
+}
+
 // The graphic overlay is resolved PER-FRAME from the working IR (the graphic clip
 // active at the playhead) inside `PreviewPane` — see `resolveOverlayAt`. Multi-overlay,
 // the comp-frame start offset, and per-span visibility all fall out of that, so there is
@@ -86,7 +95,7 @@ function Viewer({ route }: { route: string | undefined }) {
   // Keyboard: space toggles play/pause; arrows step a frame.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement) return;
+      if (isTextEntry(e.target)) return;
       if (e.code === "Space") {
         e.preventDefault();
         clock.toggle();
@@ -207,7 +216,7 @@ function Stage({
   // playhead. Coexists with the play/pause/zoom keys (different keys / handlers).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement) return;
+      if (isTextEntry(e.target)) return;
       const meta = e.metaKey || e.ctrlKey;
       if (meta && (e.key === "z" || e.key === "Z")) {
         e.preventDefault();
