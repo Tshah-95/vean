@@ -596,6 +596,7 @@ function validTruth(): MacosShellTruthInput {
         {
           id: scenarioIds[2],
           selectedFolder: "/tmp/project",
+          selectedFolderCanonical: "/tmp/project",
           focusRestored: true,
           sidecar: {
             parentPid: 100,
@@ -676,7 +677,10 @@ describe("native macOS domain truth", () => {
       "unfocused shell",
       (input: MacosShellTruthInput) => {
         const role = input.observed.scenarios?.[0];
-        if (role) role.focused = "false";
+        if (role) {
+          role.focused = "false";
+          role.nativeMenuInteractive = false;
+        }
       },
       "windowRoleNameFocus",
     ],

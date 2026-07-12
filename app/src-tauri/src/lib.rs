@@ -327,6 +327,15 @@ fn restart_sidecar(app: &AppHandle, project: PathBuf) -> Result<u16, String> {
     Ok(port)
 }
 
+/// Stop the active preview process group before Tauri tears down managed state.
+/// Process exit does not guarantee managed-state destructors run early enough to
+/// reap the Bun server, so the event-loop exit path calls this explicitly.
+fn stop_sidecar(app: &AppHandle) {
+    if let Ok(mut guard) = app.state::<AppState>().sidecar.lock() {
+        guard.take();
+    }
+}
+
 /// The active project root, or the repo root if no project is selected yet.
 fn active_project(app: &AppHandle) -> PathBuf {
     app.state::<AppState>()
@@ -601,7 +610,7 @@ pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(feature = "harness-wdio")]
     let builder = with_harness_wdio(builder);
-    builder
+    let app = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(navigation_policy_plugin())
         .manage(AppState::default())
@@ -617,8 +626,16 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running vean app");
+        .build(tauri::generate_context!())
+        .expect("error while building vean app");
+    app.run(|handle, event| {
+        if matches!(
+            event,
+            tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
+        ) {
+            stop_sidecar(handle);
+        }
+    });
 }
 
 #[cfg(test)]

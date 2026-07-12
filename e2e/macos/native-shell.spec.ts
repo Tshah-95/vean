@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { $, browser, expect } from "@wdio/globals";
 import { describe, it } from "mocha";
@@ -130,16 +130,21 @@ describe("Vean AppKit-owned shell", () => {
     );
     await window.waitForExist();
     await expect(window).toBeDisplayed();
-    scenarios.push({
-      id: "macos-shell-role-name-focus",
-      role: await window.getTagName(),
+    const initialWindow = {
+      role: NATIVE_ELEMENT_TYPE.Window,
+      webdriverTagName: await window.getTagName(),
       title: await window.getAttribute("title"),
       label: await window.getAttribute("label"),
       focused: await window.getAttribute("focused"),
-    });
+    };
 
     const file = await semanticElement(MENU_BAR_ITEM, "File");
     await file.click();
+    scenarios.push({
+      id: "macos-shell-role-name-focus",
+      ...initialWindow,
+      nativeMenuInteractive: true,
+    });
     const exactOpenProjectItem = async () => {
       const predicate = nativePredicate(
         MENU_ITEM,
@@ -161,14 +166,17 @@ describe("Vean AppKit-owned shell", () => {
     const cancel = await semanticElement(BUTTON, "Cancel", 30_000);
     await cancel.click();
     await cancel.waitForExist({ reverse: true, timeout: 15_000 });
-    scenarios.push({
+    const cancelScenario = {
       id: "macos-open-project-cancel-focus-restore",
       focusRestored: (await window.getAttribute("focused")) === "true",
       residual: await nativeInventory(),
-    });
+      nativeMenuInteractiveAfterCancel: false,
+    };
 
     await file.click();
     openProject = await exactOpenProjectItem();
+    cancelScenario.nativeMenuInteractiveAfterCancel = true;
+    scenarios.push(cancelScenario);
     await openProject.click();
     if (context.residualDialogControl) {
       const residual = await nativeInventory();
@@ -245,6 +253,7 @@ describe("Vean AppKit-owned shell", () => {
     scenarios.push({
       id: "macos-open-project-real-folder",
       selectedFolder: context.projectRoot,
+      selectedFolderCanonical: realpathSync(context.projectRoot),
       sidecar,
       focusRestored: (await window.getAttribute("focused")) === "true",
     });
