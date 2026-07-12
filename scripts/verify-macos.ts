@@ -206,7 +206,10 @@ try {
           HOME: fixture.descriptor.home,
           VEAN_CONFIG_HOME: join(fixture.descriptor.home, ".vean"),
           VEAN_REPO: repo,
-          VEAN_BIN: "bun",
+          // Mac2 launches through Xcode/LaunchServices, whose PATH is not the
+          // invoking shell's Homebrew/mise PATH. Bind the exact harness Bun so
+          // the real app can always spawn its promised preview sidecar.
+          VEAN_BIN: realpathSync(process.execPath),
           VEAN_PREVIEW_MODE: "prod",
           VEAN_PROCESS_MARKER: `vean-h06-${fixture.descriptor.runId}`,
         },

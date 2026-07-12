@@ -137,6 +137,12 @@ function nativeProcessIdentity(
 }
 
 describe("native macOS doctor classification", () => {
+  it("binds the native app to the exact Bun executable instead of LaunchServices PATH", () => {
+    const source = readFileSync(join(process.cwd(), "scripts/verify-macos.ts"), "utf8");
+    expect(source).toContain("VEAN_BIN: realpathSync(process.execPath)");
+    expect(source).not.toContain('VEAN_BIN: "bun"');
+  });
+
   it.each(["scripts/doctor-macos-driver.ts", "scripts/verify-macos.ts"])(
     "%s refuses a shared desktop before fixture, driver, build, or app launch",
     (script) => {
