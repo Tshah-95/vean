@@ -1515,11 +1515,7 @@ if (import.meta.main) {
       case "collect-project-artifacts": {
         const name = optionValue(argv, "--name") ?? usage();
         const includes = optionValues(argv, "--include");
-        collectProjectArtifacts(
-          name,
-          includes.length > 0 ? includes : PROJECT_ARTIFACT_ALLOWLIST,
-          optionValue(argv, "--destination"),
-        );
+        collectProjectArtifacts(name, includes, optionValue(argv, "--destination"));
         break;
       }
       case "stop":

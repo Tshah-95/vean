@@ -140,7 +140,8 @@ bun run vm:macos:collect-project-artifacts -- --name sample --include test-resul
 
 The collector accepts only `.vean/harness/native-runs`,
 `.vean/harness/browser-runs`, `test-results`, `playwright-report`, and
-`coverage`; it rejects missing roots and symlinks and writes a mode-0600 `.tgz`.
+`coverage`; at least one explicit `--include` is required. It rejects missing
+roots and symlinks and writes a mode-0600 `.tgz`.
 
 Large immutable inputs can be exposed with read-only VirtioFS shares:
 
