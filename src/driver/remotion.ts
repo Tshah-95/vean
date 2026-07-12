@@ -116,8 +116,9 @@ function indent(s: string): string {
 async function spawnCapture(
   bin: string,
   args: string[],
+  cwd?: string,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
-  const proc = Bun.spawn([bin, ...args], { stdout: "pipe", stderr: "pipe" });
+  const proc = Bun.spawn([bin, ...args], { stdout: "pipe", stderr: "pipe", ...(cwd ? { cwd } : {}) });
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
@@ -188,7 +189,10 @@ export async function renderComposition(
   outPath: string,
   opts: RemotionRenderOpts = {},
 ): Promise<RemotionRenderResult> {
-  const bin = resolveRemotionBin(opts.bin);
+  // Absolute path: the render subprocess runs with cwd = the workspace root
+  // (below), so a caller-relative binary path must be pinned before spawn.
+  const rawBin = resolveRemotionBin(opts.bin);
+  const bin = rawBin ? resolve(rawBin) : null;
   if (!bin) {
     throw new RemotionError(
       "remotion",
@@ -197,15 +201,21 @@ export async function renderComposition(
       "remotion binary not found; run `bun install` in remotion/ (or set VEAN_REMOTION_BIN)",
     );
   }
-  const entry = opts.entry ?? defaultRemotionEntry();
+  // Absolute paths: the render subprocess runs with cwd = the workspace root
+  // (below), so caller-relative paths must be pinned before the cwd changes.
+  const entry = resolve(opts.entry ?? defaultRemotionEntry());
   if (!existsSync(entry)) {
     throw new RemotionError("remotion", [entry], 2, `remotion entry not found: ${entry}`);
   }
-  const args = buildRenderArgs(entry, compositionId, outPath, {
+  const args = buildRenderArgs(entry, compositionId, resolve(outPath), {
     props: opts.props,
     frameRange: opts.frameRange,
   });
-  const { code, stderr } = await spawnCapture(bin, args);
+  // Run from the workspace root (entry is <workspace>/src/index.ts) so Remotion
+  // resolves its root — and therefore public/ (staticFile) — against the
+  // workspace, not wherever vean happened to be invoked.
+  const workspaceDir = resolve(dirname(entry), "..");
+  const { code, stderr } = await spawnCapture(bin, args, workspaceDir);
   if (code !== 0) throw new RemotionError(bin, args, code, stderr);
 
   const pixFmt = await probePixFmt(outPath);
