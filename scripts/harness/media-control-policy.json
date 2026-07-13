@@ -3,9 +3,9 @@
   "active_control": null,
   "claim_controls": {
     "nc-live-media": "opaque-alpha-substitution",
-    "nc-render-fidelity": "opaque-alpha-substitution",
+    "nc-render-fidelity": "lower-third-source",
     "nc-media-resilience": "missing-imagebitmap-close",
     "nc-performance-budget": "injected-long-task",
-    "nc-live-export-semantic-parity": "wrong-frame-timestamp"
+    "nc-live-export-semantic-parity": "one-frame-offset"
   }
 }

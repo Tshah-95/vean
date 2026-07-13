@@ -1,195 +1,417 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "2.0.0",
   "status": "candidate-unapproved",
   "acceptance_eligible": false,
-  "policy_sha256": "190a7d46b0f35d29cbb49f8512688687dde06e30266edeae547f5480a2ad73e6",
-  "fixture_manifest_sha256": "7e8a9684ccd86de9af5564636401f424e5c3709be4eca9ad305e57987aa81cd5",
-  "canonical_props_sha256": "5b7cbcbfa03cdac63110033245ceb172a530939d1954862163afc706ea9ed079",
-  "composition_source_sha256": "f94274ed00d0dc0ce260e8bda536dae83cd3348964764e13ad7a588c0d372b86",
-  "remotion_package_sha256": "06c86bf020b6f68716a0e1bf3d2a9e9f757c29e70c11d2eca303a7b7f58d0187",
-  "viewer_package_sha256": "74bbc20d79286df369ee9d915844c730df39a4a557ec29d7d3ed2d79fc568208",
+  "policy_sha256": "1705726fd5d8b87be7f62f855ae35615c9c1ed4674eb4b1a49058411fa25284b",
   "generator": {
-    "path": "scripts/media-goldens.ts",
-    "sha256": "1a27d993c00698169e00eaec3c5e1c9dcf26322ea7bb9fc33d5f1beaf450d273"
+    "path": "scripts/media-render-truth.ts",
+    "sha256": "82800ee8bfd236579a96c758b6484692bd720e91f153b118a0cd7f156c577356"
+  },
+  "fixture_manifest_sha256": "7e8a9684ccd86de9af5564636401f424e5c3709be4eca9ad305e57987aa81cd5",
+  "source_timeline": {
+    "path": "corpus/harness/media/lower-third-parity.mlt",
+    "sha256": "a13b47a0562ba3e323c74ed1437e8178ae36bbe78ffd88855a17ba4fafced049"
+  },
+  "generated_timeline": {
+    "path": "candidate-goldens/runtime/final-export.mlt",
+    "sha256": "ce7346d6df6c674db1279e45be396edc6cec1596f482b5e981fbe352e8ba74cd",
+    "parsed_ir_sha256": "ec67f2aa6408eb6d1433ad8a69ba474418c9bcd9a87b567c306d3882624034fe"
+  },
+  "canonical_props": {
+    "path": "candidate-goldens/canonical-props.json",
+    "sha256": "5b7cbcbfa03cdac63110033245ceb172a530939d1954862163afc706ea9ed079"
+  },
+  "source_asset_font_bindings": {
+    "remotion/src/compositions/LowerThird.tsx": "f94274ed00d0dc0ce260e8bda536dae83cd3348964764e13ad7a588c0d372b86",
+    "remotion/src/harness/H07Parity.tsx": "d046265ae3e0101f10bf08e67a3e7fbae86119791f4bcc1824331f9c8f29dcf9",
+    "remotion/src/Root.tsx": "2bda3a65922ce7803d1eceef3a8b2d473657c7f33f416827715eec4cf662d0f0",
+    "remotion/src/lib/theme.ts": "f1d83d2a699086f844255887b512baf1584587bb2be224ef83c0f04420d5629d",
+    "remotion/package.json": "06c86bf020b6f68716a0e1bf3d2a9e9f757c29e70c11d2eca303a7b7f58d0187",
+    "remotion/bun.lock": "b12730beb2dc47241838e26fbda8cccd353bf35854c858cd1721cfce21e6be29",
+    "viewer/package.json": "74bbc20d79286df369ee9d915844c730df39a4a557ec29d7d3ed2d79fc568208",
+    "viewer/bun.lock": "dae04f554f22190c129ea34759ecf5c3ae983cd4a1d87371b55f15a37228c453"
+  },
+  "resolved_fonts": [
+    {
+      "query": "-apple-system",
+      "file": "Verdana.ttf",
+      "file_sha256": "0da8c12f3e15d95585434d2cf294b3113a3e3fc84bf9ba9d64f2ef834ef4bd98",
+      "family": "Verdana",
+      "style": "Regular,Normal,obyčejné,Standard,Κανονικά,Normaali,Normál,Normale,Standaard,Normalny,Обычный,Normálne,Navadno,Arrunta"
+    },
+    {
+      "query": "BlinkMacSystemFont",
+      "file": "Verdana.ttf",
+      "file_sha256": "0da8c12f3e15d95585434d2cf294b3113a3e3fc84bf9ba9d64f2ef834ef4bd98",
+      "family": "Verdana",
+      "style": "Regular,Normal,obyčejné,Standard,Κανονικά,Normaali,Normál,Normale,Standaard,Normalny,Обычный,Normálne,Navadno,Arrunta"
+    },
+    {
+      "query": "Segoe UI",
+      "file": "Verdana.ttf",
+      "file_sha256": "0da8c12f3e15d95585434d2cf294b3113a3e3fc84bf9ba9d64f2ef834ef4bd98",
+      "family": "Verdana",
+      "style": "Regular,Normal,obyčejné,Standard,Κανονικά,Normaali,Normál,Normale,Standaard,Normalny,Обычный,Normálne,Navadno,Arrunta"
+    },
+    {
+      "query": "Roboto",
+      "file": "Verdana.ttf",
+      "file_sha256": "0da8c12f3e15d95585434d2cf294b3113a3e3fc84bf9ba9d64f2ef834ef4bd98",
+      "family": "Verdana",
+      "style": "Regular,Normal,obyčejné,Standard,Κανονικά,Normaali,Normál,Normale,Standaard,Normalny,Обычный,Normálne,Navadno,Arrunta"
+    },
+    {
+      "query": "Helvetica",
+      "file": "Helvetica.ttc",
+      "file_sha256": "25eceb458d4baf628ee0b6a135a9f8ac5ec7b2826646720834bd2bf00dfc825a",
+      "family": "Helvetica",
+      "style": "Regular,標準體,Almindelig,Κανονικά,Normaali,Courant,רגיל,Szabályos,Regolare,レギュラー,일반체,Regulier,Normal,Обычный,ปกติ,Reguler,Звичайний,Thường,रेग्युलर,Biasa,常规体,عادي"
+    },
+    {
+      "query": "Arial",
+      "file": "Arial.ttf",
+      "file_sha256": "525979822591a3447cfc49d943d6f7683508e25543407871c0ed8fed05fd2bd9",
+      "family": "Arial",
+      "style": "Regular,Normal,obyčejné,Standard,Κανονικά,Normaali,Normál,Normale,Standaard,Normalny,Обычный,Normálne,Navadno,thường,Arrunta"
+    },
+    {
+      "query": "sans-serif",
+      "file": "ヒラギノ角ゴシック W4.ttc",
+      "file_sha256": "e1ee608f584acdaffc898efac7e2c9fa1c19457474bf215f6b7031ca720993d1",
+      "family": "Hiragino Sans,ヒラギノ角ゴシック,Hiragino Sans W4,ヒラギノ角ゴシック W4",
+      "style": "W4,Regular"
+    }
+  ],
+  "tools": {
+    "bun": "1.3.14",
+    "remotion": "4.0.484",
+    "melt": "melt 7.38.0",
+    "ffmpeg": "ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+    "ffprobe": "ffprobe version 8.1.2 Copyright (c) 2007-2026 the FFmpeg developers"
+  },
+  "export": {
+    "alpha_clip": {
+      "path": "candidate-goldens/runtime/lower-third-alpha.mov",
+      "sha256": "35494cc90e6b3c9ee7983c87c23d701e10fc7725040414f56109388be425f0f8",
+      "byte_length": 17603886
+    },
+    "path": "Vean bakeOverlaysForExport -> alpha ProRes 4444 -> upper MLT track -> Vean stillTool"
   },
   "frames": [
     {
       "master_frame": 29,
       "local_frame": null,
-      "expected_presence": false
+      "expected_presence": false,
+      "remotion_renderstill": {
+        "relative_path": "candidate-goldens/remotion-master-29.png",
+        "sha256": "daf19c835b49a49229d626a49c363d882154f0bf092b55dc574359feb1f48655",
+        "repeat_sha256": "daf19c835b49a49229d626a49c363d882154f0bf092b55dc574359feb1f48655",
+        "byte_length": 37845
+      },
+      "final_mlt_still": {
+        "relative_path": "candidate-goldens/mlt-master-29.png",
+        "sha256": "78c13b3c81bc06e40304d45ba6b1fafe10f382a3da92de482b2996bcddb52a9c",
+        "repeat_sha256": "78c13b3c81bc06e40304d45ba6b1fafe10f382a3da92de482b2996bcddb52a9c",
+        "byte_length": 10389
+      },
+      "comparison": {
+        "ssim": {
+          "all": 1,
+          "stableRegion": 1
+        },
+        "reference": {
+          "overlay_pixels": 0,
+          "accent_pixels": 0,
+          "accent_centroid": null,
+          "text_pixels": 0
+        },
+        "actual": {
+          "overlay_pixels": 0,
+          "accent_pixels": 0,
+          "accent_centroid": null,
+          "text_pixels": 0
+        }
+      }
     },
     {
       "master_frame": 30,
       "local_frame": 0,
       "expected_presence": true,
-      "relative_path": "candidate-goldens/base-master-30.png",
-      "sha256": "d627cf3a3731186b8847eddd5bf7cc28fcb7c2cef7482e401280f7fb27da654f",
-      "byte_length": 21678,
-      "semantic_markers": {
-        "exact_presence_boundary": true,
-        "frame_mapping": true,
-        "nonblank_base": true
-      },
       "remotion_renderstill": {
         "relative_path": "candidate-goldens/remotion-master-30.png",
-        "sha256": "30ebc9497faa64f41120cbd82ae4714e048e41c1753cc2dfebbeeab85768491e",
-        "byte_length": 48138
+        "sha256": "daf19c835b49a49229d626a49c363d882154f0bf092b55dc574359feb1f48655",
+        "repeat_sha256": "daf19c835b49a49229d626a49c363d882154f0bf092b55dc574359feb1f48655",
+        "byte_length": 37845
       },
-      "mlt_still": {
+      "final_mlt_still": {
         "relative_path": "candidate-goldens/mlt-master-30.png",
         "sha256": "78c13b3c81bc06e40304d45ba6b1fafe10f382a3da92de482b2996bcddb52a9c",
-        "byte_length": 10389,
-        "mlt_sha256": "39a601ef3553154c743ad44ce9f2a5946a3450785af96bbbb1d3f573616d423b"
+        "repeat_sha256": "78c13b3c81bc06e40304d45ba6b1fafe10f382a3da92de482b2996bcddb52a9c",
+        "byte_length": 10389
+      },
+      "comparison": {
+        "ssim": {
+          "all": 1,
+          "stableRegion": 1
+        },
+        "reference": {
+          "overlay_pixels": 0,
+          "accent_pixels": 0,
+          "accent_centroid": null,
+          "text_pixels": 0
+        },
+        "actual": {
+          "overlay_pixels": 0,
+          "accent_pixels": 0,
+          "accent_centroid": null,
+          "text_pixels": 0
+        }
       }
     },
     {
       "master_frame": 36,
       "local_frame": 6,
       "expected_presence": true,
-      "relative_path": "candidate-goldens/base-master-36.png",
-      "sha256": "e4107dce8b09c548d02c0a4db9c0d50760d302981acfc41006cefa2927ea20d3",
-      "byte_length": 21666,
-      "semantic_markers": {
-        "exact_presence_boundary": true,
-        "frame_mapping": true,
-        "nonblank_base": true
-      },
       "remotion_renderstill": {
         "relative_path": "candidate-goldens/remotion-master-36.png",
-        "sha256": "5972411d5389721deb3d37bf10961304a9ae7c51567d85752e838f844f04780e",
-        "byte_length": 58053
+        "sha256": "8b9a5fe5e786e80fa08c8b5f6d3a5240d0e71e8cb2703b480e7869f4ad1c1f0d",
+        "repeat_sha256": "8b9a5fe5e786e80fa08c8b5f6d3a5240d0e71e8cb2703b480e7869f4ad1c1f0d",
+        "byte_length": 45970
       },
-      "mlt_still": {
+      "final_mlt_still": {
         "relative_path": "candidate-goldens/mlt-master-36.png",
-        "sha256": "452498b4cba1d1b6c90c02ba068dafcd654fd9da747acf8169297148eea29d2d",
-        "byte_length": 14345,
-        "mlt_sha256": "5d21b469a90049b1ec36b2a9b7385e4c02e6a415b9842eccccc944d42d4123a5"
+        "sha256": "dfb05ba9bb1b00cc8cd6921cad272aaae3ce4fcbdcf2945b8232c2473aaa58a9",
+        "repeat_sha256": "dfb05ba9bb1b00cc8cd6921cad272aaae3ce4fcbdcf2945b8232c2473aaa58a9",
+        "byte_length": 14306
+      },
+      "comparison": {
+        "ssim": {
+          "all": 0.999937,
+          "stableRegion": 1
+        },
+        "reference": {
+          "overlay_pixels": 67485,
+          "accent_pixels": 0,
+          "accent_centroid": null,
+          "text_pixels": 0
+        },
+        "actual": {
+          "overlay_pixels": 67939,
+          "accent_pixels": 0,
+          "accent_centroid": null,
+          "text_pixels": 0
+        }
       }
     },
     {
       "master_frame": 42,
       "local_frame": 12,
       "expected_presence": true,
-      "relative_path": "candidate-goldens/base-master-42.png",
-      "sha256": "c6f3934bb1c4f70360ce1858205bf144906814b6edf10c8ce1a836ad0dc39f20",
-      "byte_length": 21638,
-      "semantic_markers": {
-        "exact_presence_boundary": true,
-        "frame_mapping": true,
-        "nonblank_base": true
-      },
       "remotion_renderstill": {
         "relative_path": "candidate-goldens/remotion-master-42.png",
-        "sha256": "dc4279a30519d1af0fcecd145fbf8c4835b12dcf74f11cfb456b3938b3b559f6",
-        "byte_length": 73672
+        "sha256": "85c11d40ff3b2c183d02482f2ddce1a8e4f6027f989b860b693b4e65fe2b6969",
+        "repeat_sha256": "85c11d40ff3b2c183d02482f2ddce1a8e4f6027f989b860b693b4e65fe2b6969",
+        "byte_length": 58055
       },
-      "mlt_still": {
+      "final_mlt_still": {
         "relative_path": "candidate-goldens/mlt-master-42.png",
-        "sha256": "0b4db20b57536eccd2223f45da080f2bf4ec9ce6d5978820f84f8d2598a0c407",
-        "byte_length": 22569,
-        "mlt_sha256": "668d52f9b5a2e0d8b3b8c9f9d9b9f5ef6ebf9c93280f6c3c120b1dbe06d044ee"
+        "sha256": "7847f66bb5c19458db1cec5055c5f5429f36af353d46da3b9779bfd2cb3b84ef",
+        "repeat_sha256": "7847f66bb5c19458db1cec5055c5f5429f36af353d46da3b9779bfd2cb3b84ef",
+        "byte_length": 24130
+      },
+      "comparison": {
+        "ssim": {
+          "all": 0.999907,
+          "stableRegion": 1
+        },
+        "reference": {
+          "overlay_pixels": 89406,
+          "accent_pixels": 1658,
+          "accent_centroid": [46.0518697225573, 1400.5],
+          "text_pixels": 0
+        },
+        "actual": {
+          "overlay_pixels": 90087,
+          "accent_pixels": 1680,
+          "accent_centroid": [45.98571428571429, 1400.0815476190476],
+          "text_pixels": 0
+        }
       }
     },
     {
       "master_frame": 48,
       "local_frame": 18,
       "expected_presence": true,
-      "relative_path": "candidate-goldens/base-master-48.png",
-      "sha256": "1270e7fc714d6aa07d7d292c2036a1a3be4f95117f2205063716093b8b2daefb",
-      "byte_length": 20953,
-      "semantic_markers": {
-        "exact_presence_boundary": true,
-        "frame_mapping": true,
-        "nonblank_base": true
-      },
       "remotion_renderstill": {
         "relative_path": "candidate-goldens/remotion-master-48.png",
-        "sha256": "8a7c31bb26dc8aa501915db9076779a5286b9575c37a7774588d9d74f42c038b",
-        "byte_length": 81864
+        "sha256": "34e61f54e6a0eeb4f056cf9212e909a2cc6bdce216bee7bee5416f72fa7a4143",
+        "repeat_sha256": "34e61f54e6a0eeb4f056cf9212e909a2cc6bdce216bee7bee5416f72fa7a4143",
+        "byte_length": 65777
       },
-      "mlt_still": {
+      "final_mlt_still": {
         "relative_path": "candidate-goldens/mlt-master-48.png",
-        "sha256": "857cb71a75e8408e8af918e6ea944c81109999aa3ea1de7fe0ed42d9a89c0a59",
-        "byte_length": 29777,
-        "mlt_sha256": "4391379f5748fa1fc407abec52085fa565c85058c3ed1683598011614f65f83d"
+        "sha256": "9cbf70fee88c19482aeba4e82a5d136931f75fd65319d436eb0e38522f3c9805",
+        "repeat_sha256": "9cbf70fee88c19482aeba4e82a5d136931f75fd65319d436eb0e38522f3c9805",
+        "byte_length": 32176
+      },
+      "comparison": {
+        "ssim": {
+          "all": 0.999907,
+          "stableRegion": 1
+        },
+        "reference": {
+          "overlay_pixels": 89575,
+          "accent_pixels": 1652,
+          "accent_centroid": [66.06053268765133, 1400.5],
+          "text_pixels": 4514
+        },
+        "actual": {
+          "overlay_pixels": 90256,
+          "accent_pixels": 1652,
+          "accent_centroid": [66.06053268765133, 1400.5],
+          "text_pixels": 4512
+        }
       }
     },
     {
       "master_frame": 56,
       "local_frame": 26,
       "expected_presence": true,
-      "relative_path": "candidate-goldens/base-master-56.png",
-      "sha256": "5aefc3bf657a2514d755ede59ce755ed372ecf51968ca9561c5bd34660a8440f",
-      "byte_length": 21955,
-      "semantic_markers": {
-        "exact_presence_boundary": true,
-        "frame_mapping": true,
-        "nonblank_base": true
-      },
       "remotion_renderstill": {
         "relative_path": "candidate-goldens/remotion-master-56.png",
-        "sha256": "87bc3a0fbcb261a152d9d6aa39727dec801e797487bfedf9f5a1631d5ce2d87a",
-        "byte_length": 82399
+        "sha256": "ddf0f4fe4bacf42a0bf9933f33c21242a50e25b7e68a1ef47d5cdcdb78dae5b3",
+        "repeat_sha256": "ddf0f4fe4bacf42a0bf9933f33c21242a50e25b7e68a1ef47d5cdcdb78dae5b3",
+        "byte_length": 65999
       },
-      "mlt_still": {
+      "final_mlt_still": {
         "relative_path": "candidate-goldens/mlt-master-56.png",
-        "sha256": "3fe32a8bf12ed411be243f200bb6c33acc39c6700cf998a98060fa19c5ef36f7",
-        "byte_length": 30108,
-        "mlt_sha256": "25f2b811b451d9d1aea4f2d81b37104ba6b2a8c55a225d2c13fb4ad6ac3752a7"
+        "sha256": "3b89bc95d2198af3948ee9a842c140856059166f5816b0d18f00220ecde3748a",
+        "repeat_sha256": "3b89bc95d2198af3948ee9a842c140856059166f5816b0d18f00220ecde3748a",
+        "byte_length": 32739
+      },
+      "comparison": {
+        "ssim": {
+          "all": 0.999908,
+          "stableRegion": 1
+        },
+        "reference": {
+          "overlay_pixels": 89404,
+          "accent_pixels": 1833,
+          "accent_centroid": [68.57392253136933, 1400.5510092744134],
+          "text_pixels": 7656
+        },
+        "actual": {
+          "overlay_pixels": 90086,
+          "accent_pixels": 1833,
+          "accent_centroid": [68.57392253136933, 1400.5510092744134],
+          "text_pixels": 7650
+        }
       }
     },
     {
       "master_frame": 75,
       "local_frame": 45,
       "expected_presence": true,
-      "relative_path": "candidate-goldens/base-master-75.png",
-      "sha256": "43a59833a2759e2f455ea20bc2b2470b609ebb7c700cd03aba415925e2ad32cd",
-      "byte_length": 22258,
-      "semantic_markers": {
-        "exact_presence_boundary": true,
-        "frame_mapping": true,
-        "nonblank_base": true
-      },
       "remotion_renderstill": {
         "relative_path": "candidate-goldens/remotion-master-75.png",
-        "sha256": "6339ed183c82c78f91b66a600cad5be32f72532385e0b8c2b4ddf5b0249bbb04",
-        "byte_length": 82572
+        "sha256": "1f3ae14f0ae40816effbcea99506b53c57d86d5a95527caeef37c0d9f8256f71",
+        "repeat_sha256": "1f3ae14f0ae40816effbcea99506b53c57d86d5a95527caeef37c0d9f8256f71",
+        "byte_length": 66080
       },
-      "mlt_still": {
+      "final_mlt_still": {
         "relative_path": "candidate-goldens/mlt-master-75.png",
-        "sha256": "061d3f813304e05281c2bad2c56dbff8309bb9b383043df4b802ff60a7df712d",
-        "byte_length": 30222,
-        "mlt_sha256": "7e82b9ca89f57adc1fa0fa269031ed5c9101e7ff637263a24004fc240a24fdea"
+        "sha256": "7eaf80c04a7ca1c6341813a92daf3d0adcf56221dff87e565f0ac6376abb028c",
+        "repeat_sha256": "7eaf80c04a7ca1c6341813a92daf3d0adcf56221dff87e565f0ac6376abb028c",
+        "byte_length": 33000
+      },
+      "comparison": {
+        "ssim": {
+          "all": 0.999908,
+          "stableRegion": 1
+        },
+        "reference": {
+          "overlay_pixels": 89405,
+          "accent_pixels": 1829,
+          "accent_centroid": [68.57955166757792, 1400.4532531437944],
+          "text_pixels": 7672
+        },
+        "actual": {
+          "overlay_pixels": 90086,
+          "accent_pixels": 1831,
+          "accent_centroid": [68.5800109229929, 1400.5532495903878],
+          "text_pixels": 7665
+        }
       }
     },
     {
       "master_frame": 119,
       "local_frame": 89,
       "expected_presence": true,
-      "relative_path": "candidate-goldens/base-master-119.png",
-      "sha256": "43a59833a2759e2f455ea20bc2b2470b609ebb7c700cd03aba415925e2ad32cd",
-      "byte_length": 22258,
-      "semantic_markers": {
-        "exact_presence_boundary": true,
-        "frame_mapping": true,
-        "nonblank_base": true
-      },
       "remotion_renderstill": {
         "relative_path": "candidate-goldens/remotion-master-119.png",
-        "sha256": "4b0a08d15501f4be04745374f1c48ee5d43f2542ba9a3ea8e1d8f37471dddbaa",
-        "byte_length": 82347
+        "sha256": "1382d2e776e7c168260ebc59cf198bdbb8a64595ea08c96aaac67d800714cb1a",
+        "repeat_sha256": "1382d2e776e7c168260ebc59cf198bdbb8a64595ea08c96aaac67d800714cb1a",
+        "byte_length": 65999
       },
-      "mlt_still": {
+      "final_mlt_still": {
         "relative_path": "candidate-goldens/mlt-master-119.png",
-        "sha256": "e1b07541cafa255db5d023d59c9678cbbf703ca2d61f8a20f6b8c071d21ce06b",
-        "byte_length": 30162,
-        "mlt_sha256": "6f3e83c2c3a9ab9787835b5f2815159c556742aaf91747cf65c3ea6497b10b89"
+        "sha256": "b0c29f0b9f728b04de001b0e85efd6c04a246b7773e9ee07cc8eacc69880c51d",
+        "repeat_sha256": "b0c29f0b9f728b04de001b0e85efd6c04a246b7773e9ee07cc8eacc69880c51d",
+        "byte_length": 32887
+      },
+      "comparison": {
+        "ssim": {
+          "all": 0.999908,
+          "stableRegion": 1
+        },
+        "reference": {
+          "overlay_pixels": 89397,
+          "accent_pixels": 1829,
+          "accent_centroid": [68.57955166757792, 1400.4532531437944],
+          "text_pixels": 7672
+        },
+        "actual": {
+          "overlay_pixels": 90077,
+          "accent_pixels": 1831,
+          "accent_centroid": [68.5800109229929, 1400.5532495903878],
+          "text_pixels": 7665
+        }
       }
     },
     {
       "master_frame": 120,
       "local_frame": null,
-      "expected_presence": false
+      "expected_presence": false,
+      "remotion_renderstill": {
+        "relative_path": "candidate-goldens/remotion-master-120.png",
+        "sha256": "daf19c835b49a49229d626a49c363d882154f0bf092b55dc574359feb1f48655",
+        "repeat_sha256": "daf19c835b49a49229d626a49c363d882154f0bf092b55dc574359feb1f48655",
+        "byte_length": 37845
+      },
+      "final_mlt_still": {
+        "relative_path": "candidate-goldens/mlt-master-120.png",
+        "sha256": "78c13b3c81bc06e40304d45ba6b1fafe10f382a3da92de482b2996bcddb52a9c",
+        "repeat_sha256": "78c13b3c81bc06e40304d45ba6b1fafe10f382a3da92de482b2996bcddb52a9c",
+        "byte_length": 10389
+      },
+      "comparison": {
+        "ssim": {
+          "all": 1,
+          "stableRegion": 1
+        },
+        "reference": {
+          "overlay_pixels": 0,
+          "accent_pixels": 0,
+          "accent_centroid": null,
+          "text_pixels": 0
+        },
+        "actual": {
+          "overlay_pixels": 0,
+          "accent_pixels": 0,
+          "accent_centroid": null,
+          "text_pixels": 0
+        }
+      }
     }
   ]
 }

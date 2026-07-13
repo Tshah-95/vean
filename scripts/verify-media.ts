@@ -11,6 +11,12 @@ import {
 } from "./harness/media-control";
 import { verifyExternalMediaEvidence } from "./harness/media-domain-truth";
 import { verifyPerformanceRawArtifact } from "./harness/media-performance-domain-truth";
+import {
+  type RenderTruthControlId,
+  generateRenderTruth,
+  renderTruthControlIds,
+  verifyApprovedRenderTruth,
+} from "./media-render-truth";
 
 const repo = resolve(import.meta.dirname, "..");
 const valueAfter = (flag: string) => {
@@ -162,6 +168,37 @@ const artifactDir = resolve(
   process.env.VEAN_MEDIA_ARTIFACT_DIR ?? `.vean/harness/media-runs/${runId}`,
 );
 mkdirSync(artifactDir, { recursive: true });
+const candidateManifest = join(repo, "corpus/harness/media/candidate-goldens/manifest.json");
+let approvedGolden: { path: string; sha256: string; manifest: Record<string, unknown> } | undefined;
+if (accepting && ["all", "render", "live-export-parity"].includes(suite)) {
+  const approvedManifest = golden.approved_manifest as string | undefined;
+  if (!approvedManifest || approvedManifest.includes("candidate-goldens"))
+    throw new Error("E_MEDIA_APPROVED_GOLDEN_MANIFEST_REQUIRED");
+  const approvedPath = resolve(repo, approvedManifest);
+  if (hash(approvedPath) !== golden.approved_manifest_sha256)
+    throw new Error("E_MEDIA_APPROVED_GOLDEN_DRIFT");
+  const approved = JSON.parse(readFileSync(approvedPath, "utf8")) as Record<string, unknown>;
+  if (approved.status !== "approved" || approved.acceptance_eligible !== true)
+    throw new Error("E_MEDIA_GOLDEN_MANIFEST_NOT_APPROVED");
+  const renderControl =
+    scenarioControl && renderTruthControlIds.includes(scenarioControl as RenderTruthControlId)
+      ? (scenarioControl as RenderTruthControlId)
+      : undefined;
+  const fresh = await generateRenderTruth({
+    outputRoot: join(artifactDir, "render-truth"),
+    policyPath: goldenPath,
+    ...(renderControl ? { control: renderControl } : {}),
+  });
+  verifyApprovedRenderTruth({
+    approvedManifestPath: approvedPath,
+    freshManifestPath: fresh.manifestPath,
+  });
+  approvedGolden = {
+    path: approvedManifest,
+    sha256: golden.approved_manifest_sha256,
+    manifest: approved,
+  };
+}
 const build = Bun.spawnSync(["bun", "run", "viewer:build"], {
   cwd: repo,
   env: process.env,
@@ -235,9 +272,7 @@ if (["all", "baseline", "performance"].includes(suite)) {
       : {}),
   });
 }
-const candidateManifest = join(repo, "corpus/harness/media/candidate-goldens/manifest.json");
 const fixtureManifestSha256 = hash(manifestPath);
-let approvedGolden: { path: string; sha256: string; manifest: Record<string, unknown> } | undefined;
 let wkwebviewEvidence: unknown = {
   status: "requires_h05_guest_provider",
   substitute_allowed: false,
@@ -303,23 +338,6 @@ if (accepting) {
       "E_MEDIA_RELEASE_PERFORMANCE_EVIDENCE_REQUIRED",
       "release-package-performance",
     );
-  }
-  if (["all", "render", "live-export-parity"].includes(suite)) {
-    const approvedManifest = golden.approved_manifest as string | undefined;
-    if (!approvedManifest || approvedManifest.includes("candidate-goldens"))
-      throw new Error("E_MEDIA_APPROVED_GOLDEN_MANIFEST_REQUIRED");
-    const approvedPath = resolve(repo, approvedManifest);
-    if (hash(approvedPath) !== golden.approved_manifest_sha256)
-      throw new Error("E_MEDIA_APPROVED_GOLDEN_DRIFT");
-    const approved = JSON.parse(readFileSync(approvedPath, "utf8")) as Record<string, unknown>;
-    if (approved.status !== "approved" || approved.acceptance_eligible !== true) {
-      throw new Error("E_MEDIA_GOLDEN_MANIFEST_NOT_APPROVED");
-    }
-    approvedGolden = {
-      path: approvedManifest,
-      sha256: golden.approved_manifest_sha256,
-      manifest: approved,
-    };
   }
   if (["all", "performance"].includes(suite)) {
     const approvedEnvironment = performance.approved_environments?.chrome;

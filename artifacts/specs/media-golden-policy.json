@@ -60,6 +60,7 @@
     "decoded_rgba_pcm_and_stream_metadata_are_authoritative": true
   },
   "negative_controls": [
+    "lower-third-source",
     "one-frame-local-offset",
     "export-only-props-change",
     "divergent-asset-resolution",

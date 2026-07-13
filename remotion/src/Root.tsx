@@ -12,9 +12,20 @@ import { Composition } from "remotion";
 import { LowerThird, lowerThirdDefaults, lowerThirdSchema } from "./compositions/LowerThird";
 import Title from "./compositions/Title";
 import { titleDefaults, titleSchema } from "./compositions/Title.config";
+import { H07Parity } from "./harness/H07Parity";
 
 export const RemotionRoot: React.FC = () => (
   <>
+    <Composition
+      id="H07Parity"
+      component={H07Parity}
+      durationInFrames={121}
+      fps={30}
+      width={1080}
+      height={1920}
+      schema={lowerThirdSchema}
+      defaultProps={lowerThirdDefaults}
+    />
     <Composition
       id="LowerThird"
       component={LowerThird}

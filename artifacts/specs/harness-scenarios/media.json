@@ -86,6 +86,12 @@
     "unrestored-webgl-context-loss",
     "injected-long-task",
     "unapproved-policy",
-    "golden-regeneration-during-acceptance"
+    "golden-regeneration-during-acceptance",
+    "lower-third-source",
+    "one-frame-offset",
+    "export-only-props",
+    "asset-resolution",
+    "modified-golden",
+    "boundary-absence"
   ]
 }

@@ -69,16 +69,25 @@ describe("H07 media assurance contract", () => {
     expect(
       candidate.frames.filter((frame: { expected_presence: boolean }) => frame.expected_presence),
     ).toHaveLength(7);
-    for (const frame of candidate.frames.filter(
-      (entry: { expected_presence: boolean }) => entry.expected_presence,
-    )) {
+    expect(candidate.schema_version).toBe("2.0.0");
+    expect(candidate.export.path).toContain("bakeOverlaysForExport");
+    expect(candidate.source_asset_font_bindings).toMatchObject({
+      "remotion/src/compositions/LowerThird.tsx": expect.stringMatching(/^[a-f0-9]{64}$/),
+      "remotion/src/harness/H07Parity.tsx": expect.stringMatching(/^[a-f0-9]{64}$/),
+      "remotion/src/lib/theme.ts": expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    expect(candidate.resolved_fonts).toHaveLength(7);
+    for (const font of candidate.resolved_fonts) expect(font.file_sha256).toMatch(/^[a-f0-9]{64}$/);
+    for (const frame of candidate.frames) {
       expect(hash(`corpus/harness/media/${frame.remotion_renderstill.relative_path}`)).toBe(
         frame.remotion_renderstill.sha256,
       );
-      expect(hash(`corpus/harness/media/${frame.mlt_still.relative_path}`)).toBe(
-        frame.mlt_still.sha256,
+      expect(frame.remotion_renderstill.repeat_sha256).toBe(frame.remotion_renderstill.sha256);
+      expect(hash(`corpus/harness/media/${frame.final_mlt_still.relative_path}`)).toBe(
+        frame.final_mlt_still.sha256,
       );
-      expect(frame.semantic_markers.frame_mapping).toBe(true);
+      expect(frame.final_mlt_still.repeat_sha256).toBe(frame.final_mlt_still.sha256);
+      expect(frame.comparison.ssim.stableRegion).toBeGreaterThanOrEqual(0.995);
     }
     expect(readFileSync(resolve(repo, "corpus/harness/media/manifest.json"), "utf8")).not.toMatch(
       /\/Users\/|\/home\//,
@@ -120,6 +129,12 @@ describe("H07 media assurance contract", () => {
         "injected-long-task",
         "unapproved-policy",
         "golden-regeneration-during-acceptance",
+        "lower-third-source",
+        "one-frame-offset",
+        "export-only-props",
+        "asset-resolution",
+        "modified-golden",
+        "boundary-absence",
       ]),
     );
   });
@@ -127,10 +142,10 @@ describe("H07 media assurance contract", () => {
   it("maps every H07 claim control to a real scenario control and exact implementation set", () => {
     const expected = {
       "nc-live-media": "opaque-alpha-substitution",
-      "nc-render-fidelity": "opaque-alpha-substitution",
+      "nc-render-fidelity": "lower-third-source",
       "nc-media-resilience": "missing-imagebitmap-close",
       "nc-performance-budget": "injected-long-task",
-      "nc-live-export-semantic-parity": "wrong-frame-timestamp",
+      "nc-live-export-semantic-parity": "one-frame-offset",
     };
     expect(mediaClaimControlIds).toEqual(Object.keys(expected));
     for (const controlId of mediaClaimControlIds) {
@@ -191,6 +206,50 @@ describe("H07 media assurance contract", () => {
         "viewer/src/decode/frameCache.ts",
       ]),
     );
+  });
+
+  it("uses renderer and export product paths and owns dedicated mutation reasons", () => {
+    const generator = readFileSync(resolve(repo, "scripts/media-render-truth.ts"), "utf8");
+    const oldGenerator = readFileSync(resolve(repo, "scripts/media-goldens.ts"), "utf8");
+    expect(generator).toContain("bakeOverlaysForExport");
+    expect(generator).toContain("stillTool");
+    expect(generator).toContain('"H07Parity"');
+    expect(generator).not.toContain('mlt_service">qimage');
+    expect(oldGenerator).not.toContain("ffmpeg");
+    for (const code of [
+      "E_MEDIA_LOWER_THIRD_SOURCE_DRIFT",
+      "E_MEDIA_ONE_FRAME_OFFSET",
+      "E_MEDIA_EXPORT_PROPS_DIVERGENCE",
+      "E_MEDIA_ASSET_RESOLUTION_DIVERGENCE",
+      "E_MEDIA_GOLDEN_DRIFT",
+      "E_MEDIA_BOUNDARY_PRESENCE",
+    ]) {
+      expect(generator).toContain(code);
+    }
+  });
+
+  it.each([
+    ["lower-third-source", "E_MEDIA_LOWER_THIRD_SOURCE_DRIFT"],
+    ["one-frame-offset", "E_MEDIA_ONE_FRAME_OFFSET"],
+    ["boundary-absence", "E_MEDIA_BOUNDARY_PRESENCE"],
+  ])("proves the %s mutation with its own reason", (control, reason) => {
+    const output = resolve(repo, `.vean/harness/media-unit-${control}`);
+    rmSync(output, { recursive: true, force: true });
+    const result = spawnSync(
+      "bun",
+      [
+        "scripts/media-render-truth.ts",
+        "--output",
+        output,
+        "--policy",
+        "artifacts/specs/media-golden-policy.json",
+        "--control",
+        control,
+      ],
+      { cwd: repo, encoding: "utf8" },
+    );
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain(reason);
   });
 
   it("independently validates WKWebView cell coverage and hashed artifacts", () => {

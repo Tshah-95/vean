@@ -343,7 +343,8 @@
         "viewer/src/test-bridge/resourceLedger.ts",
         "viewer/src/main.tsx",
         "scripts/media-fixtures.ts",
-        "scripts/media-goldens.ts"
+        "scripts/media-goldens.ts",
+        "scripts/media-render-truth.ts"
       ]
     },
     {
@@ -385,7 +386,8 @@
         "viewer/src/test-bridge/resourceLedger.ts",
         "viewer/src/main.tsx",
         "scripts/media-fixtures.ts",
-        "scripts/media-goldens.ts"
+        "scripts/media-goldens.ts",
+        "scripts/media-render-truth.ts"
       ]
     },
     {
@@ -490,7 +492,8 @@
         "viewer/src/test-bridge/resourceLedger.ts",
         "viewer/src/main.tsx",
         "scripts/media-fixtures.ts",
-        "scripts/media-goldens.ts"
+        "scripts/media-goldens.ts",
+        "scripts/media-render-truth.ts"
       ]
     },
     {
@@ -610,7 +613,8 @@
         "viewer/src/test-bridge/resourceLedger.ts",
         "viewer/src/main.tsx",
         "scripts/media-fixtures.ts",
-        "scripts/media-goldens.ts"
+        "scripts/media-goldens.ts",
+        "scripts/media-render-truth.ts"
       ]
     },
     {
@@ -810,7 +814,8 @@
         "viewer/src/test-bridge/resourceLedger.ts",
         "viewer/src/main.tsx",
         "scripts/media-fixtures.ts",
-        "scripts/media-goldens.ts"
+        "scripts/media-goldens.ts",
+        "scripts/media-render-truth.ts"
       ]
     },
     {

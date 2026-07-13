@@ -21,6 +21,12 @@ export const mediaScenarioControlIds = [
   "missing-imagebitmap-close",
   "injected-long-task",
   "wrong-frame-timestamp",
+  "lower-third-source",
+  "one-frame-offset",
+  "export-only-props",
+  "asset-resolution",
+  "modified-golden",
+  "boundary-absence",
 ] as const;
 export type MediaScenarioControlId = (typeof mediaScenarioControlIds)[number];
 
@@ -40,6 +46,7 @@ export const mediaOracleImplementationPaths = [
   "viewer/src/main.tsx",
   "scripts/media-fixtures.ts",
   "scripts/media-goldens.ts",
+  "scripts/media-render-truth.ts",
 ] as const;
 
 type MediaControlPolicy = {

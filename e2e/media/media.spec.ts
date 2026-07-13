@@ -214,20 +214,23 @@ try {
   const page = await browser.newPage();
   await blank(page);
   const identity = await runtimeIdentity(page);
-  const live = {
-    avc: await videoProbe(page, `${base}/proxy-avc.mp4`),
-    vp9Alpha: await videoProbe(
-      page,
-      control === "opaque-alpha-substitution"
-        ? `${base}/proxy-avc.mp4`
-        : `${base}/proxy-vp9-alpha.webm`,
-    ),
-    pcm: await audioProbe(page, `${base}/audio-pcm.wav`),
-    aac: await audioProbe(page, `${base}/audio-aac.m4a`),
-    mp3: await audioProbe(page, `${base}/audio.mp3`),
-    corrupt: await attributedFailure(page, `${base}/corrupt-truncated.mp4`, "video"),
-    unsupportedAudio: await attributedFailure(page, `${base}/unsupported-audio.bin`, "audio"),
-  };
+  const needsCodecMatrix = !["render", "live-export-parity"].includes(suite);
+  const live = needsCodecMatrix
+    ? {
+        avc: await videoProbe(page, `${base}/proxy-avc.mp4`),
+        vp9Alpha: await videoProbe(
+          page,
+          control === "opaque-alpha-substitution"
+            ? `${base}/proxy-avc.mp4`
+            : `${base}/proxy-vp9-alpha.webm`,
+        ),
+        pcm: await audioProbe(page, `${base}/audio-pcm.wav`),
+        aac: await audioProbe(page, `${base}/audio-aac.m4a`),
+        mp3: await audioProbe(page, `${base}/audio.mp3`),
+        corrupt: await attributedFailure(page, `${base}/corrupt-truncated.mp4`, "video"),
+        unsupportedAudio: await attributedFailure(page, `${base}/unsupported-audio.bin`, "audio"),
+      }
+    : null;
   preview = await startPreviewServer({
     repo,
     timeline: join(repo, "corpus/harness/media/lower-third-parity.mlt"),
@@ -263,9 +266,9 @@ try {
     : null;
   if (playerScreenshot) await playerPage.screenshot({ path: playerScreenshot });
   await playerPage.close();
-  if (control === "wrong-frame-timestamp") live.avc.currentTime += 1;
-  if (control === "silent-audio") live.pcm.rms = live.pcm.rms.map(() => 0);
-  if (control === "swapped-audio-channel") live.pcm.rms.reverse();
+  if (live && control === "wrong-frame-timestamp") live.avc.currentTime += 1;
+  if (live && control === "silent-audio") live.pcm.rms = live.pcm.rms.map(() => 0);
+  if (live && control === "swapped-audio-channel") live.pcm.rms.reverse();
   const stalled = await page.evaluate(async (src) => {
     const video = document.createElement("video");
     video.crossOrigin = "anonymous";
@@ -280,23 +283,27 @@ try {
     return outcome;
   }, `${base}/stall.mp4`);
   await page.close();
-  const product = await runProductMediaAssurance({
-    browser,
-    artifactDir:
-      process.env.VEAN_MEDIA_ARTIFACT_DIR ?? join(repo, ".vean/harness/media-product-local"),
-    control,
-  });
-  if (live.avc.nonblackRatio < 0.2 || Math.abs(live.avc.currentTime - 0.5) > 0.12)
-    throw new Error("AVC nonblank/seek predicate failed");
-  if (live.vp9Alpha.nonblackRatio < 0.2 || live.vp9Alpha.alphaRatio < 0.2)
-    throw new Error("VP9 alpha decoded as blank or opaque");
-  if ([live.pcm, live.aac, live.mp3].some((audio) => audio.rms.every((value) => value < 0.001)))
-    throw new Error("silent audio decoded as success");
-  const pcmChannelRatio = (live.pcm.rms[0] ?? 0) / (live.pcm.rms[1] ?? 1);
-  if (pcmChannelRatio < 1.8 || pcmChannelRatio > 2.2)
-    throw new Error("PCM audio channel identity predicate failed");
-  if (!live.corrupt.failed || !live.unsupportedAudio.failed)
-    throw new Error("unsupported media lacked attributed failure");
+  const product = needsCodecMatrix
+    ? await runProductMediaAssurance({
+        browser,
+        artifactDir:
+          process.env.VEAN_MEDIA_ARTIFACT_DIR ?? join(repo, ".vean/harness/media-product-local"),
+        control,
+      })
+    : null;
+  if (live) {
+    if (live.avc.nonblackRatio < 0.2 || Math.abs(live.avc.currentTime - 0.5) > 0.12)
+      throw new Error("AVC nonblank/seek predicate failed");
+    if (live.vp9Alpha.nonblackRatio < 0.2 || live.vp9Alpha.alphaRatio < 0.2)
+      throw new Error("VP9 alpha decoded as blank or opaque");
+    if ([live.pcm, live.aac, live.mp3].some((audio) => audio.rms.every((value) => value < 0.001)))
+      throw new Error("silent audio decoded as success");
+    const pcmChannelRatio = (live.pcm.rms[0] ?? 0) / (live.pcm.rms[1] ?? 1);
+    if (pcmChannelRatio < 1.8 || pcmChannelRatio > 2.2)
+      throw new Error("PCM audio channel identity predicate failed");
+    if (!live.corrupt.failed || !live.unsupportedAudio.failed)
+      throw new Error("unsupported media lacked attributed failure");
+  }
   if (
     !absentBefore ||
     playerAtStart?.masterFrame !== 30 ||
@@ -387,7 +394,7 @@ try {
     },
     stalled,
     product,
-    resilience: product.resilience,
+    resilience: product?.resilience ?? { status: "not_in_render_or_parity_suite" },
     performance: {
       warmupRuns: 3,
       measuredFreshProcessRuns: measuredRuns,

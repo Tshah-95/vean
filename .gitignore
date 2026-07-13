@@ -34,3 +34,8 @@ coverage/
 
 # local vean projects (documents + comps + outputs; media stays in ~/Github/media)
 projects/
+# H07 candidate generation proves repeatability and the full alpha export on
+# every run. Keep the compact primary stills in git; repeat copies and the
+# 17MB export intermediate are reproducible evidence, not source fixtures.
+corpus/harness/media/candidate-goldens/runtime/
+corpus/harness/media/candidate-goldens/*-repeat-master-*.png
