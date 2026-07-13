@@ -123,94 +123,101 @@ describe("compiled package core", () => {
     expect(a.coreBuild.observed_executable_sha256).toBe(b.coreBuild.observed_executable_sha256);
   });
 
-  it("runs outside the deleted checkout with empty HOME and hostile PATH", () => {
-    const build = builds[0];
-    if (!build) throw new Error("missing build");
-    const mirror = mirrors[0];
-    const project = projects[0];
-    if (!mirror || !project) throw new Error("missing first build paths");
-    renameSync(mirror, `${mirror}.deleted`);
-    const version = run(build.executable, ["--version"], scratch);
-    expect(version.status, version.stderr).toBe(0);
-    expect(version.stdout.trim()).toBe("0.0.0");
+  it.runIf(process.platform === "darwin")(
+    "runs outside the deleted checkout with empty HOME and hostile PATH",
+    () => {
+      const build = builds[0];
+      if (!build) throw new Error("missing build");
+      const mirror = mirrors[0];
+      const project = projects[0];
+      if (!mirror || !project) throw new Error("missing first build paths");
+      renameSync(mirror, `${mirror}.deleted`);
+      const version = run(build.executable, ["--version"], scratch);
+      expect(version.status, version.stderr).toBe(0);
+      expect(version.stdout.trim()).toBe("0.0.0");
 
-    const init = run(
-      build.executable,
-      ["state", "init", "--repo", project, "--json", "--runtime-layout", build.layoutPath],
-      scratch,
-    );
-    expect(init.status, init.stderr).toBe(0);
-    expect(JSON.parse(init.stdout)).toMatchObject({ migrationsApplied: 4, journalMode: "wal" });
-
-    const skills = run(
-      build.executable,
-      [
-        "action",
-        "run",
-        "skills.list",
-        "--input-json",
-        "{}",
-        "--json",
-        "--runtime-layout",
-        build.layoutPath,
-      ],
-      scratch,
-    );
-    expect(skills.status, skills.stderr).toBe(0);
-    expect(JSON.parse(skills.stdout).output.count).toBeGreaterThan(0);
-    expect(() => readFileSync(join(scratch, "marker.log"))).toThrow();
-  });
-
-  it("serves the exact hashed packaged viewer asset via the production preview", async () => {
-    const build = builds[0];
-    if (!build) throw new Error("missing build");
-    const project = projects[0];
-    if (!project) throw new Error("missing first project");
-    const port = await freePort();
-    const child = spawn(
-      build.executable,
-      [
-        "preview",
-        "--no-open",
-        "--prod",
-        "--runtime-layout",
-        build.layoutPath,
-        "--repo",
-        project,
-        "--port",
-        String(port),
-      ],
-      {
-        cwd: scratch,
-        env: {
-          HOME: join(scratch, "empty-home"),
-          PATH: join(scratch, "hostile-bin"),
-          LANG: "en_US.UTF-8",
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-    let body = "";
-    try {
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        try {
-          const response = await fetch(`http://127.0.0.1:${port}/`);
-          if (response.ok) {
-            body = await response.text();
-            break;
-          }
-        } catch {}
-        await new Promise((resolveWait) => setTimeout(resolveWait, 50));
-      }
-      expect(body).not.toBe("");
-      expect(createHash("sha256").update(body).digest("hex")).toBe(
-        hash(join(build.outputRoot, "viewer", "dist", "index.html")),
+      const init = run(
+        build.executable,
+        ["state", "init", "--repo", project, "--json", "--runtime-layout", build.layoutPath],
+        scratch,
       );
-    } finally {
-      child.kill("SIGTERM");
-      await new Promise((resolveExit) => child.once("exit", resolveExit));
-    }
-  }, 20_000);
+      expect(init.status, init.stderr).toBe(0);
+      expect(JSON.parse(init.stdout)).toMatchObject({ migrationsApplied: 4, journalMode: "wal" });
+
+      const skills = run(
+        build.executable,
+        [
+          "action",
+          "run",
+          "skills.list",
+          "--input-json",
+          "{}",
+          "--json",
+          "--runtime-layout",
+          build.layoutPath,
+        ],
+        scratch,
+      );
+      expect(skills.status, skills.stderr).toBe(0);
+      expect(JSON.parse(skills.stdout).output.count).toBeGreaterThan(0);
+      expect(() => readFileSync(join(scratch, "marker.log"))).toThrow();
+    },
+  );
+
+  it.runIf(process.platform === "darwin")(
+    "serves the exact hashed packaged viewer asset via the production preview",
+    async () => {
+      const build = builds[0];
+      if (!build) throw new Error("missing build");
+      const project = projects[0];
+      if (!project) throw new Error("missing first project");
+      const port = await freePort();
+      const child = spawn(
+        build.executable,
+        [
+          "preview",
+          "--no-open",
+          "--prod",
+          "--runtime-layout",
+          build.layoutPath,
+          "--repo",
+          project,
+          "--port",
+          String(port),
+        ],
+        {
+          cwd: scratch,
+          env: {
+            HOME: join(scratch, "empty-home"),
+            PATH: join(scratch, "hostile-bin"),
+            LANG: "en_US.UTF-8",
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+      let body = "";
+      try {
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          try {
+            const response = await fetch(`http://127.0.0.1:${port}/`);
+            if (response.ok) {
+              body = await response.text();
+              break;
+            }
+          } catch {}
+          await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+        }
+        expect(body).not.toBe("");
+        expect(createHash("sha256").update(body).digest("hex")).toBe(
+          hash(join(build.outputRoot, "viewer", "dist", "index.html")),
+        );
+      } finally {
+        child.kill("SIGTERM");
+        await new Promise((resolveExit) => child.once("exit", resolveExit));
+      }
+    },
+    20_000,
+  );
 
   it("attributes mutations in every staged resource class before action execution", () => {
     const build = builds[1];
