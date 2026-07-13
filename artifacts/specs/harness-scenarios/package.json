@@ -1,0 +1,29 @@
+{
+  "schema_version": "vean.package-mutation-scenarios/1",
+  "suite": "candidate-preflight",
+  "baseline": "one exact ad-hoc-signed app and DMG lineage passes candidate-preflight",
+  "controls": [
+    "runtime-resource-content",
+    "runtime-resource-mode",
+    "runtime-resource-symlink",
+    "runtime-manifest-self-reference",
+    "runtime-parent-substitution",
+    "app-tree-content",
+    "app-tree-mode",
+    "app-parent-substitution",
+    "dmg-byte-staleness",
+    "dmg-second-app",
+    "closure-policy-substitution",
+    "h07-parent-substitution",
+    "post-receipt-resign",
+    "post-receipt-dmg-rebuild"
+  ],
+  "protocol": [
+    "baseline-pass",
+    "apply-one-mutation",
+    "stable-attributed-rejection",
+    "independent-reason-evidence",
+    "restore",
+    "same-baseline-pass"
+  ]
+}

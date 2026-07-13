@@ -18,6 +18,8 @@
 // incrementally behind viewer/src/api.ts; media stays on loopback HTTP because
 // WKWebView's custom-scheme handler is the weak link for <video> Range seeking.
 
+#[cfg(feature = "package-runtime")]
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command};
@@ -93,15 +95,41 @@ fn vean_bin() -> String {
 fn packaged_layout_path(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .resource_dir()
-        .map(|root| root.join("runtime-layout.json"))
+        .map(|root| root.join("package-runtime").join("runtime-layout.json"))
         .map_err(|error| format!("E_RUNTIME_LAYOUT_INVALID: {error}"))
 }
 
 #[cfg(feature = "package-runtime")]
 fn packaged_layout(app: &AppHandle) -> Result<runtime_layout::RuntimeLayout, String> {
-    let layout = runtime_layout::load(&packaged_layout_path(app)?)?;
+    let mut layout = runtime_layout::load(&packaged_layout_path(app)?)?;
+    layout.package_root = app
+        .path()
+        .resource_dir()
+        .map_err(|error| format!("E_RUNTIME_LAYOUT_INVALID: {error}"))?
+        .join("package-runtime");
     runtime_layout::preflight(&layout)?;
     Ok(layout)
+}
+
+#[cfg(feature = "package-runtime")]
+fn materialize_packaged_layout(
+    app: &AppHandle,
+    project: &std::path::Path,
+) -> Result<(runtime_layout::RuntimeLayout, PathBuf), String> {
+    let mut layout = packaged_layout(app)?;
+    layout.project_root = project.to_path_buf();
+    let dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| format!("E_RUNTIME_LAYOUT_INVALID: {error}"))?;
+    std::fs::create_dir_all(&dir).map_err(|error| format!("E_RUNTIME_LAYOUT_INVALID: {error}"))?;
+    let path = dir.join("runtime-layout.json");
+    let bytes = serde_json::to_vec(&layout)
+        .map_err(|error| format!("E_RUNTIME_LAYOUT_INVALID: {error}"))?;
+    std::fs::write(&path, bytes).map_err(|error| format!("E_RUNTIME_LAYOUT_INVALID: {error}"))?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|error| format!("E_RUNTIME_LAYOUT_INVALID: {error}"))?;
+    Ok((layout, path))
 }
 
 /// The project the app should boot at: the persisted active project from
@@ -126,6 +154,9 @@ fn boot_project(app: &AppHandle) -> PathBuf {
     }
     #[cfg(feature = "package-runtime")]
     if let Ok(layout) = packaged_layout(app) {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join("Movies").join("Vean");
+        }
         return layout.project_root;
     }
     vean_repo()
@@ -345,14 +376,11 @@ fn spawn_sidecar(
     let _ = app;
     #[cfg(feature = "package-runtime")]
     let (program, prefix, runtime_layout_path) = {
-        let layout = packaged_layout(app).map_err(std::io::Error::other)?;
+        let (layout, materialized) =
+            materialize_packaged_layout(app, project).map_err(std::io::Error::other)?;
         let core = runtime_layout::resource_path(&layout, "core.executable")
             .map_err(std::io::Error::other)?;
-        (
-            core,
-            Vec::<PathBuf>::new(),
-            Some(packaged_layout_path(app).map_err(std::io::Error::other)?),
-        )
+        (core, Vec::<PathBuf>::new(), Some(materialized))
     };
     #[cfg(not(feature = "package-runtime"))]
     let (program, prefix, runtime_layout_path) = (
@@ -484,13 +512,9 @@ fn run_action_internal(
     let _ = app;
     #[cfg(feature = "package-runtime")]
     let (program, prefix, runtime_layout_path) = {
-        let layout = packaged_layout(app)?;
+        let (layout, materialized) = materialize_packaged_layout(app, project)?;
         let core = runtime_layout::resource_path(&layout, "core.executable")?;
-        (
-            core,
-            Vec::<PathBuf>::new(),
-            Some(packaged_layout_path(app)?),
-        )
+        (core, Vec::<PathBuf>::new(), Some(materialized))
     };
     #[cfg(not(feature = "package-runtime"))]
     let (program, prefix, runtime_layout_path) = (

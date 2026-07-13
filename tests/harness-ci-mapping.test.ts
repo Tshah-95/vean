@@ -7,12 +7,18 @@ import { parse } from "yaml";
 import { validateBootstrapPolicy } from "../scripts/ci/run-harness-profile";
 
 type Policy = Parameters<typeof validateBootstrapPolicy>[0];
+type PackageMappedPolicy = Policy & {
+  claim_mappings: {
+    "package-build-host": { runner: string; commands: string[]; evidence: string };
+    "package-clean-consumer": { runner: string; commands: string[]; implemented: boolean };
+  };
+};
 
 const root = resolve(import.meta.dirname, "..");
 const workflow = readFileSync(resolve(root, ".github/workflows/harness.yml"), "utf8");
 const policy = JSON.parse(
   readFileSync(resolve(root, "scripts/ci/harness-policy.json"), "utf8"),
-) as Policy;
+) as PackageMappedPolicy;
 const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")) as {
   scripts: Record<string, string>;
 };
@@ -27,6 +33,21 @@ function step(name: string): Record<string, unknown> {
 }
 
 describe("CI bootstrap policy mapping", () => {
+  it("keeps build-host package claims distinct from the unimplemented sealed consumer runner", () => {
+    expect(policy.claim_mappings["package-build-host"].runner).toBe(
+      "dedicated-arm64-macos-26-build-host",
+    );
+    expect(policy.claim_mappings["package-build-host"].commands).toContain(
+      "bun run verify:package --suite candidate-preflight --lineage <distribution-receipt>",
+    );
+    expect(policy.claim_mappings["package-build-host"].evidence).toBe(
+      ".vean/package-evidence/<candidate-id>/build/",
+    );
+    expect(policy.claim_mappings["package-clean-consumer"]).toMatchObject({
+      runner: "distinct-sealed-arm64-macos-26-consumer",
+      implemented: false,
+    });
+  });
   it("maps the required push-main bootstrap to existing canonical commands", () => {
     expect(validateBootstrapPolicy(policy, workflow, packageJson)).toEqual([]);
     expect(policy.commands).toEqual(["bun run lint", "bun run typecheck", "bun run test"]);

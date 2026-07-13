@@ -1,10 +1,10 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RuntimeLayout {
     pub schema_version: String,
     pub mode: String,
@@ -15,13 +15,14 @@ pub struct RuntimeLayout {
     pub resources: Vec<RuntimeResource>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RuntimeResource {
     pub id: String,
     pub relative_path: PathBuf,
     pub sha256: String,
     pub mode: u32,
     pub executable: bool,
+    pub requirement: String,
 }
 
 pub fn compiled_runtime_mode() -> &'static str {
@@ -132,6 +133,9 @@ pub fn resource_path(layout: &RuntimeLayout, id: &str) -> Result<PathBuf, String
 
 pub fn preflight(layout: &RuntimeLayout) -> Result<(), String> {
     for resource in &layout.resources {
+        if resource.requirement != "startup-required" {
+            continue;
+        }
         resource_path(layout, &resource.id)?;
     }
     Ok(())
@@ -164,6 +168,7 @@ mod runtime_layout_tests {
                 sha256: "0".repeat(64),
                 mode: 0o755,
                 executable: true,
+                requirement: "startup-required".into(),
             }],
         };
         assert!(resource_path(&layout, "core")

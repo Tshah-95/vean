@@ -34,7 +34,7 @@
       "sidecars/README.md"
     ],
     "macOS": {
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "26.0"
     }
   }
 }

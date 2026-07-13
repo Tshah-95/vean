@@ -21,5 +21,30 @@
   "facade_script": "bun scripts/ci/run-harness-profile.ts",
   "commands": ["bun run lint", "bun run typecheck", "bun run test"],
   "covers": ["meta-evaluator-contract", "root-static", "root-tests"],
+  "claim_mappings": {
+    "package-build-host": {
+      "runner": "dedicated-arm64-macos-26-build-host",
+      "commands": [
+        "bun run package:core",
+        "bun run package:sidecars",
+        "bun run package:remotion",
+        "bun run package:candidate",
+        "bun run verify:package --suite candidate-preflight --lineage <distribution-receipt>",
+        "bunx vitest run tests/package-lineage.test.ts tests/package-preflight-mutation.test.ts"
+      ],
+      "evidence": ".vean/package-evidence/<candidate-id>/build/",
+      "required_before_completion": true
+    },
+    "package-clean-consumer": {
+      "runner": "distinct-sealed-arm64-macos-26-consumer",
+      "commands": [
+        "bun run vm:package:verify -- --lineage <distribution-receipt> --fixture <fixture-manifest>",
+        "bun run verify:package --suite clean-consumer --evidence <archive>"
+      ],
+      "evidence": "mode-0600 clean-consumer archive",
+      "required_before_completion": true,
+      "implemented": false
+    }
+  },
   "required": true
 }
