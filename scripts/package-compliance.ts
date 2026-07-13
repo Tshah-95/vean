@@ -30,28 +30,20 @@ function hash(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
-async function ensureLicense(cache: string, id: keyof typeof licenseInputs): Promise<string> {
-  const [url, expected] = licenseInputs[id];
-  const path = join(cache, "licenses", `${id}.txt`);
-  mkdirSync(resolve(path, ".."), { recursive: true });
-  if (!existsSync(path)) {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`E_COMPLIANCE_DOWNLOAD: ${url} ${response.status}`);
-    writeFileSync(path, new Uint8Array(await response.arrayBuffer()));
-  }
+function ensureLicense(id: keyof typeof licenseInputs): string {
+  const [, expected] = licenseInputs[id];
+  const path = join(repo, "compliance", "licenses", `${id}.txt`);
+  if (!existsSync(path)) throw new Error(`E_COMPLIANCE_LICENSE_MISSING: ${id}`);
   if (hash(path) !== expected) throw new Error(`E_COMPLIANCE_LICENSE_HASH: ${id}`);
   return path;
 }
 
-export async function packageCompliance(
-  runtimeRoot: string,
-  cacheRoot = join(repo, ".vean", "package-cache"),
-) {
+export async function packageCompliance(runtimeRoot: string) {
   const root = resolve(runtimeRoot);
   const out = join(root, "compliance");
   mkdirSync(join(out, "licenses"), { recursive: true });
   for (const id of Object.keys(licenseInputs) as Array<keyof typeof licenseInputs>) {
-    cpSync(await ensureLicense(cacheRoot, id), join(out, "licenses", `${id}.txt`));
+    cpSync(ensureLicense(id), join(out, "licenses", `${id}.txt`));
   }
   for (const file of ["LICENSE", "LICENSING.md", "CONTRIBUTING.md"])
     cpSync(join(repo, file), join(out, file));
