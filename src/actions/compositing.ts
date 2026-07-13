@@ -240,6 +240,15 @@ export function animateTransform(
           loc.position + playtime(loc.clip) - 1,
           {},
         );
+  // Reusing an established qtblend must preserve its compositing root. In a
+  // three-layer stack, the transition may intentionally use track 1 as the
+  // cumulative A side while the animated cutout is on track 3. Recomputing A
+  // as the immediately lower track would silently drop the already-composited
+  // camera layer and render transparent regions over black. An explicit
+  // underlayClipId is the only request that is allowed to rewire that topology.
+  if (existingIndex >= 0 && !args.underlayClipId) {
+    aTrack = baseTransition.aTrack;
+  }
   const nextTransition: Transition = {
     ...structuredClone(baseTransition),
     aTrack,

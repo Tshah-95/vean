@@ -84,6 +84,43 @@ describe("timeline.animateTransform", () => {
     expectInverts(animated.inverse, animated.state, placed.state);
   });
 
+  it("preserves the cumulative compositing root when animating a third-layer cutout", () => {
+    resetIds();
+    const original = timeline(VERTICAL, {
+      video: [
+        videoTrack(colorClip(120, "blue", { id: "camera" })),
+        videoTrack(colorClip(120, "gold", { id: "graphic" })),
+      ],
+    });
+    original.transitions.push({
+      service: "qtblend",
+      aTrack: 1,
+      bTrack: 2,
+      in: 0,
+      out: 119,
+      properties: {},
+    });
+    const placed = applySubjectAlpha(original, {
+      cutoutResource: "/abs/cutout.mov",
+      targetClipId: "camera",
+      position: 0,
+      durationFrames: 120,
+      cutoutClipId: "founder",
+    });
+    if (!("state" in placed)) throw new Error(JSON.stringify(placed));
+    expect(placed.state.transitions[1]).toMatchObject({ aTrack: 1, bTrack: 3 });
+
+    const animated = animateTransform(placed.state, {
+      clipId: "founder",
+      startFrame: 30,
+      endFrame: 45,
+      from: { x: 0, y: 0, width: 1, height: 1 },
+      to: { x: 0.68, y: 0.08, width: 0.28, height: 0.84 },
+    });
+    if (!("state" in animated)) throw new Error(JSON.stringify(animated));
+    expect(animated.state.transitions[1]).toMatchObject({ aTrack: 1, bTrack: 3 });
+  });
+
   it("uses known source dimensions to aspect-fit contain slots", () => {
     const result = animateTransform(base(), {
       clipId: "speaker",
