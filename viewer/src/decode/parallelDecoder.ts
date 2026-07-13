@@ -29,6 +29,7 @@ import type { MediaResourceLedger } from "../test-bridge/resourceLedger";
 //    the pool isn't clogged decoding frames the playhead already left.
 //  • ZERO-COPY: the worker transfers the `ImageBitmap` (§5); the resolver owns it.
 import type { DecodeResponse, OpenResponse, WorkerResponse } from "./protocol";
+import { fetchSourceProxyBlob } from "./sourceProxyApi";
 
 /** A decoded frame + its actual presentation timestamp (seconds). */
 export interface DecodedFrame {
@@ -180,9 +181,7 @@ export class ParallelDecoder {
     if (existing) w.worker.postMessage({ type: "close", clipId: uuid });
     const opened = (async () => {
       await w.ready;
-      const res = await fetch(proxyUrl);
-      if (!res.ok) throw new Error(`source-proxy ${res.status}`);
-      const blob = await res.blob();
+      const blob = await fetchSourceProxyBlob(proxyUrl);
       const requestId = `open-${nextRequestId++}`;
       const resp = await this.request<OpenResponse>(w, {
         type: "open",

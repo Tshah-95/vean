@@ -816,6 +816,19 @@ export function createPreviewHandler(
         const result = await buildSourceProxy(repo, resolvedReq, { intra });
         return serveFile(result.proxyPath, dirname(result.proxyPath), req);
       } catch (error) {
+        const { isSourceProxyError } = await import("./source-proxy");
+        if (isSourceProxyError(error)) {
+          return jsonResponse(
+            {
+              ok: false,
+              kind: "source-proxy",
+              code: error.code,
+              sourcePath: error.sourcePath,
+              detail: error.message,
+            },
+            error.code === "ALPHA_PROBE_UNKNOWN" ? 422 : 500,
+          );
+        }
         return jsonResponse(
           { ok: false, kind: "source-proxy", detail: String((error as Error)?.message ?? error) },
           500,

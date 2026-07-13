@@ -1,370 +1,717 @@
-// The PER-SOURCE short-GOP H.264 proxy builder for the live in-browser decode path
-// (DESIGN-LIVE-PREVIEW §5, §8.2, §9 step 3).
-//
-// WHY this exists (the codec decision, settled by the spike, §8.2): the live
-// decode source for the WebGL `renderFrame` compositor is mediabunny → WebCodecs,
-// and WebCodecs cannot reliably decode the user's footage:
-//   • HEVC (`hvc1`) is HARDWARE-ONLY in Chrome — ~8.5% of sessions can't decode it
-//     at all (no software fallback), and a headless Chromium often lacks the HW
-//     path entirely, so feeding raw HEVC to the worker is a black frame.
-//   • ProRes 4444 (the Remotion alpha-export format) is not WebCodecs-decodable.
-// The decision: build a lightweight **H.264** proxy for the live decode path —
-// `avc1` decodes everywhere (HW or SW). This is the SAME H.264 encode the whole-
-// timeline preview proxy (`proxy.ts`) already does; the difference is (1) it is
-// PER SOURCE FILE (not the whole timeline), so the worker demuxes one stable
-// artifact per producer UUID and seeks within it, and (2) it uses a SHORT GOP
-// (`-g 15`) so worst-case random-access seek collapses toward a single keyframe
-// (~6ms; the spike measured the proxy at median 13.6ms / max 21.3ms vs HEVC max
-// 35.9ms). Short GOP is the scrub-latency lever named in §8.2.
-//
-// This is a READ-SIDE derivation for preview only — never written back to the
-// canonical `.mlt`. It shells out to `melt` via the existing arm's-length driver
-// (a separate process — never linking libmlt; Hard boundary #1/#2). The artifact
-// is content-addressed by (source path · mtime · size · scale · gop) and cached
-// under `.vean/cache/source-proxy/` (gitignored), so re-decoding the same source
-// across edits never re-encodes, while replacing the file on disk invalidates it.
-//
-// IMPORTANT — this builds the artifact; it does NOT decode it. Decode happens in
-// the browser (`viewer/src/decode/`), off the `melt` boundary entirely. `melt`
-// here is a transcode-once step, NOT in the scrub loop.
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+// Per-source decode-proxy builder for the live preview. Proxies are derived,
+// content-addressed artifacts, but they are still product data: publishing an
+// opaque, truncated, stale, or half-written proxy changes what the user sees.
+// This module therefore treats the cache as a tiny transactional artifact store.
+import { createHash, randomBytes } from "node:crypto";
+import {
+  closeSync,
+  createReadStream,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { resolveBin } from "../driver/melt";
 
 const STATE_DIR_NAME = ".vean";
+/** Bump whenever codec flags, validation, or manifest semantics change. */
+export const SOURCE_PROXY_SCHEMA = "vean-source-proxy-v2";
+const LOCK_TIMEOUT_MS = 120_000;
+const LOCK_POLL_MS = 20;
 
-/** The directory holding cached per-source H.264 decode proxies. Distinct from the
- *  whole-timeline proxy dir (`proxyCacheDir`) — these are per-source-file artifacts
- *  the in-browser decoder demuxes, not a composited timeline render. */
+export type SourceProxyErrorCode =
+  | "SOURCE_NOT_FOUND"
+  | "ALPHA_PROBE_UNKNOWN"
+  | "ENCODER_IDENTITY_UNKNOWN"
+  | "ENCODER_FAILED"
+  | "ENCODER_NO_OUTPUT"
+  | "SOURCE_CHANGED"
+  | "PROXY_VALIDATION_FAILED"
+  | "PROXY_LOCK_TIMEOUT";
+
+/** Product-facing, attributable failure. `sourcePath` is intentionally carried
+ * through the API and viewer so a failed overlay is never an anonymous black box. */
+export class SourceProxyError extends Error {
+  constructor(
+    readonly code: SourceProxyErrorCode,
+    readonly sourcePath: string,
+    detail: string,
+    options?: ErrorOptions,
+  ) {
+    super(detail, options);
+    this.name = "SourceProxyError";
+  }
+}
+
+const SOURCE_PROXY_ERROR_CODES = new Set<SourceProxyErrorCode>([
+  "SOURCE_NOT_FOUND",
+  "ALPHA_PROBE_UNKNOWN",
+  "ENCODER_IDENTITY_UNKNOWN",
+  "ENCODER_FAILED",
+  "ENCODER_NO_OUTPUT",
+  "SOURCE_CHANGED",
+  "PROXY_VALIDATION_FAILED",
+  "PROXY_LOCK_TIMEOUT",
+]);
+
+/** Hot reload can evaluate the module twice, so API mapping must not rely solely
+ * on constructor identity across the reload boundary. */
+export function isSourceProxyError(error: unknown): error is SourceProxyError {
+  if (error instanceof SourceProxyError) return true;
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { name?: unknown; code?: unknown; sourcePath?: unknown };
+  return (
+    candidate.name === "SourceProxyError" &&
+    typeof candidate.code === "string" &&
+    SOURCE_PROXY_ERROR_CODES.has(candidate.code as SourceProxyErrorCode) &&
+    typeof candidate.sourcePath === "string"
+  );
+}
+
 export function sourceProxyCacheDir(repo = process.cwd()): string {
   return resolve(repo, STATE_DIR_NAME, "cache", "source-proxy");
 }
 
-/** Round to an even integer ≥ 2 (h264 needs even dimensions). */
 function evenDim(value: number): number {
   return Math.max(2, Math.round(value / 2) * 2);
 }
 
 export type SourceProxyOpts = {
-  /** Longest-edge cap in pixels for the proxy (default 960 — the spike's scrub
-   *  sweet spot: 960×540 median seek 13.6ms). The source is downscaled to fit this
-   *  box preserving aspect; never upscaled. */
   maxEdge?: number;
-  /** GOP length in frames (default 15 — short GOP for instant random access; a
-   *  seek lands within at most `gop−1` frames of a keyframe). Ignored when `intra`
-   *  is set (all-intra forces a keyframe on EVERY frame). */
   gop?: number;
-  /** ALL-INTRA: every frame is a keyframe (`keyint=1`, no inter-frames). The §8.2
-   *  scrub-heavy extreme of the short-GOP lever — worst-case random-access seek
-   *  collapses to a SINGLE keyframe (~6ms, no GOP walk) at the cost of a larger
-   *  proxy. Use for footage the editor scrubs frame-by-frame; the default short
-   *  GOP (`-g 15`) is the size/seek balance for normal play. NOTE: only the opaque
-   *  H.264 path honours this; an alpha (VP9) proxy keeps the short-GOP path
-   *  (all-intra VP9-alpha is rarely worth the size). */
   intra?: boolean;
-  /** Bypass the cache and force a fresh encode. */
   force?: boolean;
 };
 
 export type SourceProxyResult = {
-  /** Absolute path to the produced proxy (mp4 for opaque, webm for alpha sources). */
   proxyPath: string;
-  /** The content-address cache key (also the basename without extension). */
   key: string;
-  /** Proxy pixel width (even). */
   width: number;
-  /** Proxy pixel height (even). */
   height: number;
-  /** True iff served from cache (no re-encode). */
   cached: boolean;
-  /** True iff the source carries an alpha plane, so the proxy is VP9-with-alpha
-   *  (WebM) rather than H.264 (which has no alpha plane). The compositor relies on
-   *  this to over-composite the layer's transparency (e.g. retire's `chat.mov`
-   *  scrim over the footage); an opaque H.264 proxy of an alpha source would paint
-   *  black where the source was transparent and occlude the layer below. */
   hasAlpha: boolean;
-  /** The proxy container's MIME type (`video/mp4` | `video/webm`) for serving. */
-  contentType: string;
+  contentType: "video/mp4" | "video/webm";
 };
 
-/** ffprobe a source's first video-stream `pix_fmt` and decide whether it carries an
- *  alpha plane. The live decode path can only over-composite a transparent overlay
- *  if its proxy keeps the alpha — H.264 cannot, so an alpha source is proxied as
- *  VP9-with-alpha instead. Pixel formats with an alpha plane end in `a`
- *  (`yuva420p`, `yuva444p12le`, `rgba`, `bgra`, `argb`, `ya8`, …) — the robust,
- *  codec-agnostic signal. Never throws (a proxy must always build), but a probe
- *  FAILURE is reported as `probed:false` (alpha UNKNOWN) — NOT as `hasAlpha:false`,
- *  so the caller can log it loudly instead of silently degrading an alpha source to
- *  an occluding opaque proxy (the shipped-app `chat.mov`-goes-black bug). */
-async function detectAlpha(resolvedSource: string): Promise<AlphaProbe> {
+type SourceProbe = {
+  pixFmt: string;
+  width: number;
+  height: number;
+  hasAlpha: boolean;
+};
+
+type ArtifactProbe = {
+  codecName: string;
+  pixFmt: string;
+  width: number;
+  height: number;
+  alphaMode: string | null;
+};
+
+type SourceProxyManifest = {
+  schema: typeof SOURCE_PROXY_SCHEMA;
+  key: string;
+  sourcePath: string;
+  sourceSha256: string;
+  encoderIdentity: string;
+  encoderArgv: string[];
+  hasAlpha: boolean;
+  codecName: "h264" | "vp9";
+  pixFmt: string;
+  width: number;
+  height: number;
+  artifactSha256: string;
+  artifactBytes: number;
+};
+
+type SpawnCapture = { code: number; stdout: string; stderr: string };
+
+async function spawnCapture(argv: string[]): Promise<SpawnCapture> {
+  const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  return { code, stdout, stderr };
+}
+
+function sha256File(path: string): Promise<string> {
+  return new Promise((resolveHash, reject) => {
+    const hash = createHash("sha256");
+    const stream = createReadStream(path);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", reject);
+    stream.on("end", () => resolveHash(hash.digest("hex")));
+  });
+}
+
+function alphaPixFmt(pixFmt: string): boolean {
+  return (
+    /^yuva/.test(pixFmt) ||
+    /^ya\d/.test(pixFmt) ||
+    /^gbra/.test(pixFmt) ||
+    ["rgba", "bgra", "argb", "abgr", "pal8"].includes(pixFmt) ||
+    pixFmt.includes("rgba") ||
+    pixFmt.includes("bgra")
+  );
+}
+
+/** Alpha is a routing decision, so an unavailable/malformed probe is not an
+ * opaque result. It is an attributed 422 product error and produces no cache. */
+async function probeSource(sourcePath: string): Promise<SourceProbe> {
+  let result: SpawnCapture;
   try {
-    const proc = Bun.spawn(
-      [
-        resolveBin("ffprobe"),
-        "-v",
-        "error",
-        "-select_streams",
-        "v:0",
-        "-show_entries",
-        "stream=pix_fmt",
-        "-of",
-        "default=noprint_wrappers=1:nokey=1",
-        resolvedSource,
-      ],
-      { stdout: "pipe", stderr: "pipe" },
-    );
-    const [out, stderr, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
+    result = await spawnCapture([
+      resolveBin("ffprobe"),
+      "-v",
+      "error",
+      "-select_streams",
+      "v:0",
+      "-show_entries",
+      "stream=pix_fmt,width,height",
+      "-of",
+      "json",
+      sourcePath,
     ]);
-    // A NONZERO exit means ffprobe could not run (missing binary, a dyld failure in
-    // the packaged app, an unreadable file) — NOT "no alpha". Returning `probed:false`
-    // is what stops the caller from silently treating an alpha source as opaque (the
-    // bug that turned `chat.mov` into an occluding black scrim in the shipped app).
-    if (code !== 0) {
-      return {
-        hasAlpha: false,
-        probed: false,
-        detail: stderr.trim().slice(0, 200) || `exit ${code}`,
-      };
-    }
-    const pixFmt = out.trim().toLowerCase();
-    // Alpha pixel formats: yuva*, rgba/bgra/argb/abgr, ya8/ya16, gbrap, pal8 (LUT
-    // may carry alpha). The decisive marker is an `a` in the channel layout — match
-    // the well-known families rather than a brittle exact list.
-    const hasAlpha =
-      /^yuva/.test(pixFmt) ||
-      /^ya\d/.test(pixFmt) ||
-      /^gbra/.test(pixFmt) ||
-      pixFmt === "rgba" ||
-      pixFmt === "bgra" ||
-      pixFmt === "argb" ||
-      pixFmt === "abgr" ||
-      pixFmt.includes("rgba") ||
-      pixFmt.includes("bgra");
-    return { hasAlpha, probed: true };
   } catch (error) {
-    return {
-      hasAlpha: false,
-      probed: false,
-      detail: String((error as Error)?.message ?? error).slice(0, 200),
+    throw new SourceProxyError(
+      "ALPHA_PROBE_UNKNOWN",
+      sourcePath,
+      `Cannot determine whether the source has alpha: ${String((error as Error)?.message ?? error)}`,
+      { cause: error },
+    );
+  }
+  if (result.code !== 0) {
+    throw new SourceProxyError(
+      "ALPHA_PROBE_UNKNOWN",
+      sourcePath,
+      `Cannot determine whether the source has alpha: ${result.stderr.trim() || `ffprobe exited ${result.code}`}`,
+    );
+  }
+  try {
+    const raw = JSON.parse(result.stdout) as {
+      streams?: Array<{ pix_fmt?: unknown; width?: unknown; height?: unknown }>;
     };
+    const stream = raw.streams?.[0];
+    const pixFmt = typeof stream?.pix_fmt === "string" ? stream.pix_fmt.trim().toLowerCase() : "";
+    const width = Number(stream?.width);
+    const height = Number(stream?.height);
+    if (
+      !pixFmt ||
+      !Number.isInteger(width) ||
+      width <= 0 ||
+      !Number.isInteger(height) ||
+      height <= 0
+    ) {
+      throw new Error("ffprobe returned no usable video pix_fmt/dimensions");
+    }
+    return { pixFmt, width, height, hasAlpha: alphaPixFmt(pixFmt) };
+  } catch (error) {
+    throw new SourceProxyError(
+      "ALPHA_PROBE_UNKNOWN",
+      sourcePath,
+      `Cannot determine whether the source has alpha: ${String((error as Error).message)}`,
+      { cause: error },
+    );
   }
 }
 
-/** The result of probing a source for an alpha plane. `probed:false` means ffprobe
- *  could not be run at all — the alpha is UNKNOWN, distinct from a probed "no alpha".
- *  The caller must NOT treat unknown as opaque silently (that corrupts alpha
- *  overlays); it logs loudly and the failure is diagnosable. */
-interface AlphaProbe {
-  hasAlpha: boolean;
-  /** True iff ffprobe ran and reported a pixel format; false iff it failed. */
-  probed: boolean;
-  /** ffprobe's failure detail when `probed` is false (for the loud log). */
-  detail?: string;
+async function encoderIdentity(sourcePath: string): Promise<string> {
+  // Both variants are direct per-file ffmpeg transcodes. MLT remains the timeline
+  // renderer, but routing a single source through melt would add an implicit,
+  // hard-to-record profile file to the artifact lineage.
+  const bin = resolveBin("ffmpeg");
+  let result: SpawnCapture;
+  try {
+    result = await spawnCapture([bin, "-version"]);
+  } catch (error) {
+    throw new SourceProxyError(
+      "ENCODER_IDENTITY_UNKNOWN",
+      sourcePath,
+      `Cannot identify proxy encoder ${bin}: ${String((error as Error)?.message ?? error)}`,
+      { cause: error },
+    );
+  }
+  const version = (result.stdout || result.stderr).trim().split(/\r?\n/)[0]?.trim();
+  if (result.code !== 0 || !version) {
+    throw new SourceProxyError(
+      "ENCODER_IDENTITY_UNKNOWN",
+      sourcePath,
+      `Cannot identify proxy encoder ${bin}: ${result.stderr.trim() || `exit ${result.code}`}`,
+    );
+  }
+  return `${bin}::${version}`;
 }
 
-/** Content-address key for a source proxy: a hash of the resolved source path, its
- *  on-disk mtime + size (so replacing the file invalidates the proxy), and the
- *  encode params. 32 hex chars — collision-safe for a per-project cache. */
-function proxyKey(
-  resolvedSource: string,
-  mtimeMs: number,
-  size: number,
-  maxEdge: number,
-  gop: number,
-  alpha: boolean,
-  intra: boolean,
-): string {
-  // `i1` (all-intra) is part of the address so an all-intra proxy never collides
-  // with the short-GOP one for the same source — they are different artifacts.
+function dimensions(probe: SourceProbe, maxEdge: number): { width: number; height: number } {
+  const longest = Math.max(probe.width, probe.height);
+  const scale = longest > maxEdge ? maxEdge / longest : 1;
+  return { width: evenDim(probe.width * scale), height: evenDim(probe.height * scale) };
+}
+
+function cacheKey(input: {
+  sourcePath: string;
+  sourceSha256: string;
+  encoderIdentity: string;
+  maxEdge: number;
+  gop: number;
+  hasAlpha: boolean;
+  intra: boolean;
+}): string {
   return createHash("sha256")
-    .update(
-      `${resolvedSource}::${mtimeMs}::${size}::${maxEdge}::g${gop}::a${alpha ? 1 : 0}::i${intra ? 1 : 0}`,
-    )
+    .update(JSON.stringify({ schema: SOURCE_PROXY_SCHEMA, ...input }))
     .digest("hex")
     .slice(0, 32);
 }
 
-/**
- * Build (or hit the cache for) the per-source short-GOP H.264 decode proxy for one
- * source media file. PURE w.r.t. the timeline IR — it transcodes a single file, so
- * it has no knowledge of placement/edits; the artifact is keyed by the source, not
- * the timeline, which is exactly why it survives ripple/trim edits that only move
- * the clip (the decode cache identity is the producer UUID, the artifact identity
- * is the source file).
- *
- * `srcPath` MUST already be authorized by the caller (the server checks it against
- * the live timeline's referenced-resource allowlist before calling this — this fn
- * does not re-authorize; it transcodes whatever path it's handed).
- */
+async function probeArtifact(path: string, sourcePath: string): Promise<ArtifactProbe> {
+  let result: SpawnCapture;
+  try {
+    result = await spawnCapture([
+      resolveBin("ffprobe"),
+      "-v",
+      "error",
+      "-select_streams",
+      "v:0",
+      "-show_entries",
+      "stream=codec_name,pix_fmt,width,height:stream_tags=alpha_mode",
+      "-of",
+      "json",
+      path,
+    ]);
+  } catch (error) {
+    throw new SourceProxyError(
+      "PROXY_VALIDATION_FAILED",
+      sourcePath,
+      `Proxy validation could not run: ${String((error as Error)?.message ?? error)}`,
+      { cause: error },
+    );
+  }
+  if (result.code !== 0) {
+    throw new SourceProxyError(
+      "PROXY_VALIDATION_FAILED",
+      sourcePath,
+      `Proxy is not decodable: ${result.stderr.trim() || `ffprobe exited ${result.code}`}`,
+    );
+  }
+  try {
+    const raw = JSON.parse(result.stdout) as {
+      streams?: Array<{
+        codec_name?: unknown;
+        pix_fmt?: unknown;
+        width?: unknown;
+        height?: unknown;
+        tags?: { alpha_mode?: unknown };
+      }>;
+    };
+    const stream = raw.streams?.[0];
+    const codecName = typeof stream?.codec_name === "string" ? stream.codec_name : "";
+    const pixFmt = typeof stream?.pix_fmt === "string" ? stream.pix_fmt.toLowerCase() : "";
+    const width = Number(stream?.width);
+    const height = Number(stream?.height);
+    if (!codecName || !pixFmt || !Number.isInteger(width) || !Number.isInteger(height)) {
+      throw new Error("ffprobe returned incomplete video metadata");
+    }
+    return {
+      codecName,
+      pixFmt,
+      width,
+      height,
+      alphaMode: typeof stream?.tags?.alpha_mode === "string" ? stream.tags.alpha_mode : null,
+    };
+  } catch (error) {
+    throw new SourceProxyError(
+      "PROXY_VALIDATION_FAILED",
+      sourcePath,
+      `Proxy metadata is invalid: ${String((error as Error).message)}`,
+      { cause: error },
+    );
+  }
+}
+
+function assertArtifact(
+  probe: ArtifactProbe,
+  expected: { sourcePath: string; hasAlpha: boolean; width: number; height: number },
+): void {
+  const codec = expected.hasAlpha ? "vp9" : "h264";
+  const alpha = alphaPixFmt(probe.pixFmt) || probe.alphaMode === "1";
+  const pixFmtOk = expected.hasAlpha ? alpha : probe.pixFmt === "yuv420p" && !alpha;
+  if (
+    probe.codecName !== codec ||
+    !pixFmtOk ||
+    probe.width !== expected.width ||
+    probe.height !== expected.height
+  ) {
+    throw new SourceProxyError(
+      "PROXY_VALIDATION_FAILED",
+      expected.sourcePath,
+      `Proxy stream mismatch: expected ${codec}/${expected.hasAlpha ? "alpha" : "yuv420p"} ${expected.width}x${expected.height}, got ${probe.codecName || "none"}/${probe.pixFmt || "none"} ${probe.width}x${probe.height}${probe.alphaMode ? ` alpha_mode=${probe.alphaMode}` : ""}`,
+    );
+  }
+}
+
+function removeArtifacts(...paths: string[]): void {
+  for (const path of paths) rmSync(path, { force: true, recursive: true });
+}
+
+function syncFile(path: string): void {
+  const fd = openSync(path, "r");
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function syncDir(path: string): void {
+  const fd = openSync(path, "r");
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+async function validateCache(
+  artifactPath: string,
+  manifestPath: string,
+  identity: Omit<SourceProxyManifest, "artifactSha256" | "artifactBytes" | "pixFmt">,
+): Promise<boolean> {
+  if (!existsSync(artifactPath) || !existsSync(manifestPath)) return false;
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as SourceProxyManifest;
+    for (const field of [
+      "schema",
+      "key",
+      "sourcePath",
+      "sourceSha256",
+      "encoderIdentity",
+      "hasAlpha",
+      "codecName",
+      "width",
+      "height",
+    ] as const) {
+      if (manifest[field] !== identity[field]) throw new Error(`manifest ${field} mismatch`);
+    }
+    if (JSON.stringify(manifest.encoderArgv) !== JSON.stringify(identity.encoderArgv)) {
+      throw new Error("manifest encoderArgv mismatch");
+    }
+    const stat = statSync(artifactPath);
+    if (!stat.isFile() || stat.size <= 0 || stat.size !== manifest.artifactBytes) {
+      throw new Error("artifact size mismatch");
+    }
+    if ((await sha256File(artifactPath)) !== manifest.artifactSha256) {
+      throw new Error("artifact hash mismatch");
+    }
+    const probe = await probeArtifact(artifactPath, identity.sourcePath);
+    assertArtifact(probe, identity);
+    if (probe.pixFmt !== manifest.pixFmt) throw new Error("artifact pix_fmt drift");
+    return true;
+  } catch {
+    removeArtifacts(artifactPath, manifestPath);
+    return false;
+  }
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+async function acquireLock(lockPath: string, sourcePath: string): Promise<() => void> {
+  const started = Date.now();
+  while (true) {
+    try {
+      mkdirSync(lockPath);
+      try {
+        writeFileSync(
+          join(lockPath, "owner.json"),
+          JSON.stringify({ pid: process.pid, at: Date.now() }),
+        );
+      } catch (error) {
+        rmSync(lockPath, { recursive: true, force: true });
+        throw error;
+      }
+      return () => rmSync(lockPath, { recursive: true, force: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      try {
+        const owner = JSON.parse(readFileSync(join(lockPath, "owner.json"), "utf8")) as {
+          pid?: number;
+          at?: number;
+        };
+        if (typeof owner.pid === "number" && !processAlive(owner.pid)) {
+          rmSync(lockPath, { recursive: true, force: true });
+          continue;
+        }
+      } catch {
+        // A creator may be between mkdir and owner write. If it never finished,
+        // reap the ownerless directory after a short grace interval.
+        try {
+          if (Date.now() - statSync(lockPath).mtimeMs > 1_000) {
+            rmSync(lockPath, { recursive: true, force: true });
+            continue;
+          }
+        } catch {
+          continue;
+        }
+      }
+      if (Date.now() - started > LOCK_TIMEOUT_MS) {
+        throw new SourceProxyError(
+          "PROXY_LOCK_TIMEOUT",
+          sourcePath,
+          "Timed out waiting for another source-proxy writer",
+        );
+      }
+      await new Promise((resolveWait) => setTimeout(resolveWait, LOCK_POLL_MS));
+    }
+  }
+}
+
+const inFlight = new Map<string, Promise<SourceProxyResult>>();
+
 export async function buildSourceProxy(
   repo: string,
   srcPath: string,
   opts: SourceProxyOpts = {},
 ): Promise<SourceProxyResult> {
-  const maxEdge = opts.maxEdge ?? 960;
-  // All-intra forces a keyframe on every frame (gop = 1); otherwise the short-GOP
-  // default. `gop` is the effective keyint passed to the encoder below.
-  const intra = opts.intra ?? false;
-  const gop = intra ? 1 : (opts.gop ?? 15);
-  const resolvedSource = resolve(srcPath);
-  if (!existsSync(resolvedSource)) {
-    throw new Error(`source-proxy: source not found: ${resolvedSource}`);
+  const sourcePath = resolve(srcPath);
+  if (!existsSync(sourcePath) || !statSync(sourcePath).isFile()) {
+    throw new SourceProxyError("SOURCE_NOT_FOUND", sourcePath, `Source not found: ${sourcePath}`);
   }
-  const stat = statSync(resolvedSource);
 
-  // Decide the codec by whether the source carries an alpha plane. An alpha overlay
-  // (e.g. retire's `chat.mov`, a `yuva444p12le` scrim) MUST keep its transparency in
-  // the live decode path, so it is proxied as VP9-with-alpha (WebM) — WebCodecs
-  // decodes `vp09` with its alpha plane (proven: mediabunny `CanvasSink({alpha:true})`
-  // returns the source's exact alpha in headless Chromium). H.264 has no alpha plane,
-  // so an opaque H.264 proxy of an alpha source would occlude the layer below.
-  const probe = await detectAlpha(resolvedSource);
-  if (!probe.probed) {
-    // LOUD, not silent: ffprobe could not determine alpha, so we fall back to the
-    // opaque H.264 path — but if the source actually HAS alpha, that opaque proxy will
-    // occlude the footage below (the exact `chat.mov`-goes-black bug). Surface it so
-    // it's diagnosable instead of a mystery black overlay. In the packaged app the
-    // usual cause is the bundled ffprobe failing to load its libav dylibs.
-    const detail = probe.detail ?? "unknown error";
-    console.warn(
-      `[vean] source-proxy: ffprobe could not probe ${resolvedSource} for an alpha plane (${detail}). Falling back to an OPAQUE proxy — if this source has alpha it will occlude the layer below. Check the renderer sidecars (DYLD_FALLBACK_LIBRARY_PATH / the bundled ffprobe must load its libav dylibs).`,
-    );
-  }
-  const hasAlpha = probe.hasAlpha;
-  // The alpha (VP9) path ignores all-intra (see SourceProxyOpts.intra); record the
-  // effective flag in the key so it matches what was actually encoded.
+  const maxEdge = opts.maxEdge ?? 960;
+  const intra = opts.intra ?? false;
+  const requestedGop = intra ? 1 : (opts.gop ?? 15);
+  const [sourceSha256, sourceProbe] = await Promise.all([
+    sha256File(sourcePath),
+    probeSource(sourcePath),
+  ]);
+  const hasAlpha = sourceProbe.hasAlpha;
   const effectiveIntra = intra && !hasAlpha;
-  const key = proxyKey(
-    resolvedSource,
-    stat.mtimeMs,
-    stat.size,
+  const gop = hasAlpha ? (opts.gop ?? 15) : requestedGop;
+  const identity = await encoderIdentity(sourcePath);
+  const { width, height } = dimensions(sourceProbe, maxEdge);
+  const key = cacheKey({
+    sourcePath,
+    sourceSha256,
+    encoderIdentity: identity,
     maxEdge,
     gop,
     hasAlpha,
-    effectiveIntra,
-  );
-
-  const dir = sourceProxyCacheDir(repo);
-  mkdirSync(dir, { recursive: true });
-  const ext = hasAlpha ? "webm" : "mp4";
-  const contentType = hasAlpha ? "video/webm" : "video/mp4";
-  const proxyPath = join(dir, `${key}.${ext}`);
-
-  // Probe the source dimensions to compute the downscaled (aspect-preserving) box.
-  // A probe failure falls back to maxEdge×maxEdge — the proxy still decodes; only
-  // the aspect could be off (the compositor letterboxes/fits anyway).
-  const { width, height } = await proxyDimensions(resolvedSource, maxEdge);
-
-  if (!opts.force && existsSync(proxyPath)) {
-    return { proxyPath, key, width, height, cached: true, hasAlpha, contentType };
-  }
-
-  if (hasAlpha) {
-    // VP9-with-alpha WebM via ffmpeg directly (arm's-length subprocess, like the
-    // driver's contactSheet; never linking libav — Hard boundary #1). `yuva420p`
-    // carries the alpha plane; `-auto-alt-ref 0` is REQUIRED for VP9 alpha (alt-ref
-    // frames drop the alpha side-data otherwise). Short GOP (`-g`/`-keyint_min`) is
-    // the same random-access seek lever as the H.264 path (§8.2); `-an` keeps the
-    // decode proxy video-only. Scale with the `scale` filter to the aspect box.
-    await runFfmpeg([
-      "-y",
-      "-i",
-      resolvedSource,
-      "-vf",
-      `scale=${width}:${height}`,
-      "-c:v",
-      "libvpx-vp9",
-      "-pix_fmt",
-      "yuva420p",
-      "-auto-alt-ref",
-      "0",
-      "-g",
-      String(gop),
-      "-keyint_min",
-      String(gop),
-      "-deadline",
-      "realtime",
-      "-cpu-used",
-      "5",
-      "-an",
-      proxyPath,
-    ]);
-    return { proxyPath, key, width, height, cached: false, hasAlpha, contentType };
-  }
-
-  // Opaque source → the short-GOP (or all-intra) H.264 path. Drive melt to a small
-  // H.264, NO audio (the decode path is video-only; audio stays on the old proxy
-  // `<video>` / Web Audio per the tiered plan). The `g`/`keyint`/`keyint_min` triple
-  // pins the GOP so EVERY ~`gop`th frame is a keyframe — the random-access seek lever
-  // (§8.2). With `intra` (gop=1) every frame is a keyframe, so worst-case seek is a
-  // single keyframe with no GOP walk (the scrub-heavy extreme; §8.2). `bf=0` disables
-  // B-frames so the decoder never reorders (the spike's "push-N-then-collect"
-  // deadlock, §8.5, is avoided wholesale — mediabunny handles ordering, but an
-  // all-reference stream is strictly cheaper to seek). Scaling is done via a
-  // downscaled `scaleProfile`, NOT a consumer `s=` rescale, which stalls melt 7.38
-  // at 99% (the proxy.ts lesson).
-  //
-  // libx264 has a dedicated all-intra flag (`x264opts=keyint=1` ≡ `--keyint 1`), but
-  // we ALSO pass `intra-refresh=0` and the keyint triple so a libx264 default
-  // scenecut/keyint can never reintroduce inter-frames under all-intra.
-  const x264 = effectiveIntra
-    ? "keyint=1:min-keyint=1:scenecut=0:bframes=0:intra-refresh=0"
-    : `keyint=${gop}:min-keyint=${gop}:scenecut=0:bframes=0`;
-  const { render } = await import("../driver/melt");
-  await render(resolvedSource, proxyPath, {
-    vcodec: "libx264",
-    pixFmt: "yuv420p",
-    scaleProfile: { width, height, fps: [30, 1] },
-    extraArgs: [
-      "an=1", // no audio stream in the decode proxy
-      `g=${gop}`,
-      `keyint_min=${gop}`,
-      "bf=0",
-      // melt's avformat consumer forwards `x264opts` to libx264; pin the keyint
-      // there too so a libx264 default scenecut/keyint can't override the GOP.
-      `x264opts=${x264}`,
-    ],
+    intra: effectiveIntra,
   });
 
-  return { proxyPath, key, width, height, cached: false, hasAlpha, contentType };
+  const existing = inFlight.get(key);
+  if (existing) return existing;
+  const operation = buildLocked({
+    repo,
+    sourcePath,
+    sourceSha256,
+    encoderIdentity: identity,
+    key,
+    width,
+    height,
+    gop,
+    hasAlpha,
+    effectiveIntra,
+    force: opts.force === true,
+  });
+  inFlight.set(key, operation);
+  void operation.then(
+    () => {
+      if (inFlight.get(key) === operation) inFlight.delete(key);
+    },
+    () => {
+      if (inFlight.get(key) === operation) inFlight.delete(key);
+    },
+  );
+  return operation;
 }
 
-/** Shell `ffmpeg` arm's-length (a separate process — never linking libav, Hard
- *  boundary #1), draining both pipes; throw with captured stderr on a nonzero exit.
- *  Used for the VP9-with-alpha decode-proxy encode (the opaque path drives `melt`). */
-async function runFfmpeg(args: string[]): Promise<void> {
-  const proc = Bun.spawn([resolveBin("ffmpeg"), ...args], { stdout: "pipe", stderr: "pipe" });
-  const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
-  if (code !== 0) {
-    throw new Error(`source-proxy: ffmpeg exited ${code}\n${stderr.slice(-1200)}`);
-  }
-}
+async function buildLocked(input: {
+  repo: string;
+  sourcePath: string;
+  sourceSha256: string;
+  encoderIdentity: string;
+  key: string;
+  width: number;
+  height: number;
+  gop: number;
+  hasAlpha: boolean;
+  effectiveIntra: boolean;
+  force: boolean;
+}): Promise<SourceProxyResult> {
+  const dir = sourceProxyCacheDir(input.repo);
+  mkdirSync(dir, { recursive: true });
+  const ext = input.hasAlpha ? "webm" : "mp4";
+  const contentType = input.hasAlpha ? "video/webm" : "video/mp4";
+  const artifactPath = join(dir, `${input.key}.${ext}`);
+  const manifestPath = join(dir, `${input.key}.json`);
+  const lockPath = join(dir, `${input.key}.lock`);
+  const token = `${process.pid}-${randomBytes(6).toString("hex")}`;
+  const stagedPath = join(dir, `${input.key}.tmp-${token}.${ext}`);
+  const stagedManifest = join(dir, `${input.key}.tmp-${token}.json`);
+  // Normalize only the transaction-local destination. Every other argument is
+  // byte-for-byte what runs and is persisted in the lineage manifest.
+  const encoderArgv = input.hasAlpha
+    ? [
+        resolveBin("ffmpeg"),
+        "-y",
+        "-i",
+        input.sourcePath,
+        "-vf",
+        `scale=${input.width}:${input.height}`,
+        "-c:v",
+        "libvpx-vp9",
+        "-pix_fmt",
+        "yuva420p",
+        "-auto-alt-ref",
+        "0",
+        "-g",
+        String(input.gop),
+        "-keyint_min",
+        String(input.gop),
+        "-deadline",
+        "realtime",
+        "-cpu-used",
+        "5",
+        "-an",
+        "<OUTPUT>",
+      ]
+    : [
+        resolveBin("ffmpeg"),
+        "-y",
+        "-i",
+        input.sourcePath,
+        "-vf",
+        `scale=${input.width}:${input.height}`,
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-g",
+        String(input.gop),
+        "-keyint_min",
+        String(input.gop),
+        "-bf",
+        "0",
+        "-x264-params",
+        opaqueX264(input),
+        "-an",
+        "-movflags",
+        "+faststart",
+        "<OUTPUT>",
+      ];
+  const executionArgv = encoderArgv.map((arg) => (arg === "<OUTPUT>" ? stagedPath : arg));
+  const expected: Omit<SourceProxyManifest, "artifactSha256" | "artifactBytes" | "pixFmt"> = {
+    schema: SOURCE_PROXY_SCHEMA,
+    key: input.key,
+    sourcePath: input.sourcePath,
+    sourceSha256: input.sourceSha256,
+    encoderIdentity: input.encoderIdentity,
+    encoderArgv,
+    hasAlpha: input.hasAlpha,
+    codecName: input.hasAlpha ? "vp9" : "h264",
+    width: input.width,
+    height: input.height,
+  };
 
-/** Probe a source file's video dimensions via ffprobe and compute an aspect-
- *  preserving downscale that fits within `maxEdge` (never upscaling). Falls back to
- *  a square `maxEdge` box if the probe fails or reports nothing usable. */
-async function proxyDimensions(
-  resolvedSource: string,
-  maxEdge: number,
-): Promise<{ width: number; height: number }> {
-  let srcW = 0;
-  let srcH = 0;
+  const release = await acquireLock(lockPath, input.sourcePath);
   try {
-    const { probeSource } = await import("../driver/probe");
-    const info = await probeSource(resolvedSource);
-    srcW = info?.width ?? 0;
-    srcH = info?.height ?? 0;
-  } catch {
-    // ffprobe missing / source unprobeable — fall through to the square fallback.
+    if (!input.force && (await validateCache(artifactPath, manifestPath, expected))) {
+      return {
+        proxyPath: artifactPath,
+        key: input.key,
+        width: input.width,
+        height: input.height,
+        cached: true,
+        hasAlpha: input.hasAlpha,
+        contentType,
+      };
+    }
+    removeArtifacts(artifactPath, manifestPath, stagedPath, stagedManifest);
+    try {
+      const result = await spawnCapture(executionArgv);
+      if (result.code !== 0) {
+        throw new SourceProxyError(
+          "ENCODER_FAILED",
+          input.sourcePath,
+          `ffmpeg exited ${result.code}: ${result.stderr.trim().slice(-1200)}`,
+        );
+      }
+      if (
+        !existsSync(stagedPath) ||
+        !statSync(stagedPath).isFile() ||
+        statSync(stagedPath).size <= 0
+      ) {
+        throw new SourceProxyError(
+          "ENCODER_NO_OUTPUT",
+          input.sourcePath,
+          "Proxy encoder exited successfully without producing an artifact",
+        );
+      }
+      if ((await sha256File(input.sourcePath)) !== input.sourceSha256) {
+        throw new SourceProxyError(
+          "SOURCE_CHANGED",
+          input.sourcePath,
+          "Source bytes changed while the proxy was being encoded",
+        );
+      }
+      const artifactProbe = await probeArtifact(stagedPath, input.sourcePath);
+      assertArtifact(artifactProbe, input);
+      const artifactSha256 = await sha256File(stagedPath);
+      const artifactBytes = statSync(stagedPath).size;
+      const manifest: SourceProxyManifest = {
+        ...expected,
+        pixFmt: artifactProbe.pixFmt,
+        artifactSha256,
+        artifactBytes,
+      };
+      writeFileSync(stagedManifest, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
+      syncFile(stagedPath);
+      syncFile(stagedManifest);
+      renameSync(stagedPath, artifactPath);
+      renameSync(stagedManifest, manifestPath);
+      syncDir(dir);
+    } catch (error) {
+      removeArtifacts(stagedPath, stagedManifest, artifactPath, manifestPath);
+      if (error instanceof SourceProxyError) throw error;
+      throw new SourceProxyError(
+        "ENCODER_FAILED",
+        input.sourcePath,
+        String((error as Error)?.message ?? error),
+        { cause: error },
+      );
+    }
+    return {
+      proxyPath: artifactPath,
+      key: input.key,
+      width: input.width,
+      height: input.height,
+      cached: false,
+      hasAlpha: input.hasAlpha,
+      contentType,
+    };
+  } finally {
+    removeArtifacts(stagedPath, stagedManifest);
+    release();
   }
-  if (srcW <= 0 || srcH <= 0) {
-    return { width: evenDim(maxEdge), height: evenDim(maxEdge) };
-  }
-  const longest = Math.max(srcW, srcH);
-  const scale = longest > maxEdge ? maxEdge / longest : 1; // never upscale
-  return { width: evenDim(srcW * scale), height: evenDim(srcH * scale) };
+}
+
+function opaqueX264(input: { gop: number; effectiveIntra: boolean }): string {
+  return input.effectiveIntra
+    ? "keyint=1:min-keyint=1:scenecut=0:bframes=0:intra-refresh=0"
+    : `keyint=${input.gop}:min-keyint=${input.gop}:scenecut=0:bframes=0`;
 }

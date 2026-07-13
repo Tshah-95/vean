@@ -25,6 +25,7 @@
 // decoder. (The full worker POOL + decode-ahead LRU is Tier 2a / §9 step 5; this
 // is the correct, bounded single-worker foundation.)
 import type { DecodeResponse, OpenResponse, WorkerRequest, WorkerResponse } from "./protocol";
+import { fetchSourceProxyBlob } from "./sourceProxyApi";
 
 /** URL for the per-source short-GOP H.264 proxy of `resource` on `route` — the
  *  bytes mediabunny demuxes. The server builds it once (cached) and streams it
@@ -151,9 +152,7 @@ export class Decoder {
       // Fetch the short-GOP H.264 proxy bytes ONCE (the server transcodes on first
       // touch, then serves from cache). Range not needed — mediabunny's BlobSource
       // reads the whole blob; the proxy is small (≤960px short-GOP).
-      const res = await fetch(sourceUrl);
-      if (!res.ok) throw new Error(`source-proxy ${res.status}`);
-      const blob = await res.blob();
+      const blob = await fetchSourceProxyBlob(sourceUrl);
       const requestId = `open-${nextRequestId++}`;
       const resp = await this.request<OpenResponse>({
         type: "open",

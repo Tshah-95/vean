@@ -50,10 +50,12 @@ import { type FootageProvider, type FrameImage, GlCompositor } from "../composit
 import { sourceProxyUrl } from "../decode/decoder";
 import { FrameCache } from "../decode/frameCache";
 import { ParallelDecoder } from "../decode/parallelDecoder";
+import { SourceProxyApiError } from "../decode/sourceProxyApi";
 import { resolveAudio } from "../resolveAudio";
 import { type FootageLayer, type Layer, resolveLayers } from "../resolveLayers";
 import { MediaResourceLedger } from "../test-bridge/resourceLedger";
 import type { Fps, Timeline } from "../types";
+import { type SourceProxyFailure, SourceProxyFailureAlert } from "./SourceProxyFailureAlert";
 
 export interface FootageStageProps {
   /** The LIVE working IR the compositor resolves at the playhead (no save). */
@@ -131,6 +133,7 @@ export function FootageStage({
   muted,
   sinkId,
 }: FootageStageProps) {
+  const [proxyFailure, setProxyFailure] = useState<SourceProxyFailure | null>(null);
   const host = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const clock = useClock();
@@ -265,14 +268,20 @@ export function FootageStage({
         .then((decoded) => {
           decoding.current.delete(key);
           if (!decoded) return; // null = no frame / failed / canceled by a newer seek
+          setProxyFailure((current) => (current?.sourcePath === resource ? null : current));
           // The cache TAKES OWNERSHIP and close()s on evict/replace (§8.3).
           cache.current.set(uuid, sourceFrame, decoded.bitmap);
           // A frame landed — recomposite the frame CURRENTLY ON SCREEN so it
           // appears: the preview frame while a drag is live, else the playhead.
           scheduleComposite(shownFrame.current, revisionRef.current, true);
         })
-        .catch(() => {
+        .catch((error: unknown) => {
           decoding.current.delete(key);
+          setProxyFailure({
+            code: error instanceof SourceProxyApiError ? error.code : "SOURCE_DECODE_FAILED",
+            sourcePath: error instanceof SourceProxyApiError ? error.sourcePath : resource,
+            detail: error instanceof Error ? error.message : String(error),
+          });
         });
     },
     // scheduleComposite is stable (defined below via ref); the shown frame + live
@@ -798,6 +807,7 @@ export function FootageStage({
           {stillBusy ? "rendering…" : stillUrl ? "exact ✓" : "approx · exact?"}
         </button>
       )}
+      {proxyFailure && <SourceProxyFailureAlert failure={proxyFailure} />}
     </div>
   );
 }
