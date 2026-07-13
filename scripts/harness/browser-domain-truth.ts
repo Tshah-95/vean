@@ -15,7 +15,31 @@ export type BrowserMutationObservation = {
   afterMltHash: string;
   parsedPlacement: { track: string; position: number; uuid: string } | null;
   expectedPlacement: { track: string; position: number; uuid: string };
-  dom: { clipName?: string; dirtyBeforeSave?: boolean; dirtyAfterSave?: boolean };
+  dom: {
+    clipName?: string;
+    dirtyBeforeSave?: boolean;
+    dirtyAfterSave?: boolean;
+    selectionPolicy?: {
+      bodyUserSelect: string;
+      bodyWebkitUserSelect: string;
+      chromeUserSelect: string;
+      chromeWebkitUserSelect: string;
+      inputUserSelect: string;
+      inputWebkitUserSelect: string;
+      inputSelectionStart: number | null;
+      inputSelectionEnd: number | null;
+      inputValueLength: number;
+      clipDragRequestCount: number;
+      clipDragText: string;
+      clipDragRangeCount: number;
+      duringText: string;
+      duringRangeCount: number;
+      duringCollapsed: boolean;
+      afterText: string;
+      afterRangeCount: number;
+      afterCollapsed: boolean;
+    };
+  };
   cleanup: { developerCanaryUnchanged: boolean; sourceCorpusUnchanged: boolean };
 };
 
@@ -88,6 +112,32 @@ export function evaluateBrowserMutation(observation: BrowserMutationObservation)
     issues.push({
       code: "E_BROWSER_DOM",
       detail: "visible editor state did not reflect the authoritative action/save lifecycle",
+    });
+  }
+  const selection = observation.dom.selectionPolicy;
+  if (
+    selection?.bodyUserSelect !== "none" ||
+    selection.bodyWebkitUserSelect !== "none" ||
+    selection.chromeUserSelect !== "none" ||
+    selection.chromeWebkitUserSelect !== "none" ||
+    selection.inputUserSelect !== "text" ||
+    selection.inputWebkitUserSelect !== "text" ||
+    selection.inputSelectionStart !== 0 ||
+    selection.inputSelectionEnd !== selection.inputValueLength ||
+    selection.inputValueLength <= 0 ||
+    selection.clipDragRequestCount !== 1 ||
+    selection.clipDragText !== "" ||
+    selection.clipDragRangeCount !== 0 ||
+    selection.duringText !== "" ||
+    selection.duringRangeCount !== 0 ||
+    selection.duringCollapsed !== true ||
+    selection.afterText !== "" ||
+    selection.afterRangeCount !== 0 ||
+    selection.afterCollapsed !== true
+  ) {
+    issues.push({
+      code: "E_BROWSER_DOM",
+      detail: "desktop selection/input policy or physical drag submission regressed",
     });
   }
   if (

@@ -108,7 +108,7 @@ export function SetupPanel({ project }: { project?: string }) {
                 statusClass[c.status] ?? "bg-fg-3",
               )}
             />
-            <div className="min-w-0">
+            <div data-selectable-text className="min-w-0">
               <div className="text-foreground">{c.name}</div>
               <div className="truncate font-mono text-fg-3" title={c.detail}>
                 {c.detail}

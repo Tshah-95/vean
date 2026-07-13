@@ -202,6 +202,10 @@ export function TimelineStrip({
   const scrubbing = useRef(false);
   const prevPxPerFrame = useRef<number | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
+  // Pointer events need the latest drag synchronously. Keep it outside React's
+  // replayable state-updater callbacks so a StrictMode updater replay can never
+  // submit the same edit twice.
+  const dragRef = useRef<DragState | null>(null);
   // Snapping toggle (magnet). On by default; turn OFF for free-frame positioning —
   // the fix for "it snaps to random points / won't stop where I want".
   const [snapEnabled, setSnapEnabled] = useState(true);
@@ -330,6 +334,7 @@ export function TimelineStrip({
 
   const onRulerPointerDown = useCallback(
     (e: React.PointerEvent) => {
+      e.preventDefault();
       scrubbing.current = true;
       clock.pause();
       clock.seekTo(frameFromClientX(e.clientX));
@@ -754,6 +759,7 @@ export function TimelineStrip({
   const onClipPointerDown = useCallback(
     (e: React.PointerEvent, placed: PlacedItem, track: Track) => {
       if (placed.item.kind !== "clip") return;
+      e.preventDefault();
       e.stopPropagation(); // don't let the lane deselect
       const uuid = placed.item.id;
       editor.select(uuid);
@@ -829,7 +835,7 @@ export function TimelineStrip({
       };
 
       target.setPointerCapture?.(e.pointerId);
-      setDrag({
+      const nextDrag: DragState = {
         gesture,
         startClientX: e.clientX,
         dxFrames: 0,
@@ -838,7 +844,9 @@ export function TimelineStrip({
         toTrackId: track.id,
         newTrack: null,
         moved: false,
-      });
+      };
+      dragRef.current = nextDrag;
+      setDrag(nextDrag);
     },
     [editor],
   );
@@ -866,116 +874,117 @@ export function TimelineStrip({
         else if (yLocal >= GUTTER_H + tracksH) gutterZone = "bottom";
         else pointerTrack = trackAtY(orderedTracks, yLocal - GUTTER_H);
       }
-      setDrag((d) => {
-        if (!d) return d;
-        // Below the drag threshold this is still a CLICK: no snap, no delta, no
-        // preview — the clip just stays selected and nothing reacts. (Snapping on a
-        // raw pointerdown could otherwise yank dxFrames non-zero at fit zoom, which
-        // made a plain click jump the monitor.)
-        if (!d.moved && Math.abs(clientX - d.startClientX) < DRAG_THRESHOLD_PX) return d;
-        const rawFrames = Math.round((clientX - d.startClientX) / pxPerFrame);
-        const g = d.gesture;
-        let dxFrames = rawFrames;
-        let snappedTo: number | null = null;
-        // Cross-track: a MOVE lands on the lane under the pointer, but never crosses
-        // KIND (video↔audio — the op rejects it). If the pointer is over a
-        // different-kind lane, keep the last valid (same-kind) target. Over a matching
-        // gutter drop-zone, flag a NEW-track drop (video→top, audio→bottom).
-        let toTrackId = d.toTrackId;
-        let newTrack: "top" | "bottom" | null = null;
-        if (g.tool === "move") {
-          const srcKind = orderedTracks.find((t) => t.id === g.trackId)?.kind;
-          if (gutterZone === "top" && srcKind === "video") newTrack = "top";
-          else if (gutterZone === "bottom" && srcKind === "audio") newTrack = "bottom";
-          else if (pointerTrack && pointerTrack.kind === srcKind) toTrackId = pointerTrack.id;
-        }
-        // Snap the moved EDGE(S) to nearby candidates, unless snapping is off or this
-        // is a slip (no edge to snap). A MOVE considers BOTH of its edges (start AND
-        // end) and locks to whichever is closest to a candidate — so a clip aligns on
-        // either side, not just its head (the "snaps to random points / never snaps"
-        // fix: only the start used to be a candidate). Other tools snap their one
-        // moved edge (trimIn/roll: the head; trimOut: the tail; slide: the start).
-        if (snapEnabled && g.tool !== "slip") {
-          const edges: number[] =
-            g.tool === "move"
-              ? [g.placed.start + rawFrames, g.placed.start + g.placed.length + rawFrames]
-              : g.tool === "trimOut"
-                ? [g.placed.start + g.placed.length + rawFrames]
-                : g.tool === "roll"
-                  ? [(g.neighbours.right?.start ?? g.placed.start) + rawFrames]
-                  : [g.placed.start + rawFrames]; // move-start / slide / trimIn
-          let bestAdj = 0;
-          let bestDist = Number.POSITIVE_INFINITY;
-          for (const anchor of edges) {
-            const snapped = snapFrame(anchor, snapCandidates, pxPerFrame);
-            if (snapped.snappedTo != null && Math.abs(snapped.frame - anchor) < bestDist) {
-              bestDist = Math.abs(snapped.frame - anchor);
-              bestAdj = snapped.frame - anchor;
-              snappedTo = snapped.snappedTo;
-            }
+      const d = dragRef.current;
+      if (!d) return;
+      // Below the drag threshold this is still a CLICK: no snap, no delta, no
+      // preview — the clip just stays selected and nothing reacts. (Snapping on a
+      // raw pointerdown could otherwise yank dxFrames non-zero at fit zoom, which
+      // made a plain click jump the monitor.)
+      if (!d.moved && Math.abs(clientX - d.startClientX) < DRAG_THRESHOLD_PX) return;
+      const rawFrames = Math.round((clientX - d.startClientX) / pxPerFrame);
+      const g = d.gesture;
+      let dxFrames = rawFrames;
+      let snappedTo: number | null = null;
+      // Cross-track: a MOVE lands on the lane under the pointer, but never crosses
+      // KIND (video↔audio — the op rejects it). If the pointer is over a
+      // different-kind lane, keep the last valid (same-kind) target. Over a matching
+      // gutter drop-zone, flag a NEW-track drop (video→top, audio→bottom).
+      let toTrackId = d.toTrackId;
+      let newTrack: "top" | "bottom" | null = null;
+      if (g.tool === "move") {
+        const srcKind = orderedTracks.find((t) => t.id === g.trackId)?.kind;
+        if (gutterZone === "top" && srcKind === "video") newTrack = "top";
+        else if (gutterZone === "bottom" && srcKind === "audio") newTrack = "bottom";
+        else if (pointerTrack && pointerTrack.kind === srcKind) toTrackId = pointerTrack.id;
+      }
+      // Snap the moved EDGE(S) to nearby candidates, unless snapping is off or this
+      // is a slip (no edge to snap). A MOVE considers BOTH of its edges (start AND
+      // end) and locks to whichever is closest to a candidate — so a clip aligns on
+      // either side, not just its head (the "snaps to random points / never snaps"
+      // fix: only the start used to be a candidate). Other tools snap their one
+      // moved edge (trimIn/roll: the head; trimOut: the tail; slide: the start).
+      if (snapEnabled && g.tool !== "slip") {
+        const edges: number[] =
+          g.tool === "move"
+            ? [g.placed.start + rawFrames, g.placed.start + g.placed.length + rawFrames]
+            : g.tool === "trimOut"
+              ? [g.placed.start + g.placed.length + rawFrames]
+              : g.tool === "roll"
+                ? [(g.neighbours.right?.start ?? g.placed.start) + rawFrames]
+                : [g.placed.start + rawFrames]; // move-start / slide / trimIn
+        let bestAdj = 0;
+        let bestDist = Number.POSITIVE_INFINITY;
+        for (const anchor of edges) {
+          const snapped = snapFrame(anchor, snapCandidates, pxPerFrame);
+          if (snapped.snappedTo != null && Math.abs(snapped.frame - anchor) < bestDist) {
+            bestDist = Math.abs(snapped.frame - anchor);
+            bestAdj = snapped.frame - anchor;
+            snappedTo = snapped.snappedTo;
           }
-          dxFrames = rawFrames + bestAdj;
         }
-        // Clamp the snapped delta to the gesture's NATURAL LIMITS so an edge stops
-        // dead at the media / min-length / neighbour wall (Premiere/Resolve) instead
-        // of travelling past it and erroring on commit. Clamp AFTER snapping so the
-        // wall wins over a snap target beyond it; if the clamp overrode a snap, drop
-        // the guide (the edge never reached it). (move/slide keep their frame-0 floor
-        // through the same bounds.)
-        const bounds = gestureDxBounds(g);
-        const clamped = Math.max(bounds.min, Math.min(bounds.max, dxFrames));
-        if (clamped !== dxFrames) snappedTo = null;
-        dxFrames = clamped;
-        return { ...d, dxFrames, snappedTo, toTrackId, newTrack, moved: true };
-      });
+        dxFrames = rawFrames + bestAdj;
+      }
+      // Clamp the snapped delta to the gesture's NATURAL LIMITS so an edge stops
+      // dead at the media / min-length / neighbour wall (Premiere/Resolve) instead
+      // of travelling past it and erroring on commit. Clamp AFTER snapping so the
+      // wall wins over a snap target beyond it; if the clamp overrode a snap, drop
+      // the guide (the edge never reached it). (move/slide keep their frame-0 floor
+      // through the same bounds.)
+      const bounds = gestureDxBounds(g);
+      const clamped = Math.max(bounds.min, Math.min(bounds.max, dxFrames));
+      if (clamped !== dxFrames) snappedTo = null;
+      dxFrames = clamped;
+      const nextDrag = { ...d, dxFrames, snappedTo, toTrackId, newTrack, moved: true };
+      dragRef.current = nextDrag;
+      setDrag(nextDrag);
     },
     [pxPerFrame, snapCandidates, snapEnabled, timeline],
   );
 
   const onLanePointerUp = useCallback(() => {
-    setDrag((d) => {
-      if (!d) return null;
-      // Gutter drop → create a new track of the clip's kind, then move onto it.
-      if (d.gesture.tool === "move" && d.newTrack) {
-        const kind = d.newTrack === "top" ? "video" : "audio";
-        // The VISUAL top = the compositing top = the LAST entry of tracks.video (the
-        // serializer emits [...video, ...audio] and MLT stacks later entries on top),
-        // which is addTrack's `position: "bottom"` (append). The op's arg names the
-        // ARRAY end, not the visual stack. Audio always appends (= visual bottom).
-        const position = "bottom";
-        const newId = crypto.randomUUID();
-        const name =
-          kind === "video"
-            ? `V${timeline.tracks.video.length + 1}`
-            : `A${timeline.tracks.audio.length + 1}`;
-        const toPosition = Math.max(0, d.gesture.placed.start + d.dxFrames);
-        void (async () => {
-          await editor.commit({ op: "addTrack", args: { kind, id: newId, name, position } });
-          await editor.commit({
-            op: "move",
-            args: {
-              uuid: d.gesture.uuid,
-              toTrack: { trackId: newId },
-              toPosition,
-              ripple: false,
-              rippleAllTracks: false,
-            },
-          });
-        })().finally(() => previewStore.clear());
-        return null;
-      }
-      const inv = buildInvocation(d.gesture, d.dxFrames, d.ripple, d.toTrackId);
-      if (inv) {
-        // Keep the previewed frame on screen until the commit lands, THEN clear —
-        // the monitor returns to the playhead over the newly-committed IR with no
-        // snap-back flash (the preview ≈ the commit result, so the transition is
-        // continuous). Clears on rejection too (finally), restoring the live frame.
-        void editor.commit(inv).finally(() => previewStore.clear());
-      } else {
-        previewStore.clear();
-      }
-      return null;
-    });
+    const d = dragRef.current;
+    if (!d) return;
+    dragRef.current = null;
+    setDrag(null);
+    // Gutter drop → create a new track of the clip's kind, then move onto it.
+    if (d.gesture.tool === "move" && d.newTrack) {
+      const kind = d.newTrack === "top" ? "video" : "audio";
+      // The VISUAL top = the compositing top = the LAST entry of tracks.video (the
+      // serializer emits [...video, ...audio] and MLT stacks later entries on top),
+      // which is addTrack's `position: "bottom"` (append). The op's arg names the
+      // ARRAY end, not the visual stack. Audio always appends (= visual bottom).
+      const position = "bottom";
+      const newId = crypto.randomUUID();
+      const name =
+        kind === "video"
+          ? `V${timeline.tracks.video.length + 1}`
+          : `A${timeline.tracks.audio.length + 1}`;
+      const toPosition = Math.max(0, d.gesture.placed.start + d.dxFrames);
+      void (async () => {
+        await editor.commit({ op: "addTrack", args: { kind, id: newId, name, position } });
+        await editor.commit({
+          op: "move",
+          args: {
+            uuid: d.gesture.uuid,
+            toTrack: { trackId: newId },
+            toPosition,
+            ripple: false,
+            rippleAllTracks: false,
+          },
+        });
+      })().finally(() => previewStore.clear());
+      return;
+    }
+    const inv = buildInvocation(d.gesture, d.dxFrames, d.ripple, d.toTrackId);
+    if (inv) {
+      // Keep the previewed frame on screen until the commit lands, THEN clear —
+      // the monitor returns to the playhead over the newly-committed IR with no
+      // snap-back flash (the preview ≈ the commit result, so the transition is
+      // continuous). Clears on rejection too (finally), restoring the live frame.
+      void editor.commit(inv).finally(() => previewStore.clear());
+    } else {
+      previewStore.clear();
+    }
   }, [editor, timeline, previewStore]);
 
   // Push the live drag as a compositor override so the preview monitor reacts to the

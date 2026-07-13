@@ -66,6 +66,7 @@
       "expected_envelope": "ok + consequences + complete diagnostics + dirty revision",
       "expected_touched_uri": "the fixture's current corpus/shotcut-single.mlt, exactly",
       "persisted_truth": "before/after .mlt hash differs and independent fromMlt placement is playlist0@1",
+      "selection_policy": "a physical drag across timeline chrome creates no DOM selection while text inputs remain selectable",
       "diagnostics": "complete set has zero errors",
       "coordination_db_may_change": false
     }

@@ -61,6 +61,7 @@ export function SourcePreview({ route }: { route?: string }) {
   // Range-thumb drag + bar seek.
   const onBarPointerDown = useCallback(
     (e: React.PointerEvent) => {
+      e.preventDefault();
       const f = frameAtX(e.clientX);
       const v = videoRef.current;
       if (dragging.current === null && v) {
@@ -198,6 +199,7 @@ export function SourcePreview({ route }: { route?: string }) {
             <div
               key={side}
               onPointerDown={(e) => {
+                e.preventDefault();
                 e.stopPropagation();
                 dragging.current = side;
               }}

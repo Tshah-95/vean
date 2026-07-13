@@ -62,7 +62,7 @@ export function ChecksPanel({ route }: { route?: string }) {
               sevClass[d.severity] ?? "bg-fg-3",
             )}
           />
-          <div className="min-w-0">
+          <div data-selectable-text className="min-w-0">
             <div className="text-[11px] leading-relaxed text-foreground">{d.message}</div>
             <div className="mt-0.5 font-mono text-[10px] text-fg-3">{d.code}</div>
           </div>

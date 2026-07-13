@@ -115,7 +115,7 @@ function Viewer({ route }: { route: string | undefined }) {
 
   if (error) {
     return (
-      <div className="p-6 font-mono text-red">
+      <div data-selectable-text className="p-6 font-mono text-red">
         <div className="mb-2 font-medium">Failed to load timeline</div>
         <div className="text-muted-foreground">{error}</div>
         <div className="mt-3 text-xs text-fg-3">

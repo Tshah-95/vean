@@ -166,3 +166,31 @@
 
   --ease-tick: var(--ease-tick);
 }
+
+@layer base {
+  /*
+   * This is a desktop editor, not a document: labels, timeline clips, rulers,
+   * toolbars, menus, and panel chrome are gesture surfaces rather than copyable
+   * prose. Keep native text selection off at the document boundary so a pointer
+   * drag cannot paint unrelated UI text (including Radix portals mounted under
+   * body). Restore it only for real text-entry controls, editable content, and
+   * surfaces that deliberately opt in as copyable text.
+   *
+   * Keep the WebKit declaration: the production desktop shell renders this same
+   * frontend in WKWebView.
+   */
+  body {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  :where(
+      input,
+      textarea,
+      [contenteditable]:not([contenteditable="false"]),
+      [data-selectable-text]
+    ) {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}

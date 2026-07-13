@@ -19,6 +19,7 @@ export function PanelHead({ title, children }: { title: string; children?: React
 export function Note({ kind, children }: { kind: "error" | "dim"; children: ReactNode }) {
   return (
     <div
+      data-selectable-text={kind === "error" ? "" : undefined}
       className={cn(
         "whitespace-pre-wrap break-words px-2.5 py-2 text-[11px]",
         kind === "error" ? "font-mono text-red" : "text-fg-3",

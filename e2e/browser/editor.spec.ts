@@ -173,6 +173,7 @@ async function runProdScenarios(
     let actionRequest: BrowserMutationObservation["actionRequest"] | undefined;
     let actionResponse: BrowserMutationObservation["actionResponse"] | undefined;
     let saveResponse: BrowserMutationObservation["saveResponse"] | undefined;
+    let applyOpRequestCount = 0;
     const dom: BrowserMutationObservation["dom"] = {};
     await scenario(
       browser,
@@ -181,14 +182,98 @@ async function runProdScenarios(
       current,
       decoyRoute,
       async (page) => {
+        const trackLabel = page
+          .getByRole("group", { name: "Video track V1" })
+          .getByText("V1", { exact: true });
+        const timelineClips = page.getByRole("listbox", { name: "Timeline clips" });
+        const findMedia = page.getByRole("textbox", { name: "Find media" });
+        await Promise.all([trackLabel.waitFor(), timelineClips.waitFor(), findMedia.waitFor()]);
+        const trackLabelBox = await trackLabel.boundingBox();
+        const timelineBox = await timelineClips.boundingBox();
+        requireValue(trackLabelBox && timelineBox, "timeline selection probe has no layout box");
+
+        await page.evaluate(() => window.getSelection()?.removeAllRanges());
+        await page.mouse.move(
+          trackLabelBox.x + trackLabelBox.width / 2,
+          trackLabelBox.y + trackLabelBox.height / 2,
+        );
+        await page.mouse.down();
+        await page.mouse.move(
+          timelineBox.x + Math.min(800, timelineBox.width - 20),
+          timelineBox.y + 10,
+          { steps: 20 },
+        );
+        const duringSelection = await page.evaluate(() => {
+          const selection = window.getSelection();
+          return {
+            text: selection?.toString() ?? "",
+            rangeCount: selection?.rangeCount ?? 0,
+            collapsed: selection?.isCollapsed ?? true,
+          };
+        });
+        await page.mouse.up();
+        const afterSelection = await page.evaluate(() => {
+          const selection = window.getSelection();
+          return {
+            text: selection?.toString() ?? "",
+            rangeCount: selection?.rangeCount ?? 0,
+            collapsed: selection?.isCollapsed ?? true,
+          };
+        });
+        const bodySelection = await page.evaluate(() => {
+          const style = getComputedStyle(document.body);
+          return { userSelect: style.userSelect, webkitUserSelect: style.webkitUserSelect };
+        });
+        const chromeSelection = await trackLabel.evaluate((element) => {
+          const style = getComputedStyle(element);
+          return { userSelect: style.userSelect, webkitUserSelect: style.webkitUserSelect };
+        });
+        const inputSelection = await findMedia.evaluate((element) => {
+          const style = getComputedStyle(element);
+          return { userSelect: style.userSelect, webkitUserSelect: style.webkitUserSelect };
+        });
+        await findMedia.fill("selection probe");
+        await findMedia.selectText();
+        const inputRange = await findMedia.evaluate((element) => {
+          if (!(element instanceof HTMLInputElement))
+            throw new Error("media search is not an input");
+          return {
+            start: element.selectionStart,
+            end: element.selectionEnd,
+            valueLength: element.value.length,
+          };
+        });
+        await findMedia.fill("");
+        dom.selectionPolicy = {
+          bodyUserSelect: bodySelection.userSelect,
+          bodyWebkitUserSelect: bodySelection.webkitUserSelect,
+          chromeUserSelect: chromeSelection.userSelect,
+          chromeWebkitUserSelect: chromeSelection.webkitUserSelect,
+          inputUserSelect: inputSelection.userSelect,
+          inputWebkitUserSelect: inputSelection.webkitUserSelect,
+          inputSelectionStart: inputRange.start,
+          inputSelectionEnd: inputRange.end,
+          inputValueLength: inputRange.valueLength,
+          clipDragRequestCount: 0,
+          clipDragText: "",
+          clipDragRangeCount: 0,
+          duringText: duringSelection.text,
+          duringRangeCount: duringSelection.rangeCount,
+          duringCollapsed: duringSelection.collapsed,
+          afterText: afterSelection.text,
+          afterRangeCount: afterSelection.rangeCount,
+          afterCollapsed: afterSelection.collapsed,
+        };
+
         page.on("request", (request) => {
           if (new URL(request.url()).pathname === "/api/apply-op") {
-            actionRequest = request.postDataJSON() as BrowserMutationObservation["actionRequest"];
+            applyOpRequestCount++;
+            actionRequest ??= request.postDataJSON() as BrowserMutationObservation["actionRequest"];
           }
         });
         page.on("response", async (response) => {
           const path = new URL(response.url()).pathname;
-          if (path === "/api/apply-op") actionResponse = await response.json();
+          if (path === "/api/apply-op") actionResponse ??= await response.json();
           if (path === "/api/save") saveResponse = await response.json();
         });
         const outcome = await page.evaluate(
@@ -211,6 +296,45 @@ async function runProdScenarios(
           return button instanceof HTMLButtonElement && button.disabled;
         });
         dom.dirtyAfterSave = await save.isEnabled();
+
+        // Drive the actual clip gesture after persistence. It intentionally leaves
+        // an unsaved session-only edit in the disposable fixture; the canonical
+        // request/response above stay captured as the first action. This catches
+        // both native text-selection leakage and React StrictMode replay of a
+        // side-effectful state updater (one pointerup must submit exactly once).
+        const snap = page.getByRole("button", { name: /Toggle snapping/ });
+        if ((await snap.getAttribute("aria-pressed")) === "true") await snap.click();
+        const draggedClip = page.locator(`[data-clip-id="${expectedInput.uuid}"]`);
+        const draggedClipBox = await draggedClip.boundingBox();
+        requireValue(draggedClipBox, "physical clip-drag probe has no layout box");
+        await page.evaluate(() => window.getSelection()?.removeAllRanges());
+        const requestsBeforeDrag = applyOpRequestCount;
+        const dragResponse = page.waitForResponse(
+          (response) =>
+            new URL(response.url()).pathname === "/api/apply-op" &&
+            response.request().method() === "POST",
+        );
+        await page.mouse.move(
+          draggedClipBox.x + draggedClipBox.width / 2,
+          draggedClipBox.y + draggedClipBox.height / 2,
+        );
+        await page.mouse.down();
+        await page.mouse.move(
+          draggedClipBox.x + draggedClipBox.width / 2 + 80,
+          draggedClipBox.y + draggedClipBox.height / 2,
+          { steps: 20 },
+        );
+        await page.mouse.up();
+        await dragResponse;
+        await page.waitForTimeout(100);
+        const clipDragSelection = await page.evaluate(() => {
+          const selection = window.getSelection();
+          return { text: selection?.toString() ?? "", rangeCount: selection?.rangeCount ?? 0 };
+        });
+        if (!dom.selectionPolicy) throw new Error("selection policy evidence missing");
+        dom.selectionPolicy.clipDragRequestCount = applyOpRequestCount - requestsBeforeDrag;
+        dom.selectionPolicy.clipDragText = clipDragSelection.text;
+        dom.selectionPolicy.clipDragRangeCount = clipDragSelection.rangeCount;
         return { outcome, dom };
       },
     );

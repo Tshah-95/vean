@@ -11,6 +11,7 @@ export function SourceProxyFailureAlert({ failure }: { failure: SourceProxyFailu
   return (
     <div
       role="alert"
+      data-selectable-text
       data-testid="source-proxy-failure"
       data-error-code={failure.code}
       data-source-path={failure.sourcePath}

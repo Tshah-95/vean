@@ -35,6 +35,26 @@ function baseline(): BrowserMutationObservation {
       clipName: "solid teal, V1, timeline frames 1 to 120, source 0 to 119",
       dirtyBeforeSave: true,
       dirtyAfterSave: false,
+      selectionPolicy: {
+        bodyUserSelect: "none",
+        bodyWebkitUserSelect: "none",
+        chromeUserSelect: "none",
+        chromeWebkitUserSelect: "none",
+        inputUserSelect: "text",
+        inputWebkitUserSelect: "text",
+        inputSelectionStart: 0,
+        inputSelectionEnd: 15,
+        inputValueLength: 15,
+        clipDragRequestCount: 1,
+        clipDragText: "",
+        clipDragRangeCount: 0,
+        duringText: "",
+        duringRangeCount: 0,
+        duringCollapsed: true,
+        afterText: "",
+        afterRangeCount: 0,
+        afterCollapsed: true,
+      },
     },
     cleanup: { developerCanaryUnchanged: true, sourceCorpusUnchanged: true },
   };
@@ -65,5 +85,41 @@ describe("browser editor domain truth", () => {
     expect(evaluateBrowserMutation(value).issues.map((issue) => issue.code)).toEqual([
       "E_BROWSER_CURRENT_URI",
     ]);
+  });
+
+  it("rejects accidental selection during a desktop chrome drag", () => {
+    const value = baseline();
+    const selection = value.dom.selectionPolicy;
+    if (!selection) throw new Error("selection fixture missing");
+    selection.duringText = "V1 0:00";
+    selection.duringRangeCount = 1;
+    selection.duringCollapsed = false;
+    expect(evaluateBrowserMutation(value).issues).toContainEqual({
+      code: "E_BROWSER_DOM",
+      detail: "desktop selection/input policy or physical drag submission regressed",
+    });
+  });
+
+  it("rejects a selection policy that disables text inputs", () => {
+    const value = baseline();
+    const selection = value.dom.selectionPolicy;
+    if (!selection) throw new Error("selection fixture missing");
+    selection.inputUserSelect = "none";
+    selection.inputWebkitUserSelect = "none";
+    expect(evaluateBrowserMutation(value).issues).toContainEqual({
+      code: "E_BROWSER_DOM",
+      detail: "desktop selection/input policy or physical drag submission regressed",
+    });
+  });
+
+  it("rejects a physical clip drag that submits more than once", () => {
+    const value = baseline();
+    const selection = value.dom.selectionPolicy;
+    if (!selection) throw new Error("selection fixture missing");
+    selection.clipDragRequestCount = 2;
+    expect(evaluateBrowserMutation(value).issues).toContainEqual({
+      code: "E_BROWSER_DOM",
+      detail: "desktop selection/input policy or physical drag submission regressed",
+    });
   });
 });

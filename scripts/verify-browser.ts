@@ -13,7 +13,7 @@ const repo = resolve(import.meta.dirname, "..");
 const claimId = "claim-browser-editor";
 const oracleCommand = "bun run verify:browser";
 const expectedPredicate =
-  "required browser scenario ledger is complete and every mutation matches action ID/input/envelope, touched URI, independent persisted .mlt hash/parsed IR, diagnostics, DOM, and cleanup";
+  "required browser scenario ledger is complete and every mutation matches action ID/input/envelope, touched URI, independent persisted .mlt hash/parsed IR, diagnostics, desktop text-selection policy, DOM, and cleanup";
 const scenarioPath = join(repo, "artifacts/specs/harness-scenarios/browser.json");
 const ledger = JSON.parse(readFileSync(scenarioPath, "utf8")) as {
   runtime?: { headless?: boolean; host?: string; strict_port?: boolean };

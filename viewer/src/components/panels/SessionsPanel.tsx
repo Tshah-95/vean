@@ -32,7 +32,12 @@ function Field({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
   return (
     <div className="flex gap-2 py-0.5 text-[11px]">
       <span className="w-[78px] shrink-0 text-muted-foreground">{k}</span>
-      <span className={cn("truncate break-all text-foreground", mono && "font-mono")}>{v}</span>
+      <span
+        data-selectable-text
+        className={cn("truncate break-all text-foreground", mono && "font-mono")}
+      >
+        {v}
+      </span>
     </div>
   );
 }
@@ -125,7 +130,9 @@ function CompareCard({
           {busy === "still" ? "Rendering…" : "Still"}
         </Button>
       </div>
-      <div className="mb-1.5 break-all font-mono text-[10px] text-fg-3">{other.rootPath}</div>
+      <div data-selectable-text className="mb-1.5 break-all font-mono text-[10px] text-fg-3">
+        {other.rootPath}
+      </div>
       {err && <Note kind="error">{err}</Note>}
 
       {diff && (
@@ -133,7 +140,7 @@ function CompareCard({
           {diff.identical ? (
             <Note kind="dim">No structural difference from {baseTitle}.</Note>
           ) : (
-            <>
+            <div data-selectable-text>
               <div className="mb-1 text-[11px] text-muted-foreground">
                 Δ duration {diff.durationDelta >= 0 ? "+" : ""}
                 {diff.durationDelta}f · Δ clips {diff.clipDelta >= 0 ? "+" : ""}
@@ -148,7 +155,7 @@ function CompareCard({
               {diff.clips.length > 20 && (
                 <div className="mt-0.5 text-[10px] text-fg-3">+{diff.clips.length - 20} more…</div>
               )}
-            </>
+            </div>
           )}
         </div>
       )}
@@ -277,7 +284,9 @@ export function SessionsPanel({
             >
               <div className="min-w-0 flex-1">
                 <div className="truncate text-xs text-foreground">{s.title}</div>
-                <div className="truncate font-mono text-[10px] text-fg-3">{s.rootPath}</div>
+                <div data-selectable-text className="truncate font-mono text-[10px] text-fg-3">
+                  {s.rootPath}
+                </div>
               </div>
               <Button
                 size="sm"
