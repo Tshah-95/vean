@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import type { Stats } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import {
+  type PerformanceBudgets,
+  type PerformanceCaps,
+  verifyPerformanceRawArtifact,
+} from "./media-performance-domain-truth";
 
 type JsonObject = Record<string, unknown>;
 
@@ -20,17 +25,8 @@ export type ExternalMediaEvidenceOptions = {
     measuredRuns: number;
     samplesPerRun: number;
   };
-  performanceBudgets?: { composite_p95_ms: number; composite_max_ms: number };
-  functionalCaps?: {
-    decoder_workers_max: number;
-    in_flight_decodes_max: number;
-    steady_queue_max: number;
-    queue_must_drain_to_zero_after_scrub: boolean;
-    cache_resident_bytes_max: number;
-    owned_handle_open_close_balance_required: boolean;
-    crashes_unhandled_errors_black_frames_stalls_max: number;
-    context_restore_requires_content_valid_frame: boolean;
-  };
+  performanceBudgets?: PerformanceBudgets;
+  functionalCaps?: PerformanceCaps;
 };
 
 function object(value: unknown): value is JsonObject {
@@ -357,83 +353,27 @@ function assertWkRuntimeArtifacts(
   }
 }
 
-function nearestRank(values: number[], percentile: number): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  return sorted[Math.max(0, Math.ceil((percentile / 100) * sorted.length) - 1)] ?? 0;
-}
-
 function assertPerformance(
   performance: unknown,
   sampling: NonNullable<ExternalMediaEvidenceOptions["performanceSampling"]>,
   budgets: NonNullable<ExternalMediaEvidenceOptions["performanceBudgets"]>,
   caps: NonNullable<ExternalMediaEvidenceOptions["functionalCaps"]>,
-  artifactIds: Set<string>,
+  artifacts: Record<string, { sha256: string; path: string }>,
 ): void {
   if (!object(performance)) throw new Error("E_MEDIA_EXTERNAL_RELEASE_PERFORMANCE");
   if (performance.warmup_runs !== sampling.warmupRuns) {
     throw new Error("E_MEDIA_EXTERNAL_RELEASE_WARMUPS");
   }
-  if (
-    !Array.isArray(performance.distributions) ||
-    performance.distributions.length !== sampling.measuredRuns
-  ) {
-    throw new Error("E_MEDIA_EXTERNAL_RELEASE_DISTRIBUTIONS");
-  }
-  for (const [index, raw] of performance.distributions.entries()) {
-    if (!object(raw) || !Array.isArray(raw.raw_samples)) {
-      throw new Error(`E_MEDIA_EXTERNAL_RELEASE_DISTRIBUTION_SCHEMA:${index}`);
-    }
-    const samples = raw.raw_samples;
-    if (
-      samples.length !== sampling.samplesPerRun ||
-      samples.some((sample) => typeof sample !== "number" || !Number.isFinite(sample) || sample < 0)
-    ) {
-      throw new Error(`E_MEDIA_EXTERNAL_RELEASE_RAW_SAMPLES:${index}`);
-    }
-    if (
-      raw.p50 !== nearestRank(samples, 50) ||
-      raw.p95 !== nearestRank(samples, 95) ||
-      raw.max !== Math.max(...samples)
-    ) {
-      throw new Error(`E_MEDIA_EXTERNAL_RELEASE_DERIVED_METRICS:${index}`);
-    }
-  }
-  const distributions = performance.distributions as Array<JsonObject>;
-  if (Math.max(...distributions.map((entry) => entry.p95 as number)) > budgets.composite_p95_ms) {
-    throw new Error("E_MEDIA_EXTERNAL_RELEASE_COMPOSITE_P95_BUDGET");
-  }
-  if (Math.max(...distributions.map((entry) => entry.max as number)) > budgets.composite_max_ms) {
-    throw new Error("E_MEDIA_EXTERNAL_RELEASE_COMPOSITE_MAX_BUDGET");
-  }
-  const observed = performance.functional_caps;
-  if (!object(observed)) {
-    throw new Error("E_MEDIA_EXTERNAL_RELEASE_FUNCTIONAL_CAPS");
-  }
-  const capPass =
-    typeof observed.decoder_workers_max_observed === "number" &&
-    observed.decoder_workers_max_observed <= caps.decoder_workers_max &&
-    typeof observed.in_flight_decodes_max_observed === "number" &&
-    observed.in_flight_decodes_max_observed <= caps.in_flight_decodes_max &&
-    typeof observed.steady_queue_max_observed === "number" &&
-    observed.steady_queue_max_observed <= caps.steady_queue_max &&
-    observed.queue_drained_to_zero === caps.queue_must_drain_to_zero_after_scrub &&
-    typeof observed.cache_resident_bytes_max_observed === "number" &&
-    observed.cache_resident_bytes_max_observed <= caps.cache_resident_bytes_max &&
-    observed.owned_handle_balance === caps.owned_handle_open_close_balance_required &&
-    typeof observed.crashes_unhandled_errors_black_frames_stalls === "number" &&
-    observed.crashes_unhandled_errors_black_frames_stalls <=
-      caps.crashes_unhandled_errors_black_frames_stalls_max &&
-    observed.context_restore_valid_frame === caps.context_restore_requires_content_valid_frame;
-  if (!capPass) throw new Error("E_MEDIA_EXTERNAL_RELEASE_FUNCTIONAL_CAPS");
-  if (
-    !Array.isArray(performance.artifact_ids) ||
-    performance.artifact_ids.length === 0 ||
-    performance.artifact_ids.some(
-      (artifact) => typeof artifact !== "string" || !artifactIds.has(artifact),
-    )
-  ) {
-    throw new Error("E_MEDIA_EXTERNAL_RELEASE_ARTIFACTS");
-  }
+  const rawArtifactId = string(performance.raw_artifact_id, "RELEASE_RAW_ARTIFACT_ID");
+  const raw = artifacts[rawArtifactId];
+  if (!raw) throw new Error("E_MEDIA_EXTERNAL_RELEASE_RAW_ARTIFACT");
+  verifyPerformanceRawArtifact({
+    artifactPath: raw.path,
+    expectedSha256: raw.sha256,
+    sampling: { measuredRuns: sampling.measuredRuns, samplesPerRun: sampling.samplesPerRun },
+    budgets,
+    caps,
+  });
 }
 
 export function verifyExternalMediaEvidence(options: ExternalMediaEvidenceOptions): JsonObject {
@@ -457,7 +397,6 @@ export function verifyExternalMediaEvidence(options: ExternalMediaEvidenceOption
   );
   assertRuntime(options.kind, evidence.runtime);
   const artifacts = assertArtifacts(evidencePath, evidence.artifacts);
-  const artifactIds = new Set(Object.keys(artifacts));
   if (options.kind === "wkwebview-media-runtime") {
     if (!options.requiredCellOutcomes) throw new Error("E_MEDIA_EXTERNAL_WK_DECLARATIONS");
     assertWkRuntimeArtifacts(evidence.runtime as JsonObject, artifacts, providerGitSha);
@@ -471,7 +410,7 @@ export function verifyExternalMediaEvidence(options: ExternalMediaEvidenceOption
       options.performanceSampling,
       options.performanceBudgets,
       options.functionalCaps,
-      artifactIds,
+      artifacts,
     );
   }
   return {

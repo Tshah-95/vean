@@ -13,15 +13,27 @@
     "measured_fresh_process_runs": 15,
     "steady_state_composite_samples_per_run": 300,
     "percentile_method": "nearest-rank",
-    "reported": ["raw_samples", "p50", "p95", "max"],
+    "reported": [
+      "raw_workload_events",
+      "raw_timestamps",
+      "raw_process_rss_bytes",
+      "raw_cache_bytes",
+      "raw_resource_events",
+      "raw_failure_events",
+      "independently_derived_p50_p95_max_and_slope"
+    ],
     "workloads": [
       "cold-proxy-build",
       "warm-proxy-cache",
-      "scrub",
-      "playback",
-      "seek",
+      "seek-to-valid-frame",
+      "playback-audio-video-skew",
+      "queue-drain-after-scrub",
+      "project-open-to-valid-frame",
       "teardown",
-      "context-recovery"
+      "context-recovery-to-valid-frame",
+      "process-rss-and-cache-memory",
+      "crashes-stalls-black-frames",
+      "compositor-microbenchmark"
     ]
   },
   "required_environment_identity": [
@@ -50,27 +62,37 @@
     "chrome": {
       "composite_p95_ms": 26.7,
       "composite_max_ms": 66.7,
+      "cold_proxy_build_p95_ms": 5000,
+      "warm_proxy_cache_p95_ms": 250,
       "warm_seek_valid_frame_p95_ms": 100,
       "playhead_audio_skew_p95_frames": 1,
       "queue_drain_after_scrub_ms": 500,
       "context_loss_valid_frame_ms": 1000,
       "warm_project_open_valid_frame_ms": 2000,
+      "teardown_p95_ms": 500,
       "post_warm_memory_slope_mib_per_min": 1
     },
     "release_wkwebview": {
       "composite_p95_ms": 26.7,
       "composite_max_ms": 66.7,
+      "cold_proxy_build_p95_ms": 5000,
+      "warm_proxy_cache_p95_ms": 250,
       "warm_seek_valid_frame_p95_ms": 150,
       "playhead_audio_skew_p95_frames": 1,
       "queue_drain_after_scrub_ms": 750,
       "context_loss_valid_frame_ms": 1500,
       "warm_project_open_valid_frame_ms": 3000,
+      "teardown_p95_ms": 750,
       "post_warm_memory_slope_mib_per_min": 1
     },
     "absolute_process_memory_ceiling_mib": null
   },
   "rules": {
     "browser_ci_and_release_package_are_separate_distributions": true,
+    "all_declared_workloads_require_hashed_raw_artifacts": true,
+    "domain_verifier_recomputes_summaries_caps_and_budgets": true,
+    "producer_authored_pass_booleans_are_forbidden": true,
+    "compositor_timing_is_a_named_microbenchmark_not_user_visible_performance": true,
     "automatic_baseline_multiplier_forbidden": true,
     "acceptance_requires_approved_policy_and_exact_environment": true,
     "post_dated_or_missing_baseline_rejected": true
@@ -81,6 +103,10 @@
     "unrestored-webgl-context-loss",
     "injected-long-task",
     "unbounded-queue-or-cache-growth",
+    "injected-playback-skew",
+    "never-draining-queue",
+    "context-restored-with-blank-frame",
+    "inline-summary-vs-artifact-mismatch",
     "unapproved-policy",
     "missing-required-runtime-cell"
   ]

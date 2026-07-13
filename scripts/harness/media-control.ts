@@ -29,6 +29,7 @@ export const mediaOracleImplementationPaths = [
   "scripts/harness/media-control.ts",
   "scripts/harness/media-control-policy.json",
   "scripts/harness/media-domain-truth.ts",
+  "scripts/harness/media-performance-domain-truth.ts",
   "e2e/media/media.spec.ts",
   "e2e/media/product-media.ts",
   "e2e/media/performance-sample.ts",
@@ -36,6 +37,7 @@ export const mediaOracleImplementationPaths = [
   "viewer/src/decode/parallelDecoder.ts",
   "viewer/src/decode/frameCache.ts",
   "viewer/src/test-bridge/resourceLedger.ts",
+  "viewer/src/main.tsx",
   "scripts/media-fixtures.ts",
   "scripts/media-goldens.ts",
 ] as const;

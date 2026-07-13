@@ -462,13 +462,46 @@ describe("H07 media assurance contract", () => {
     expect(() => verifyExternalMediaEvidence(options)).toThrow("E_MEDIA_EXTERNAL_ARTIFACT_DRIFT");
   });
 
-  it("recomputes release-package distributions instead of trusting producer summaries", () => {
+  it("binds release-package performance to the same raw product-workload verifier", () => {
     const root = mkdtempSync(join(tmpdir(), "vean-release-media-evidence-"));
-    const artifact = join(root, "samples.json");
-    writeFileSync(artifact, "[1,2,3]\n");
+    const artifact = join(root, "performance-raw.json");
+    const frame = { valid: true, nonblack_ratio: 0.8, signature_sha256: "e".repeat(64) };
+    const run = {
+      workloads: {
+        cold_proxy_build: { duration_ms: 10, cached: false, valid_proxy: true },
+        warm_proxy_cache: { duration_ms: 1, cached: true, valid_proxy: true },
+        project_open_valid_frame: { duration_ms: 10, frame },
+        seek_to_valid_frame: {
+          samples: [{ duration_ms: 2, requested_frame: 1, observed_frame: 1, frame }],
+        },
+        playback_av_skew: { samples: [{ skew_frames: 0.1 }] },
+        queue_drain: {
+          samples: [{ at_ms: 1, workers: 2, in_flight: 0, queued: 0, cache_bytes: 100 }],
+        },
+        context_recovery_valid_frame: { duration_ms: 2, frame },
+        memory: {
+          samples: [
+            { at_ms: 0, rss_bytes: 1_000_000, cache_bytes: 100 },
+            { at_ms: 60_000, rss_bytes: 1_000_000, cache_bytes: 100 },
+          ],
+        },
+        teardown: {
+          duration_ms: 1,
+          resource_events: [
+            { op: "open", kind: "decoder-worker", id: "0" },
+            { op: "close", kind: "decoder-worker", id: "0" },
+          ],
+        },
+        failures: { crashes: [], page_errors: [], black_frames: [], stalls: [] },
+        compositor_microbenchmark: { raw_samples: [1, 2, 3] },
+      },
+    };
+    writeFileSync(
+      artifact,
+      `${JSON.stringify({ schema_version: "2.0.0", kind: "vean-product-performance-raw", runs: [run, run] })}\n`,
+    );
     const evidencePath = join(root, "evidence.json");
     const policySha256s = { performance: "d".repeat(64) };
-    const distribution = { raw_samples: [1, 2, 3], p50: 2, p95: 3, max: 3 };
     const evidence = {
       schema_version: "1.0.0",
       evidence_kind: "release-package-performance",
@@ -490,21 +523,10 @@ describe("H07 media assurance contract", () => {
         optimized: true,
         installed: true,
       },
-      artifacts: { samples: { path: "samples.json", sha256: hash(artifact) } },
+      artifacts: { samples: { path: "performance-raw.json", sha256: hash(artifact) } },
       performance: {
         warmup_runs: 1,
-        distributions: [distribution, distribution],
-        functional_caps: {
-          decoder_workers_max_observed: 2,
-          in_flight_decodes_max_observed: 4,
-          steady_queue_max_observed: 4,
-          queue_drained_to_zero: true,
-          cache_resident_bytes_max_observed: 100,
-          owned_handle_balance: true,
-          crashes_unhandled_errors_black_frames_stalls: 0,
-          context_restore_valid_frame: true,
-        },
-        artifact_ids: ["samples"],
+        raw_artifact_id: "samples",
       },
     };
     writeFileSync(evidencePath, `${JSON.stringify(evidence)}\n`);
@@ -516,29 +538,34 @@ describe("H07 media assurance contract", () => {
       fixtureManifestSha256: "f".repeat(64),
       policySha256s,
       performanceSampling: { warmupRuns: 1, measuredRuns: 2, samplesPerRun: 3 },
-      performanceBudgets: { composite_p95_ms: 3, composite_max_ms: 3 },
+      performanceBudgets: {
+        composite_p95_ms: 3,
+        composite_max_ms: 3,
+        cold_proxy_build_p95_ms: 20,
+        warm_proxy_cache_p95_ms: 2,
+        warm_seek_valid_frame_p95_ms: 3,
+        playhead_audio_skew_p95_frames: 1,
+        queue_drain_after_scrub_ms: 2,
+        context_loss_valid_frame_ms: 3,
+        warm_project_open_valid_frame_ms: 20,
+        teardown_p95_ms: 2,
+        post_warm_memory_slope_mib_per_min: 1,
+        absolute_process_memory_ceiling_mib: 2,
+      },
       functionalCaps: {
         decoder_workers_max: 4,
         in_flight_decodes_max: 8,
         steady_queue_max: 8,
-        queue_must_drain_to_zero_after_scrub: true,
         cache_resident_bytes_max: 500,
         owned_handle_open_close_balance_required: true,
         crashes_unhandled_errors_black_frames_stalls_max: 0,
-        context_restore_requires_content_valid_frame: true,
       },
     };
     expect(verifyExternalMediaEvidence(options)).toMatchObject({ status: "verified" });
-    const forged = {
-      ...evidence,
-      performance: {
-        ...evidence.performance,
-        distributions: [{ ...distribution, p95: 1 }, distribution],
-      },
-    };
-    writeFileSync(evidencePath, `${JSON.stringify(forged)}\n`);
-    expect(() => verifyExternalMediaEvidence(options)).toThrow(
-      "E_MEDIA_EXTERNAL_RELEASE_DERIVED_METRICS",
+    writeFileSync(
+      artifact,
+      `${JSON.stringify({ schema_version: "2.0.0", kind: "vean-product-performance-raw", runs: [] })}\n`,
     );
+    expect(() => verifyExternalMediaEvidence(options)).toThrow("E_MEDIA_EXTERNAL_ARTIFACT_DRIFT");
   });
 });

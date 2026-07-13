@@ -50,10 +50,6 @@ const base = `http://127.0.0.1:${server.port}`;
 function hash(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
-function percentile(values: number[], p: number): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  return sorted[Math.max(0, Math.ceil((p / 100) * sorted.length) - 1)] ?? 0;
-}
 function command(argv: string[]): string | null {
   const result = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe" });
   return result.exitCode === 0 ? result.stdout.toString().trim() : null;
@@ -315,13 +311,8 @@ try {
     throw new Error("stalled response was not distinguished from readiness");
   if (control === "injected-long-task") throw new Error("injected long task crossed budget");
 
-  const distributions: Array<{
-    run: number;
-    rawSamples: number[];
-    p50: number;
-    p95: number;
-    max: number;
-  }> = [];
+  const performanceRuns: Array<Record<string, unknown>> = [];
+  let performanceRawArtifact: { path: string; sha256: string } | null = null;
   if (suite === "baseline" || suite === "performance") {
     await browser.close();
     browser = undefined;
@@ -330,20 +321,29 @@ try {
     for (let run = 0; run < measuredRuns + 3; run++) {
       const sample = Bun.spawnSync(
         ["bun", "e2e/media/performance-sample.ts", String(samplesPerRun)],
-        { cwd: repo, stdout: "pipe", stderr: "pipe" },
+        {
+          cwd: repo,
+          stdout: "pipe",
+          stderr: "pipe",
+          env: {
+            ...process.env,
+            VEAN_MEDIA_PERF_CONTROL: control === "injected-long-task" ? "delay" : "none",
+          },
+        },
       );
       if (sample.exitCode !== 0)
         throw new Error(`fresh performance process ${run} failed\n${sample.stderr}`);
-      const samples = JSON.parse(sample.stdout.toString()) as number[];
-      if (run >= 3)
-        distributions.push({
-          run: run - 3,
-          rawSamples: samples,
-          p50: percentile(samples, 50),
-          p95: percentile(samples, 95),
-          max: Math.max(...samples),
-        });
+      const measured = JSON.parse(sample.stdout.toString()) as Record<string, unknown>;
+      if (run >= 3) performanceRuns.push(measured);
     }
+    if (!process.env.VEAN_MEDIA_ARTIFACT_DIR)
+      throw new Error("performance artifact directory required");
+    const rawPath = join(process.env.VEAN_MEDIA_ARTIFACT_DIR, "performance-product-raw.json");
+    writeFileSync(
+      rawPath,
+      `${JSON.stringify({ schema_version: "2.0.0", kind: "vean-product-performance-raw", runs: performanceRuns })}\n`,
+    );
+    performanceRawArtifact = { path: rawPath, sha256: hash(rawPath) };
   }
   const executablePath = chromium.executablePath();
   const hostIdentity = {
@@ -392,7 +392,15 @@ try {
       warmupRuns: 3,
       measuredFreshProcessRuns: measuredRuns,
       samplesPerRun,
-      distributions,
+      rawArtifact: performanceRawArtifact,
+      // Informational only. The domain verifier reads the hashed raw artifact and
+      // independently derives distributions, caps, and budgets.
+      producerSummary: {
+        runCount: performanceRuns.length,
+        workloadNames: performanceRuns[0]
+          ? Object.keys((performanceRuns[0].workloads as Record<string, unknown>) ?? {})
+          : [],
+      },
     },
   };
   const resultPath = process.env.VEAN_MEDIA_RESULT_PATH;

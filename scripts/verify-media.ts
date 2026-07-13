@@ -10,6 +10,7 @@ import {
   prepareMediaControl,
 } from "./harness/media-control";
 import { verifyExternalMediaEvidence } from "./harness/media-domain-truth";
+import { verifyPerformanceRawArtifact } from "./harness/media-performance-domain-truth";
 
 const repo = resolve(import.meta.dirname, "..");
 const valueAfter = (flag: string) => {
@@ -206,6 +207,34 @@ if (childExit !== 0) {
 }
 if (!Bun.file(browserResultPath).size) throw new Error("media runner omitted result artifact");
 const browserResult = JSON.parse(readFileSync(browserResultPath, "utf8"));
+let browserPerformanceTruth: unknown = null;
+if (["all", "baseline", "performance"].includes(suite)) {
+  const declared = browserResult.performance?.rawArtifact;
+  const expectedPath = join(artifactDir, "performance-product-raw.json");
+  if (!declared || resolve(declared.path) !== expectedPath || typeof declared.sha256 !== "string") {
+    throw new Error("E_MEDIA_PERFORMANCE_RAW_ARTIFACT_REQUIRED");
+  }
+  const chromeBudget = performance.proposed_user_visible_budgets.chrome;
+  const absoluteCeiling =
+    performance.proposed_user_visible_budgets.absolute_process_memory_ceiling_mib;
+  browserPerformanceTruth = verifyPerformanceRawArtifact({
+    artifactPath: expectedPath,
+    expectedSha256: declared.sha256,
+    sampling: {
+      measuredRuns: performance.sampling.measured_fresh_process_runs,
+      samplesPerRun: performance.sampling.steady_state_composite_samples_per_run,
+    },
+    caps: performance.functional_caps,
+    ...(accepting
+      ? {
+          budgets: {
+            ...chromeBudget,
+            absolute_process_memory_ceiling_mib: absoluteCeiling,
+          },
+        }
+      : {}),
+  });
+}
 const candidateManifest = join(repo, "corpus/harness/media/candidate-goldens/manifest.json");
 const fixtureManifestSha256 = hash(manifestPath);
 let approvedGolden: { path: string; sha256: string; manifest: Record<string, unknown> } | undefined;
@@ -251,7 +280,11 @@ if (accepting) {
           : undefined,
       performanceBudgets:
         kind === "release-package-performance"
-          ? performance.proposed_user_visible_budgets.release_wkwebview
+          ? {
+              ...performance.proposed_user_visible_budgets.release_wkwebview,
+              absolute_process_memory_ceiling_mib:
+                performance.proposed_user_visible_budgets.absolute_process_memory_ceiling_mib,
+            }
           : undefined,
       functionalCaps:
         kind === "release-package-performance" ? performance.functional_caps : undefined,
@@ -289,35 +322,13 @@ if (accepting) {
     };
   }
   if (["all", "performance"].includes(suite)) {
-    const budget = performance.proposed_user_visible_budgets.chrome;
     const approvedEnvironment = performance.approved_environments?.chrome;
     if (!approvedEnvironment) throw new Error("E_MEDIA_APPROVED_CHROME_ENVIRONMENT_REQUIRED");
     for (const [key, expected] of Object.entries(approvedEnvironment)) {
       if (JSON.stringify(browserResult.runtime[key]) !== JSON.stringify(expected))
         throw new Error(`E_MEDIA_CHROME_ENVIRONMENT_MISMATCH:${key}`);
     }
-    const distributions = browserResult.performance.distributions as Array<{
-      p95: number;
-      max: number;
-      rawSamples: number[];
-    }>;
-    if (
-      distributions.length !== performance.sampling.measured_fresh_process_runs ||
-      distributions.some(
-        (distribution) =>
-          distribution.rawSamples.length !==
-          performance.sampling.steady_state_composite_samples_per_run,
-      )
-    )
-      throw new Error("E_MEDIA_PERFORMANCE_DISTRIBUTION_INCOMPLETE");
-    if (
-      Math.max(...distributions.map((distribution) => distribution.p95)) > budget.composite_p95_ms
-    )
-      throw new Error("E_MEDIA_CHROME_COMPOSITE_P95_BUDGET");
-    if (
-      Math.max(...distributions.map((distribution) => distribution.max)) > budget.composite_max_ms
-    )
-      throw new Error("E_MEDIA_CHROME_COMPOSITE_MAX_BUDGET");
+    if (!browserPerformanceTruth) throw new Error("E_MEDIA_PERFORMANCE_DOMAIN_TRUTH_REQUIRED");
   }
 }
 const result = {
@@ -355,7 +366,11 @@ const result = {
         Bun.file(approvedGolden ? resolve(repo, approvedGolden.path) : candidateManifest).size > 0,
     },
     resilience: browserResult.resilience,
-    performance: browserResult.performance,
+    performance: {
+      raw_artifact: browserResult.performance.rawArtifact,
+      independently_derived: browserPerformanceTruth,
+      compositor_timing_role: "named_microbenchmark_only",
+    },
     "performance.release-package": releaseEvidence,
     "live-export-parity": {
       status: approvedGolden ? "verified_approved_golden" : "candidate_only",
@@ -369,10 +384,6 @@ const result = {
 };
 const resultPath = join(artifactDir, "result.json");
 writeFileSync(resultPath, `${JSON.stringify(result, null, 2)}\n`);
-writeFileSync(
-  join(artifactDir, "performance-raw.json"),
-  `${JSON.stringify(browserResult.performance, null, 2)}\n`,
-);
 if (accepting && claim && controlPlan) {
   const scenarioLedger = JSON.parse(
     readFileSync(resolve(repo, "artifacts/specs/harness-scenarios/media.json"), "utf8"),
@@ -389,7 +400,14 @@ if (accepting && claim && controlPlan) {
     commandPath: resolve(repo, "scripts/verify-media.ts"),
     implementationPaths: mediaOracleImplementationPaths.map((path) => resolve(repo, path)),
     generatedPaths: ["viewer/dist", "corpus/harness/media/manifest.json"],
-    artifactPaths: [resultPath, join(artifactDir, "runner.log"), browserResultPath],
+    artifactPaths: [
+      resultPath,
+      join(artifactDir, "runner.log"),
+      browserResultPath,
+      ...(["all", "baseline", "performance"].includes(suite)
+        ? [join(artifactDir, "performance-product-raw.json")]
+        : []),
+    ],
     result,
     controlPlan: {
       control_id: controlPlan.control_id,
