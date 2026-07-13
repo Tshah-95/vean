@@ -206,6 +206,30 @@ describe("resolveAudio: placement + gain/fade", () => {
     expect(c.mediaOffset).toBe(0);
   });
 
+  it("does not schedule the video-only half of a detached A/V pair", () => {
+    const source = "footage.mov";
+    const t = tl(
+      [
+        audioTrack("A1", [
+          clip("a", source, 0, 30, {
+            streams: { videoIndex: -1, vstream: -1 },
+          }),
+        ]),
+      ],
+      [
+        videoTrack("V1", [
+          clip("v", source, 0, 30, {
+            streams: { audioIndex: -1, astream: -1, defaultAudioIndex: 1 },
+          }),
+        ]),
+      ],
+    );
+    const { clips, trackIds } = resolveAudio(t);
+    expect(trackIds).toEqual(["A1", "V1"]);
+    expect(clips).toHaveLength(1);
+    expect(clips[0]?.uuid).toBe("a");
+  });
+
   it("skips graphic (Remotion overlay) + color clips on video tracks", () => {
     // Graphic overlays are visual; their baked .mov audio is silent/incidental.
     const graphic = clip("g", "proj/.vean/cache/remotion/chat.mov", 0, 30);

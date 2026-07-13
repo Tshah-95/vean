@@ -207,6 +207,18 @@ interface PlaceOpts {
   skipGraphic?: boolean;
 }
 
+/** Whether this placed producer is configured to decode audio. The source may
+ * physically contain an audio stream while the VIDEO half of a typed detach has
+ * explicitly disabled it with `astream=-1`/`audio_index=-1`. Relative selectors
+ * override absolute selectors, matching MLT and the core IR's `hasAudio` helper. */
+function clipDecodesAudio(clip: ClipItem): boolean {
+  const streams = clip.streams;
+  if (streams == null) return true;
+  if (streams.astream != null) return streams.astream !== -1;
+  if (streams.audioIndex != null) return streams.audioIndex !== -1;
+  return true;
+}
+
 /** Walk ONE audio track into placed clips, mirroring `walkTrack`'s dissolve-trimming
  *  placement EXACTLY (a same-track audio dissolve trims `d` frames off each
  *  neighbour and occupies `d` frames itself — the `mix` cross-fade).
@@ -253,7 +265,7 @@ function placeAudioTrack(track: Track, out: AudioClip[], opts: PlaceOpts = {}): 
     const segLen = out2 - inn + 1;
     const start = cursor;
     cursor += segLen;
-    if (isColorClip(it)) continue; // a color clip carries no audio
+    if (isColorClip(it) || !clipDecodesAudio(it)) continue;
     // On a VIDEO track, skip graphic clips AND Remotion overlays — both are visual
     // overlays; any baked audio in their .mov is silent/incidental, and fetching a
     // large overlay .mov to decode it is wasteful. Audio tracks pass skipGraphic=false.
@@ -291,7 +303,9 @@ function placeDissolveEdges(
   const frames = d.frames;
   if (frames <= 0) return;
   const audible = (c: ClipItem) =>
-    !isColorClip(c) && !(opts.skipGraphic && (isGraphicClip(c) || isRemotionOverlay(c)));
+    !isColorClip(c) &&
+    clipDecodesAudio(c) &&
+    !(opts.skipGraphic && (isGraphicClip(c) || isRemotionOverlay(c)));
   // The OUTGOING edge: prev's last `frames` source frames, fading 1→0.
   if (prev?.kind === "clip" && audible(prev)) {
     const fromSrc = prev.out - frames + 1;

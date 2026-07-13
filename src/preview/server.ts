@@ -45,6 +45,7 @@ import { probeSource } from "../driver/probe";
 import { collectProbeDiagnostics } from "../driver/probeDiagnostics";
 import { VERSION } from "../index";
 import { fromMlt } from "../ir/parse";
+import { hasAudio as clipDecodesAudio } from "../ir/types";
 import type { OpInvocation } from "../ops";
 import { listKnownProjects, resolveProject } from "../project/context";
 import type { ResolvedProject } from "../project/context";
@@ -404,7 +405,7 @@ async function enrichWithAudioStreams(
           // the derived boolean (≥1 stream = carries audio).
           if (count == null) return;
           clip.audioStreams = count;
-          clip.hasAudio = count > 0;
+          clip.hasAudio = count > 0 && clipDecodesAudio(item);
         }),
       );
     }

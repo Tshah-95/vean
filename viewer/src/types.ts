@@ -53,6 +53,16 @@ export interface ClipItem {
   /** Derived from `audioStreams` (≥1 ⇒ true): does this clip's source carry audio?
    *  Present exactly when `audioStreams` is (both omitted for an unprobeable source). */
   hasAudio?: boolean;
+  /** MLT stream selectors for an A/V split. A detached video half sets
+   *  `audioIndex`/`astream` to -1; the audio resolver must honor that instead of
+   *  decoding the source's default audio a second time. */
+  streams?: {
+    audioIndex?: number;
+    videoIndex?: number;
+    astream?: number;
+    vstream?: number;
+    defaultAudioIndex?: number;
+  };
   /** Remotion-composition identity — present iff this clip names a composition.
    *  Mirrors `Clip.composition` in src/ir/types.ts; round-trips through the
    *  `vean:composition` / `vean:compositionProps` producer properties. Two consumers

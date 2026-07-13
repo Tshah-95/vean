@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import { fetchPeaks } from "../api";
 import type { PeaksResponse } from "../types";
+import { scaledWaveformAmplitude, waveformDisplayGain } from "../waveformEnvelope";
 
 const cache = new Map<string, PeaksResponse | null>();
 
@@ -68,14 +69,15 @@ export function Waveform({
   const n = peaks.bins;
   const H = 100;
   const mid = H / 2;
+  const displayGain = waveformDisplayGain(peaks.peaks);
   // A filled envelope: forward along the max edge, back along the min edge.
   let d = "";
   for (let i = 0; i < n; i++) {
-    const max = peaks.peaks[i * 2 + 1] ?? 0;
+    const max = scaledWaveformAmplitude(peaks.peaks[i * 2 + 1] ?? 0, displayGain);
     d += `${i === 0 ? "M" : "L"}${i},${(mid - max * mid).toFixed(2)} `;
   }
   for (let i = n - 1; i >= 0; i--) {
-    const min = peaks.peaks[i * 2] ?? 0;
+    const min = scaledWaveformAmplitude(peaks.peaks[i * 2] ?? 0, displayGain);
     d += `L${i},${(mid - min * mid).toFixed(2)} `;
   }
   d += "Z";
