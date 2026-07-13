@@ -16,7 +16,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { resolveBin } from "../driver/melt";
 
 const STATE_DIR_NAME = ".vean";

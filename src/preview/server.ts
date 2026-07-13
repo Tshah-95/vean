@@ -775,18 +775,19 @@ export function createPreviewHandler(
       return serveFile(resolved, dirname(resolved), req);
     }
 
-    // ── Per-source short-GOP H.264 decode proxy (the LIVE in-browser decode src) ──
+    // ── Per-source validated decode proxy (the LIVE in-browser decode source) ──
     // GET /api/source-proxy?path=<abs>&route=<r>  → builds (once, cached) a small
-    // short-GOP H.264 proxy of ONE source file and streams it Range-capable. This is
+    // short-GOP proxy of ONE source file and streams it Range-capable: H.264 for an
+    // opaque source, VP9-with-alpha for a transparent source. This is
     // the source the in-browser mediabunny→WebCodecs decoder demuxes (§5, §8.2): the
     // user's footage is HEVC/ProRes, which WebCodecs can't reliably decode, so the
-    // realtime decode path consumes an `avc1` proxy that decodes everywhere. The
+    // realtime decode path consumes the validated derivative. The
     // short GOP (`-g 15`) collapses worst-case seek toward a single keyframe.
     //
     // SAME ALLOWLIST as /api/media: a request may only build/stream a proxy for a
     // file the route's LIVE timeline actually references — never an arbitrary disk
-    // path. The transcode shells out to `melt` once; subsequent requests hit the
-    // content-addressed cache. `melt` here is a one-time prep, NOT in the scrub loop.
+    // path. The transcode shells out to `ffmpeg` once; subsequent requests hit the
+    // content-addressed cache. `ffmpeg` here is a one-time prep, NOT in the scrub loop.
     if (path === "/api/source-proxy") {
       const requested = url.searchParams.get("path");
       if (!requested) {
