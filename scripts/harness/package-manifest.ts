@@ -110,11 +110,14 @@ export function inventoryTree(root: string): TreeEntry[] {
 }
 
 export function treeManifest(root: string) {
-  const xattrs = spawnSync("xattr", ["-lr", root], { encoding: "utf8" });
-  if (xattrs.status !== 0) throw new Error(`E_TREE_XATTR_SCAN: ${xattrs.stderr ?? ""}`);
-  const xattrNames = [...xattrs.stdout.matchAll(/: (com\.apple\.[^:]+):(?: |$)/gm)].map(
-    (match) => match[1] ?? "",
-  );
+  const xattrNames = (() => {
+    if (process.platform !== "darwin") return [];
+    const xattrs = spawnSync("xattr", ["-lr", root], { encoding: "utf8" });
+    if (xattrs.status !== 0) throw new Error(`E_TREE_XATTR_SCAN: ${xattrs.stderr ?? ""}`);
+    return [...xattrs.stdout.matchAll(/: (com\.apple\.[^:]+):(?: |$)/gm)].map(
+      (match) => match[1] ?? "",
+    );
+  })();
   const unclassified = xattrNames.find((name) => name !== "com.apple.provenance");
   if (unclassified) throw new Error(`E_TREE_XATTR_UNCLASSIFIED: ${unclassified}`);
   const entries = inventoryTree(root);

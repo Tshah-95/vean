@@ -55,7 +55,6 @@ function makeMirror(target: string): void {
   rmSync(join(target, "viewer", "dist"), { recursive: true, force: true });
   rmSync(join(target, "viewer", "node_modules"), { recursive: true, force: true });
   symlinkSync(join(repo, "node_modules"), join(target, "node_modules"), "dir");
-  symlinkSync(join(repo, "viewer", "node_modules"), join(target, "viewer", "node_modules"), "dir");
 }
 
 function run(executable: string, args: string[], cwd: string, env: NodeJS.ProcessEnv = {}) {
