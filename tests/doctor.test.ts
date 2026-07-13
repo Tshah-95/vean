@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runDoctor } from "../src/cli/doctor";
@@ -47,5 +48,29 @@ describe("vean doctor", () => {
     expect(result.status).toBe(0);
     const report = JSON.parse(result.stdout) as { ok: boolean };
     expect(report.ok).toBe(true);
+  });
+
+  it("audits a consumer project without treating it as the VEAN runtime checkout", async () => {
+    const project = mkdtempSync(resolve(tmpdir(), "vean-doctor-consumer-"));
+    writeFileSync(resolve(project, ".gitignore"), ".vean/\n");
+    try {
+      const report = await runDoctor({
+        repo: project,
+        host: "codex",
+        surface: "cli",
+        probe: false,
+      });
+      expect(report.ok).toBe(true);
+      expect(report.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: "project:root", status: "pass", detail: project }),
+          expect.objectContaining({ name: "runtime:root", status: "pass", detail: repo }),
+          expect.objectContaining({ name: "state:db", status: "warn" }),
+          expect.objectContaining({ name: "cli:path", status: "pass" }),
+        ]),
+      );
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
   });
 });

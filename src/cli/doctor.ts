@@ -524,13 +524,25 @@ function validateWorktree(repo: string): DoctorCheck[] {
 }
 
 export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorReport> {
-  const repo = resolve(options.repo ?? process.cwd());
+  const projectRepo = resolve(options.repo ?? process.cwd());
+  // `--repo` names the consumer project being edited. The CLI/LSP/MCP, skills,
+  // package metadata, and frontend runtimes belong to the installed VEAN
+  // checkout, which is the source tree containing this module. Conflating the
+  // two made `vean doctor --repo <consumer>` look for `<consumer>/src/cli.ts`.
+  const runtimeRepo = resolve(import.meta.dirname, "../..");
   const host = options.host ?? "all";
   const probe = options.probe ?? true;
   const surface = options.surface ?? "lsp";
   const checks: DoctorCheck[] = [];
 
-  checks.push(check("repo", existsSync(join(repo, "package.json")) ? "pass" : "fail", repo));
+  checks.push(check("project:root", existsSync(projectRepo) ? "pass" : "fail", projectRepo));
+  checks.push(
+    check(
+      "runtime:root",
+      existsSync(join(runtimeRepo, "package.json")) ? "pass" : "fail",
+      runtimeRepo,
+    ),
+  );
   checks.push(commandCheck("bun", "bun", ["--version"], "Bun runtime is required"));
   // Renderer binaries honor the VEAN_MELT/VEAN_FFMPEG/VEAN_FFPROBE overrides (via
   // resolveBin), so doctor reports the bundled-sidecar path inside the Mac app and
@@ -562,46 +574,54 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorRepo
   checks.push(
     check(
       "dependencies",
-      existsSync(join(repo, "node_modules")) ? "pass" : "warn",
+      existsSync(join(runtimeRepo, "node_modules")) ? "pass" : "warn",
       "run bun install if missing",
     ),
   );
 
   checks.push(
     skillResolutionCheck(
-      repo,
+      runtimeRepo,
       ".claude/skills/editing/SKILL.md",
       ".agents/skills/editing/SKILL.md",
     ),
   );
   checks.push(
-    skillResolutionCheck(repo, "skills/editing/SKILL.md", ".agents/skills/editing/SKILL.md"),
+    skillResolutionCheck(runtimeRepo, "skills/editing/SKILL.md", ".agents/skills/editing/SKILL.md"),
   );
   checks.push(
-    skillResolutionCheck(repo, ".claude/skills/setup/SKILL.md", ".agents/skills/setup/SKILL.md"),
+    skillResolutionCheck(
+      runtimeRepo,
+      ".claude/skills/setup/SKILL.md",
+      ".agents/skills/setup/SKILL.md",
+    ),
   );
-  checks.push(skillResolutionCheck(repo, "skills/setup/SKILL.md", ".agents/skills/setup/SKILL.md"));
-  checks.push(...validateRemotionParity(repo));
-  checks.push(...(await validateState(repo)));
-  checks.push(...validateWorktree(repo));
+  checks.push(
+    skillResolutionCheck(runtimeRepo, "skills/setup/SKILL.md", ".agents/skills/setup/SKILL.md"),
+  );
+  checks.push(...validateRemotionParity(runtimeRepo));
+  checks.push(...(await validateState(projectRepo)));
+  checks.push(...validateWorktree(runtimeRepo));
 
-  if (host === "all" || host === "claude-code") checks.push(...validateClaudeFiles(repo, surface));
-  if (host === "all" || host === "codex") checks.push(...validateCodex(repo));
-  if (surfaceIncludes(surface, "cli")) checks.push(...validateCli(repo));
+  if (host === "all" || host === "claude-code") {
+    checks.push(...validateClaudeFiles(runtimeRepo, surface));
+  }
+  if (host === "all" || host === "codex") checks.push(...validateCodex(runtimeRepo));
+  if (surfaceIncludes(surface, "cli")) checks.push(...validateCli(runtimeRepo));
 
   if (probe && surfaceIncludes(surface, "lsp")) {
-    const rootUri = pathToFileURL(`${repo}/`).href;
+    const rootUri = pathToFileURL(`${projectRepo}/`).href;
     checks.push(
       await probeStdioServer(
         "lsp:initialize",
         "bun",
-        ["--cwd", repo, "src/bridge/lsp/server.ts"],
+        ["--cwd", runtimeRepo, "src/bridge/lsp/server.ts"],
         {
           processId: process.pid,
           rootUri,
           capabilities: {},
           clientInfo: { name: "vean-doctor", version: "0.1.0" },
-          workspaceFolders: [{ uri: rootUri, name: basename(repo) }],
+          workspaceFolders: [{ uri: rootUri, name: basename(projectRepo) }],
         },
         [
           lspMessage({ jsonrpc: "2.0", id: 2, method: "shutdown", params: null }),
@@ -611,7 +631,7 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorRepo
     );
   }
   if (probe && surfaceIncludes(surface, "mcp")) {
-    checks.push(await probeMcpServer(repo));
+    checks.push(await probeMcpServer(runtimeRepo));
   }
 
   return { ok: checks.every((c) => c.status !== "fail"), checks };

@@ -27,6 +27,12 @@ Keep host setup here; keep timeline editing behavior in the `editing` skill.
    changes, global installs, package manager installs, or shell profile edits.
 5. Re-run `bun run doctor` after changes.
 
+For a consumer project outside the VEAN checkout, pass it explicitly:
+`vean doctor --repo /path/to/project`. Doctor audits `.vean` state and project
+routes at that path while resolving the CLI, LSP/MCP servers, skills, package
+metadata, and frontend runtimes from the installed VEAN checkout. A consumer is
+not expected to contain VEAN's own `src/`, `viewer/`, or skills.
+
 ## Preference survey
 
 When the host supports structured user questions (`askuserquestion` in Claude
