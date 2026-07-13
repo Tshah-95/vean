@@ -34,7 +34,13 @@
 // scalers, YUV→RGB matrices, range). Preview is for judgment; `melt` is ground
 // truth. We composite straight sRGB over premultiplied alpha — good enough for the
 // live loop, never asserted against export pixels.
-import type { DissolveLayer, FootageLayer, Layer, SolidLayer } from "../resolveLayers";
+import type {
+  DissolveLayer,
+  FootageLayer,
+  Layer,
+  LayerGeometry,
+  SolidLayer,
+} from "../resolveLayers";
 
 /** A source a footage layer's frame comes from — either a decoded bitmap or any
  *  canvas-image source the compositor can `texImage2D`. `null` = decode pending /
@@ -57,11 +63,17 @@ export type FootageProvider = (layer: FootageLayer) => FrameImage;
 // (canvas/bitmap origin is top-left; GL texture origin is bottom-left).
 const VERT = `#version 300 es
 in vec2 aPos;
+uniform vec4 uRect; // normalized top-left x,y,width,height
 out vec2 vUv;
 void main() {
-  vUv = vec2(aPos.x * 0.5 + 0.5, 1.0 - (aPos.y * 0.5 + 0.5));
-  gl_Position = vec4(aPos, 0.0, 1.0);
+  vec2 p = aPos * 0.5 + 0.5;
+  vUv = vec2(p.x, 1.0 - p.y);
+  float x = -1.0 + 2.0 * (uRect.x + p.x * uRect.z);
+  float y = 1.0 - 2.0 * (uRect.y + uRect.w - p.y * uRect.w);
+  gl_Position = vec4(x, y, 0.0, 1.0);
 }`;
+
+const FULL_GEOMETRY: LayerGeometry = { x: 0, y: 0, width: 1, height: 1 };
 
 /** Solid-color fill (a `color` clip — §7 exact). `uColor` is premultiplied-alpha
  *  straight RGBA; `uOpacity` scales alpha for fades. */
@@ -333,10 +345,26 @@ export class GlCompositor {
   }
 
   /** Draw a SOLID color quad (premultiplied) into the bound framebuffer. */
-  private drawSolid(color: [number, number, number, number], opacity: number): void {
+  private setGeometry(program: WebGLProgram, geometry: LayerGeometry): void {
+    const gl = this.gl;
+    gl.uniform4f(
+      gl.getUniformLocation(program, "uRect"),
+      geometry.x,
+      geometry.y,
+      geometry.width,
+      geometry.height,
+    );
+  }
+
+  private drawSolid(
+    color: [number, number, number, number],
+    opacity: number,
+    geometry: LayerGeometry = FULL_GEOMETRY,
+  ): void {
     const gl = this.gl;
     gl.useProgram(this.progSolid);
     gl.bindVertexArray(this.vao);
+    this.setGeometry(this.progSolid, geometry);
     gl.uniform4f(
       gl.getUniformLocation(this.progSolid, "uColor"),
       color[0],
@@ -349,10 +377,11 @@ export class GlCompositor {
   }
 
   /** Draw the currently-uploaded texture quad (premultiplied over-composite). */
-  private drawTex(opacity: number): void {
+  private drawTex(opacity: number, geometry: LayerGeometry = FULL_GEOMETRY): void {
     const gl = this.gl;
     gl.useProgram(this.progTex);
     gl.bindVertexArray(this.vao);
+    this.setGeometry(this.progTex, geometry);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.uploadTex);
     gl.uniform1i(gl.getUniformLocation(this.progTex, "uTex"), 0);
@@ -367,13 +396,13 @@ export class GlCompositor {
     const gl = this.gl;
     gl.disable(gl.BLEND); // sub-layer fills its whole target opaque-ish
     if (layer.kind === "solid") {
-      this.drawSolid(parseColor(layer.color), 1);
+      this.drawSolid(parseColor(layer.color), 1, layer.geometry);
       return true;
     }
     const img = footage(layer);
     if (!img) return false;
     this.uploadImage(img);
-    this.drawTex(1);
+    this.drawTex(1, layer.geometry);
     return true;
   }
 
@@ -407,6 +436,7 @@ export class GlCompositor {
     const prog = useLuma ? this.progLuma : this.progFade;
     gl.useProgram(prog);
     gl.bindVertexArray(this.vao);
+    this.setGeometry(prog, layer.geometry);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); // premultiplied over
     gl.activeTexture(gl.TEXTURE0);
@@ -456,12 +486,12 @@ export class GlCompositor {
       }
       gl.enable(gl.BLEND);
       if (layer.kind === "solid") {
-        this.drawSolid(parseColor(layer.color), layer.opacity);
+        this.drawSolid(parseColor(layer.color), layer.opacity, layer.geometry);
       } else {
         const img = this.footage(layer);
         if (!img) continue; // decode pending — the layer below shows through
         this.uploadImage(img);
-        this.drawTex(layer.opacity);
+        this.drawTex(layer.opacity, layer.geometry);
       }
     }
     gl.flush();

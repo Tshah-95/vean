@@ -100,6 +100,7 @@ export interface Transition {
   bTrack: number;
   in: number;
   out: number;
+  properties: Record<string, string | number>;
 }
 
 export interface Timeline {

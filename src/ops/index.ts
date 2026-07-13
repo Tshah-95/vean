@@ -74,6 +74,8 @@ import {
   popTransitionArgs,
   pushTransition,
   pushTransitionArgs,
+  replaceTransition,
+  replaceTransitionArgs,
   restoreTransitions,
   restoreTransitionsArgs,
   samplesPopTransition,
@@ -230,6 +232,7 @@ export const REGISTRY: Record<string, OpEntry<unknown>> = {
   // same body as the public `popTransition`.
   _popTransition: reg(popTransition, popTransitionArgs),
   _restoreTransitions: reg(restoreTransitions, restoreTransitionsArgs),
+  _replaceTransition: reg(replaceTransition, replaceTransitionArgs),
   _restoreWords: reg(restoreWords, restoreWordsArgs),
   // A/V-split inverses: detachAudio↔_reattachAudio, reattachAudio↔_redetachAudio,
   // link/unlink↔_restoreLinks.

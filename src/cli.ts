@@ -483,6 +483,103 @@ timeline
   );
 
 timeline
+  .command("animate-transform")
+  .alias("animate-layout")
+  .description("Animate an existing clip between two canvas slots with keyframed qtblend geometry")
+  .requiredOption("--clip-id <uuid>", "stable clip UUID")
+  .requiredOption("--start <frame>", "first animation frame", parseInteger)
+  .requiredOption("--end <frame>", "last animation frame", parseInteger)
+  .requiredOption("--from-json <json>", "from slot: {x,y,width,height,unit?,opacity?}", assertJson)
+  .requiredOption("--to-json <json>", "to slot: {x,y,width,height,unit?,opacity?}", assertJson)
+  .option("--easing <name>", "linear, smooth, smooth-tight, or hold", "smooth")
+  .option("--fit <mode>", "contain or stretch", "contain")
+  .option("--underlay-clip-id <uuid>", "explicit lower-layer clip UUID")
+  .option("--timeline <uri-or-route>", "timeline path, file:// URI, or route alias")
+  .option("--json", "emit JSON")
+  .action(
+    async (opts: {
+      clipId: string;
+      start: number;
+      end: number;
+      fromJson: string;
+      toJson: string;
+      easing: string;
+      fit: string;
+      underlayClipId?: string;
+      timeline?: string;
+      json?: boolean;
+    }) => {
+      const output = await printActionOutput(
+        "timeline.animateTransform",
+        {
+          clipId: opts.clipId,
+          startFrame: opts.start,
+          endFrame: opts.end,
+          from: parseJson(opts.fromJson),
+          to: parseJson(opts.toJson),
+          easing: opts.easing,
+          fit: opts.fit,
+          underlayClipId: opts.underlayClipId,
+          timeline: opts.timeline,
+        },
+        opts.json,
+      );
+      if (!opts.json) printJson(output);
+    },
+  );
+
+timeline
+  .command("apply-subject-alpha")
+  .alias("apply-track-matte")
+  .description(
+    "Place and validate an existing alpha subject cutout above a footage/baked-graphic clip",
+  )
+  .requiredOption("--cutout <path>", "alpha-capable video cutout")
+  .requiredOption("--target-clip-id <uuid>", "stable UUID of the clip beneath the cutout")
+  .requiredOption("--position <frame>", "timeline start frame", parseInteger)
+  .requiredOption("--duration <frames>", "placed duration", parseInteger)
+  .option("--in <frame>", "cutout source in-point", parseInteger, 0)
+  .option("--label <label>", "cutout clip label")
+  .option("--clip-id <uuid>", "explicit deterministic cutout clip UUID")
+  .option("--track-id <id>", "explicit deterministic cutout track id")
+  .option("--no-validate-alpha", "skip ffprobe alpha-plane validation")
+  .option("--timeline <uri-or-route>", "timeline path, file:// URI, or route alias")
+  .option("--json", "emit JSON")
+  .action(
+    async (opts: {
+      cutout: string;
+      targetClipId: string;
+      position: number;
+      duration: number;
+      in: number;
+      label?: string;
+      clipId?: string;
+      trackId?: string;
+      validateAlpha?: boolean;
+      timeline?: string;
+      json?: boolean;
+    }) => {
+      const output = await printActionOutput(
+        "timeline.applySubjectAlpha",
+        {
+          cutoutResource: opts.cutout,
+          targetClipId: opts.targetClipId,
+          position: opts.position,
+          durationFrames: opts.duration,
+          inFrame: opts.in,
+          label: opts.label,
+          cutoutClipId: opts.clipId,
+          cutoutTrackId: opts.trackId,
+          validateAlpha: opts.validateAlpha !== false,
+          timeline: opts.timeline,
+        },
+        opts.json,
+      );
+      if (!opts.json) printJson(output);
+    },
+  );
+
+timeline
   .command("add-audio")
   .description(
     "Append an audio clip (music/voiceover) to an audio track, with optional gain and fades",

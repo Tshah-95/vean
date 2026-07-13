@@ -94,6 +94,18 @@ CLI is the canonical command surface for this state. LSP remains ambient and
 independent. MCP and the Tauri app are adapters backed by the same action
 runtime, not the source of truth.
 
+### Local project repositories and worktrees
+
+`projects/` is ignored by the vean core repository because each real editing
+project may be its own nested Git repository with large local caches and media.
+A worktree of the vean core therefore does **not** carry an active project's
+tracked sources with it; dependency setup may create only a partial project
+directory. Before editing `projects/<name>`, check for its own `.git`, status,
+and worktree list. Edit that nested repository directly or create a separate
+worktree for it, while using the vean-core worktree only for core/action/viewer
+changes. Never assume a partial `projects/<name>` inside a fresh core worktree is
+the canonical project.
+
 ## Action runtime contract
 
 Define a product behavior once in `src/actions/`, then expose it through the

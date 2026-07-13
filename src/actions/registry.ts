@@ -42,6 +42,14 @@ const projectInput = z.object({ project: z.string().optional() });
 const emptyInput = z.object({}).strict();
 /** A non-negative integer frame (mirrors src/ir/types `frame`). */
 const frame = z.number().int().nonnegative();
+const canvasSlotInput = z.object({
+  unit: z.enum(["normalized", "pixels"]).default("normalized"),
+  x: z.number(),
+  y: z.number(),
+  width: z.number().positive(),
+  height: z.number().positive(),
+  opacity: z.number().min(0).max(1).default(1),
+});
 /** A track address: a stable track id or a (kind, index) pair. */
 const trackAddrInput = z.union([
   z.object({ trackId: z.string().min(1) }),
@@ -2510,6 +2518,215 @@ const actions = [
     async execute(ctx, input) {
       const { failJob } = await import("../state/jobs");
       return failJob(input.repo ?? ctx.project?.rootPath ?? ctx.cwd, input.id, input.error) ?? null;
+    },
+  }),
+  // ════════════════════════════════════════════════════════════════════════════
+  // Scene-compositing primitives: stable-UUID animated layout + validated
+  // subject-alpha placement. They intentionally live above the generic op layer.
+  action({
+    id: "timeline.animateTransform",
+    title: "Animate Clip Transform",
+    description:
+      "Animate an existing clip, addressed by stable UUID, from one arbitrary canvas slot to another with a keyframed qtblend rect and explicit easing/opacity. Reuses an existing composite topology when present; otherwise creates one. Prefer this over editing qtblend properties by hand.",
+    aliases: ["timeline.animateLayout", "animate-transform"],
+    relatedDiscovery: ["timeline.applySubjectAlpha", "timeline.applyLayout"],
+    examples: [
+      {
+        name: "shrink a subject cutout into the right-side presenter slot",
+        input: {
+          clipId: "subject-uuid",
+          startFrame: 150,
+          endFrame: 174,
+          from: { x: 0, y: 0, width: 1, height: 1, opacity: 1 },
+          to: { x: 0.68, y: 0.08, width: 0.28, height: 0.84, opacity: 1 },
+          easing: "smooth",
+        },
+      },
+    ],
+    input: z.object({
+      uri: z.string().optional(),
+      timeline: z.string().optional(),
+      clipId: z.string().min(1),
+      startFrame: frame,
+      endFrame: frame,
+      from: canvasSlotInput,
+      to: canvasSlotInput,
+      easing: z.enum(["linear", "smooth", "smooth-tight", "hold"]).default("smooth"),
+      underlayClipId: z.string().min(1).optional(),
+      fit: z.enum(["contain", "stretch"]).default("contain"),
+      sourceDimensions: z
+        .object({ width: z.number().positive(), height: z.number().positive() })
+        .optional(),
+    }),
+    output: z.unknown(),
+    scopes: ["timeline:write", "fs:read", "fs:write"],
+    effect: {
+      kind: "update",
+      mutates: ["timeline", "filesystem"],
+      openWorld: false,
+      destructive: false,
+      idempotency: "idempotent",
+      reversibility: "inverse-op",
+      dryRun: "supported",
+      approval: "ask",
+      audit: "full-input",
+    },
+    surfaces: {
+      cli: { command: "timeline animate-transform" },
+      mcp: { name: "animate-transform" },
+    },
+    async execute(ctx, input) {
+      const { parseDoc, serializeDoc } = await import("../bridge/tools/core");
+      const { probeSource } = await import("../driver/probe");
+      const { resolveTimelineTarget } = await import("../state/timeline");
+      const { animateTransform } = await import("./compositing");
+      const project = projectFor(ctx);
+      const timeline = resolveTimelineTarget(
+        project.rootPath,
+        project,
+        input.timeline ?? input.uri,
+      );
+      if ("ok" in timeline) return timeline;
+      const state = parseDoc(await ctx.documents.read(timeline.uri));
+      let sourceDimensions = input.sourceDimensions;
+      if (!sourceDimensions) {
+        const loc = (await import("../ops/primitives")).findClip(state, input.clipId);
+        const probe = loc ? await probeSource(loc.clip.resource) : null;
+        if (probe?.width && probe.height) {
+          sourceDimensions = { width: probe.width, height: probe.height };
+        }
+      }
+      const result = animateTransform(state, {
+        clipId: input.clipId,
+        startFrame: input.startFrame,
+        endFrame: input.endFrame,
+        from: input.from,
+        to: input.to,
+        easing: input.easing,
+        fit: input.fit,
+        ...(input.underlayClipId ? { underlayClipId: input.underlayClipId } : {}),
+        ...(sourceDimensions ? { sourceDimensions } : {}),
+      });
+      if (!("state" in result)) {
+        return { ok: false, kind: result.kind, detail: editErrorMsg(result), uri: timeline.uri };
+      }
+      await ctx.documents.write(timeline.uri, serializeDoc(result.state));
+      return {
+        ok: true,
+        clipId: result.clipId,
+        transitionIndex: result.transitionIndex,
+        reusedTransition: result.reusedTransition,
+        rect: result.rect,
+        aTrack: result.aTrack,
+        bTrack: result.bTrack,
+        consequences: result.consequences,
+        inverse: result.inverse,
+        sourceDimensions: sourceDimensions ?? null,
+        uri: timeline.uri,
+        resolvedPath: timeline.resolvedPath,
+        touchedUris: [timeline.uri],
+        project: timeline.project,
+      };
+    },
+  }),
+  action({
+    id: "timeline.applySubjectAlpha",
+    title: "Apply Subject Alpha Cutout",
+    description:
+      "Place an existing alpha-capable subject cutout over footage or a baked graphic with validated clip/range/track topology. This does not generate a segmentation mask; it validates the alpha plane and composes the supplied cutout.",
+    aliases: ["timeline.applyTrackMatte", "apply-subject-alpha", "track-matte"],
+    relatedDiscovery: ["timeline.animateTransform", "timeline.addGraphic"],
+    input: z.object({
+      uri: z.string().optional(),
+      timeline: z.string().optional(),
+      cutoutResource: z.string().min(1),
+      targetClipId: z.string().min(1),
+      position: frame,
+      durationFrames: z.number().int().positive(),
+      inFrame: frame.default(0),
+      label: z.string().optional(),
+      cutoutClipId: z.string().min(1).optional(),
+      cutoutTrackId: z.string().min(1).optional(),
+      validateAlpha: z.boolean().default(true),
+    }),
+    output: z.unknown(),
+    scopes: ["timeline:write", "fs:read", "fs:write", "process:execute"],
+    effect: {
+      kind: "update",
+      mutates: ["timeline", "filesystem"],
+      openWorld: false,
+      destructive: false,
+      idempotency: "non-idempotent",
+      reversibility: "inverse-op",
+      dryRun: "supported",
+      approval: "ask",
+      audit: "full-input",
+    },
+    surfaces: {
+      cli: { command: "timeline apply-subject-alpha" },
+      mcp: { name: "apply-subject-alpha" },
+    },
+    async execute(ctx, input) {
+      const { parseDoc, serializeDoc } = await import("../bridge/tools/core");
+      const { probePixFmt } = await import("../driver/remotion");
+      const { resolveTimelineTarget } = await import("../state/timeline");
+      const { applySubjectAlpha } = await import("./compositing");
+      const project = projectFor(ctx);
+      const timeline = resolveTimelineTarget(
+        project.rootPath,
+        project,
+        input.timeline ?? input.uri,
+      );
+      if ("ok" in timeline) return timeline;
+      let pixFmt: string | null = null;
+      if (input.validateAlpha) {
+        pixFmt = (await probePixFmt(input.cutoutResource)).toLowerCase();
+        const hasAlpha =
+          /^yuva/.test(pixFmt) ||
+          /^ya\d/.test(pixFmt) ||
+          /^gbra/.test(pixFmt) ||
+          ["rgba", "bgra", "argb", "abgr", "pal8"].includes(pixFmt) ||
+          pixFmt.includes("rgba") ||
+          pixFmt.includes("bgra");
+        if (!hasAlpha) {
+          return {
+            ok: false,
+            kind: "precondition",
+            detail: `applySubjectAlpha: cutout has no alpha-capable pixel format (ffprobe: ${pixFmt})`,
+            uri: timeline.uri,
+          };
+        }
+      }
+      const state = parseDoc(await ctx.documents.read(timeline.uri));
+      const result = applySubjectAlpha(state, {
+        cutoutResource: input.cutoutResource,
+        targetClipId: input.targetClipId,
+        position: input.position,
+        durationFrames: input.durationFrames,
+        inFrame: input.inFrame,
+        ...(input.label ? { label: input.label } : {}),
+        ...(input.cutoutClipId ? { cutoutClipId: input.cutoutClipId } : {}),
+        ...(input.cutoutTrackId ? { cutoutTrackId: input.cutoutTrackId } : {}),
+      });
+      if (!("state" in result)) {
+        return { ok: false, kind: result.kind, detail: editErrorMsg(result), uri: timeline.uri };
+      }
+      await ctx.documents.write(timeline.uri, serializeDoc(result.state));
+      return {
+        ok: true,
+        cutoutClipId: result.cutoutClipId,
+        cutoutTrackId: result.cutoutTrackId,
+        targetClipId: input.targetClipId,
+        pixFmt,
+        aTrack: result.aTrack,
+        bTrack: result.bTrack,
+        consequences: result.consequences,
+        inverse: result.inverse,
+        uri: timeline.uri,
+        resolvedPath: timeline.resolvedPath,
+        touchedUris: [timeline.uri],
+        project: timeline.project,
+      };
     },
   }),
   // ════════════════════════════════════════════════════════════════════════════

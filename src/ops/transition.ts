@@ -75,6 +75,38 @@ export const restoreTransitions: Op<RestoreTransitionsArgs> = (
   };
 };
 
+/** `_replaceTransition` — internal capturing primitive used by task-shaped
+ * compositing actions when a clip already owns a qtblend field transition. The
+ * public action resolves the transition from a stable clip UUID; this internal
+ * inverse stores the resulting index only for the immediate undo transaction. */
+export const replaceTransitionArgs = z.object({
+  index: z.number().int().nonnegative(),
+  transition: transitionSchema,
+});
+export type ReplaceTransitionArgs = z.infer<typeof replaceTransitionArgs>;
+
+export const replaceTransition: Op<ReplaceTransitionArgs> = (state, args): OpResult | EditError => {
+  const previous = state.transitions[args.index];
+  if (!previous) {
+    return editError({
+      kind: "frame-out-of-range",
+      frame: args.index,
+      bound: state.transitions.length,
+      detail: `replaceTransition: index ${args.index} is out of range for ${state.transitions.length} transitions`,
+    });
+  }
+  const next = cloneTimeline(state);
+  next.transitions[args.index] = structuredClone(args.transition) as Transition;
+  return {
+    state: next,
+    consequences: noConsequences(),
+    inverse: {
+      op: "_replaceTransition",
+      args: { index: args.index, transition: structuredClone(previous) },
+    },
+  };
+};
+
 // ─── samples (registry-driven invariant harness) ──────────────────────────────
 import { colorClip, resetIds, timeline, transition, videoTrack } from "../ir/builder";
 import { VERTICAL } from "../ir/profile";

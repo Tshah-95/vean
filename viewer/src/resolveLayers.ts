@@ -28,6 +28,7 @@
 // compositor, via the exact rational `sourceFrame * fps[1] / fps[0]` (never a
 // float fps).
 import { isAnimated, parseAnim, scalarOf, valueAtFrame } from "./keyframes";
+import type { RectValue } from "./keyframes";
 import { type ClipItem, type Item, type Timeline, type Track, isGraphicClip } from "./types";
 
 /** The main-tractor track index of `tracks.video[videoIndex]`. Index 0 is the
@@ -137,7 +138,14 @@ interface LayerBase {
    *  (§7) — a non-default blur kernel, a frei0r filter, an unknown blend. The
    *  compositor may overlay an on-demand `melt` still for the frame (§6.3). */
   approximate: boolean;
+  /** Exact destination rectangle in normalized canvas coordinates (top-left
+   * origin). Resolved from qtblend.rect, or affine transition.rect when no field
+   * qtblend owns the track. */
+  geometry: LayerGeometry;
 }
+
+export type LayerGeometry = { x: number; y: number; width: number; height: number };
+const FULL_GEOMETRY: LayerGeometry = { x: 0, y: 0, width: 1, height: 1 };
 
 export interface SolidLayer extends LayerBase {
   kind: "solid";
@@ -206,7 +214,59 @@ const EXACT_FILTER_SERVICES = new Set([
   "brightness", // fade level (resolved to opacity) — §7 exact
   "volume", // audio gain/fade — handled on the audio path, visually a no-op
   "panner",
+  "affine", // transition.rect is resolved exactly below
 ]);
+
+/** Resolve a static or animated MLT rect into normalized canvas geometry. Rect
+ * keyframes use absolute timeline frames on field transitions and clip-local
+ * frames on affine filters; the caller supplies the correct coordinate. */
+function resolveGeometry(
+  raw: string,
+  frame: number,
+  width: number,
+  height: number,
+  length: number,
+): { geometry: LayerGeometry; opacity: number } | null {
+  if (!raw.trim()) return null;
+  // The generic keyframe grammar intentionally carries percent-valued x/y/w/h
+  // rects as opaque (only rect opacity is percent in that core grammar), while
+  // qtblend explicitly allows all-four-percent geometry. Normalize those four
+  // coordinates to fractions for this service-specific resolver before using the
+  // shared interpolator; the canonical property string remains untouched.
+  const normalizePercentRect = (value: string): string =>
+    value
+      .split(";")
+      .map((entry) => {
+        const eq = entry.lastIndexOf("=");
+        const lhs = eq >= 0 ? entry.slice(0, eq + 1) : "";
+        const body = eq >= 0 ? entry.slice(eq + 1) : entry;
+        const parts = body.trim().split(/\s+/);
+        if (parts.length !== 5 || !parts.slice(0, 4).every((part) => part.endsWith("%"))) {
+          return entry;
+        }
+        const normalized = parts.map((part, index) =>
+          index < 4 ? String(Number.parseFloat(part.slice(0, -1)) / 100) : part,
+        );
+        return `${lhs}${normalized.join(" ")}`;
+      })
+      .join(";");
+  const value = valueAtFrame(parseAnim(normalizePercentRect(raw)), frame, { length });
+  if (!value || value.type !== "rect") return null;
+  const rect = value as RectValue;
+  // Percent coordinates are parsed as fractions by the shared keyframe port.
+  // MLT requires all rect coordinates to share the unit, so one `%` token is a
+  // sufficient discriminator for x/y/w/h.
+  const percent = raw.includes("%");
+  const x = percent ? rect.x : rect.x / width;
+  const y = percent ? rect.y : rect.y / height;
+  const w = percent ? rect.w : rect.w / width;
+  const h = percent ? rect.h : rect.h / height;
+  if (![x, y, w, h].every(Number.isFinite) || w <= 0 || h <= 0) return null;
+  return {
+    geometry: { x, y, width: w, height: h },
+    opacity: Math.min(1, Math.max(0, rect.opacity)),
+  };
+}
 
 /** Resolve a clip's visual ALPHA at a 0-based segment frame `segFrame` (0 = the
  *  segment's first played frame), plus whether it carries an `approximate`
@@ -219,9 +279,11 @@ function resolveClipVisual(
   clip: ClipItem,
   segFrame: number,
   segLen: number,
-): { opacity: number; approximate: boolean } {
+  profile: Timeline["profile"],
+): { opacity: number; approximate: boolean; geometry: LayerGeometry } {
   let opacity = 1;
   let approximate = false;
+  let geometry = FULL_GEOMETRY;
   for (const f of clip.filters ?? []) {
     if (f.service === FADE_IN_SERVICE) {
       const n = Number(f.properties.frames ?? 0);
@@ -256,12 +318,24 @@ function resolveClipVisual(
         const n = Number(raw);
         if (Number.isFinite(n)) opacity *= Math.min(1, Math.max(0, n));
       }
+    } else if (f.service === "affine" && f.properties["transition.rect"] != null) {
+      const resolved = resolveGeometry(
+        String(f.properties["transition.rect"]),
+        segFrame,
+        profile.width,
+        profile.height,
+        segLen,
+      );
+      if (resolved) {
+        geometry = resolved.geometry;
+        opacity *= resolved.opacity;
+      }
     } else if (!EXACT_FILTER_SERVICES.has(f.service)) {
       // A blur / frei0r / unknown color op the browser can't match — §7 approximate.
       approximate = true;
     }
   }
-  return { opacity, approximate };
+  return { opacity, approximate, geometry };
 }
 
 /** Build the base sub-layer (solid or footage) for a clip covering source-frame
@@ -273,15 +347,25 @@ function clipLayer(
   trackIndex: number,
   opacity: number,
   approximate: boolean,
+  geometry: LayerGeometry = FULL_GEOMETRY,
 ): SolidLayer | FootageLayer {
   if (isColorClip(clip)) {
-    return { kind: "solid", trackIndex, opacity, approximate, uuid: clip.id, color: clip.resource };
+    return {
+      kind: "solid",
+      trackIndex,
+      opacity,
+      approximate,
+      geometry,
+      uuid: clip.id,
+      color: clip.resource,
+    };
   }
   return {
     kind: "footage",
     trackIndex,
     opacity,
     approximate,
+    geometry,
     uuid: clip.id,
     resource: clip.resource,
     sourceFrame,
@@ -300,7 +384,12 @@ function clipLayer(
  * frames (so solo segments don't double-count the overlap), and a `dissolve(d)`
  * occupies `d` frames between its trimmed neighbours.
  */
-export function resolveLayerOnTrack(track: Track, trackIndex: number, frame: number): Layer | null {
+export function resolveLayerOnTrack(
+  track: Track,
+  trackIndex: number,
+  frame: number,
+  profile?: Timeline["profile"],
+): Layer | null {
   if (track.hidden) return null;
   const items = track.items;
   let cursor = 0;
@@ -339,6 +428,7 @@ export function resolveLayerOnTrack(track: Track, trackIndex: number, frame: num
         trackIndex,
         opacity: 1,
         approximate: fromApprox || toApprox,
+        geometry: FULL_GEOMETRY,
         from,
         to,
         progress,
@@ -362,8 +452,20 @@ export function resolveLayerOnTrack(track: Track, trackIndex: number, frame: num
     if (isGraphic(it)) return null; // graphic → drawn by the Remotion overlay, not here
     const segFrame = frame - start; // 0-based within the played segment
     const sourceFrame = Math.min(out, Math.max(inn, inn + segFrame));
-    const { opacity, approximate } = resolveClipVisual(it, segFrame, segLen);
-    return clipLayer(it, sourceFrame, trackIndex, opacity, approximate);
+    const { opacity, approximate, geometry } = resolveClipVisual(
+      it,
+      segFrame,
+      segLen,
+      profile ?? {
+        description: "fallback",
+        width: 1,
+        height: 1,
+        fps: [1, 1],
+        displayAspectNum: 1,
+        displayAspectDen: 1,
+      },
+    );
+    return clipLayer(it, sourceFrame, trackIndex, opacity, approximate, geometry);
   }
   return null;
 }
@@ -405,8 +507,35 @@ export function resolveLayers(timeline: Timeline, frame: number): ResolvedFrame 
     if (overlayTracks.has(i)) continue;
     const track = timeline.tracks.video[i];
     if (!track) continue;
-    const layer = resolveLayerOnTrack(track, i, frame);
+    const layer = resolveLayerOnTrack(track, i, frame, timeline.profile);
     if (layer) {
+      // A field qtblend is the authoritative transform for its B track. Prefer
+      // the last active transition, matching MLT document order when actions
+      // replace/append topology. Its keyframes live in absolute timeline space.
+      const bTrack = i + 1;
+      const blend = [...timeline.transitions]
+        .reverse()
+        .find(
+          (transition) =>
+            OVERLAY_BLEND_SERVICES.has(transition.service) &&
+            transition.bTrack === bTrack &&
+            frame >= transition.in &&
+            frame <= transition.out &&
+            transition.properties.rect != null,
+        );
+      if (blend) {
+        const resolved = resolveGeometry(
+          String(blend.properties.rect),
+          frame,
+          timeline.profile.width,
+          timeline.profile.height,
+          Math.max(1, blend.out + 1),
+        );
+        if (resolved) {
+          layer.geometry = resolved.geometry;
+          layer.opacity *= resolved.opacity;
+        }
+      }
       layers.push(layer);
       if (layer.approximate) hasApproximate = true;
     }
