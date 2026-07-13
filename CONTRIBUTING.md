@@ -38,12 +38,11 @@ you changed. A green browser run is not native-shell or package proof.
 | Core/CLI/LSP/state or ordinary repository code | `bun run test`, `bun run typecheck`, `bun run lint`, then `bun run verify:harness --profile developer --json` |
 | React viewer, timeline interaction, or preview server | `bun run drive verify`, then the developer profile above. The H04 runner uses packaged headless Playwright/Chromium; it does not require `agent-browser`. |
 | Tauri/WKWebView development integration | `bun run verify:tauri --provider auto` and `bun run verify:tauri-release-negative` |
-| Native macOS menus, windows, focus, or file dialogs | `bun run vm:macos:ready` (facade for start/sync/doctor/share/seed), plus the individually inspectable `bun run vm:macos:status`, `bun run vm:macos:doctor-guest`, `bun run vm:macos:verify-native`, and `bun run vm:macos:collect-evidence`, all targeting the hidden Tart guest |
+| Native macOS menus, windows, focus, or file dialogs | No unattended local automation. Verify the underlying action through the headless harness; use `/view` only for an explicitly requested human smoke check. |
 
 Never run native UI automation or computer-use against the active host desktop.
-The VM harness owns the dedicated macOS GUI session and supplies the opt-in
-environment to the guest. `/view` is only for an explicit human request to open
-a foreground window; it is not automated test evidence.
+`/view` is only for an explicit human request to open a foreground window; it is
+not automated test evidence.
 
 H07–H10 package and release claims require their own evidence; the development
 commands above do not satisfy them. Do not substitute `app:build`, an H04

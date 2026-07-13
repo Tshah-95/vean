@@ -6,7 +6,7 @@ Fixture manifest: `7e8a9684ccd86de9af5564636401f424e5c3709be4eca9ad305e57987aa81
 
 ## Measured result
 
-The hidden Tart guest ran macOS build `25E246` and the actual instrumented Tauri
+A prior dedicated macOS runner used build `25E246` and the actual instrumented Tauri
 WKWebView. Two distinct paths were measured:
 
 1. WKWebView `<video>` decoded the exact H.264 and VP9 fixtures. H.264 was

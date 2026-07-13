@@ -2,7 +2,7 @@
   "schema_version": "1.0.0",
   "runtime": {
     "chrome": "playwright/chromium/headless",
-    "wkwebview": "dedicated Tart macOS guest",
+    "wkwebview": "dedicated macOS runner (not configured locally)",
     "host_ui_forbidden": true
   },
   "sections": [

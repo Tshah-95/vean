@@ -1,6 +1,6 @@
 ---
 name: drive
-description: Prove a vean UI change in the real loopback editor without taking over the desktop. Use the packaged H04 Playwright/Chromium runner for completion evidence; use the optional agent-browser path only for ad-hoc headless inspection. Native shell automation routes to the hidden Tart guest, never the host login session.
+description: Prove a vean UI change in the real loopback editor without taking over the desktop. Use the packaged H04 Playwright/Chromium runner for completion evidence; use the optional agent-browser path only for ad-hoc headless inspection. Native shell UI is outside this unattended local harness.
 ---
 
 # Drive the vean app (prove your UI changes)
@@ -187,11 +187,10 @@ and never render in the webview.
   are thin wrappers over the registry: `vean action run media.root.add --input-json
   '{"path":"…"}' --json`, `vean action run project.current --json`, or POST
   `/api/action`. Same code path, no native dialog needed.
-- To test the **native shell itself** (the window actually opens, the menu fires,
-  a file panel is dismissed, focus is restored), use
-  `bun run vm:macos:verify-native`. It drives Appium/Mac2 inside the hidden Tart
-  guest and cannot take over the user's host desktop. `app:doctor -- --native` is
-  a build prerequisite check, not native interaction evidence.
+- The **native shell itself** (window activation, menus, file panels, and focus)
+  is outside this unattended local harness. `/view` may open it only after an
+  explicit human request; agents must not drive that host window or claim it as
+  automated evidence. `app:doctor -- --native` checks build prerequisites only.
 
 ## When to escalate past this skill
 
@@ -204,7 +203,7 @@ isn't the web UI:
 | Prove a `viewer/` or preview-server UI change (the 95% case) | `bun run drive verify` | packaged headless Playwright, DOM + persisted-document assertions, zero IPC mocking |
 | CI E2E that exercises the **native shell** incl. macOS | WebdriverIO `@wdio/tauri-service`, **embedded** provider (`tauri-plugin-wdio-webdriver`) | macOS WebDriver is supported *only* via the embedded server — `tauri-driver`/Selenium direct is Windows/Linux only (Apple ships no WKWebView driver) |
 | Real Playwright over the native webview | community `srsholmes/tauri-playwright` (in-app socket bridge) | not official; genuine CDP path is Windows/WebView2 only |
-| Native window / menu / dialog smoke test | `bun run vm:macos:verify-native` | Appium/Mac2 in the hidden Tart guest; never host computer-use |
+| Native window / menu / dialog smoke test | `/view`, after an explicit human request | human observation only; never unattended host computer-use or automated evidence |
 
 The reason the cheap path wins: vean deliberately keeps the app a thin HTTP
 consumer, so the thing worth testing (the editing UI) is a plain web app. Lean on

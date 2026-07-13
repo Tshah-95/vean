@@ -24,21 +24,15 @@ describe("harness guidance drift contract", () => {
       "verify:browser": "bun scripts/verify-browser.ts",
       "verify:tauri": "bun scripts/verify-tauri.ts",
       "verify:tauri-release-negative": "bun scripts/verify-tauri-instrumentation.ts",
-      "vm:macos:status": "bun scripts/vm/macos-vm.ts status",
-      "vm:macos:doctor-guest": "bun scripts/vm/macos-vm.ts doctor-guest",
-      "vm:macos:verify-native": "bun scripts/vm/macos-vm.ts verify-native",
-      "vm:macos:collect-evidence": "bun scripts/vm/macos-vm.ts collect-evidence",
     });
+
+    expect(Object.keys(scripts).filter((command) => command.startsWith("vm:"))).toEqual([]);
 
     for (const command of [
       "bun run verify:harness --profile developer --json",
       "bun run drive verify",
       "bun run verify:tauri --provider auto",
       "bun run verify:tauri-release-negative",
-      "bun run vm:macos:status",
-      "bun run vm:macos:doctor-guest",
-      "bun run vm:macos:verify-native",
-      "bun run vm:macos:collect-evidence",
     ]) {
       expect(guidance.contributing, `CONTRIBUTING documents ${command}`).toContain(command);
     }
@@ -62,7 +56,7 @@ describe("harness guidance drift contract", () => {
     }
   });
 
-  it("routes native automation exclusively to the hidden Tart guest", () => {
+  it("keeps native host UI outside the unattended local harness", () => {
     for (const text of [
       guidance.agents,
       guidance.readme,
@@ -70,12 +64,14 @@ describe("harness guidance drift contract", () => {
       guidance.drive,
       guidance.view,
     ]) {
-      expect(text).toContain("bun run vm:macos:verify-native");
+      expect(text).not.toContain("vm:macos");
+      expect(text).not.toContain("hidden Tart");
     }
     expect(guidance.contributing).toContain(
       "Never run native UI automation or computer-use against the active host desktop.",
     );
     expect(guidance.view).toContain("This exception is human-only and is never test evidence.");
+    expect(guidance.drive).toContain("outside this unattended local harness");
   });
 
   it("describes the implemented app without claiming unfinished release work", () => {

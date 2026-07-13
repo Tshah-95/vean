@@ -5,7 +5,7 @@
     {
       "id": "drive",
       "title": "Drive the vean app to prove a UI change works",
-      "description": "Prove a vean UI change in the real loopback editor without taking over the desktop. Use the packaged H04 Playwright/Chromium runner for completion evidence; use the optional agent-browser path only for ad-hoc headless inspection. Native shell automation routes to the hidden Tart guest, never the host login session.",
+      "description": "Prove a vean UI change in the real loopback editor without taking over the desktop. Use the packaged H04 Playwright/Chromium runner for completion evidence; use the optional agent-browser path only for ad-hoc headless inspection. Native shell UI is outside this unattended local harness.",
       "version": "1.0.0",
       "path": ".agents/skills/drive/SKILL.md",
       "tags": ["ui", "verification", "viewer"],

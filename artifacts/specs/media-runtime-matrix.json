@@ -17,7 +17,7 @@
       "identity_required": ["version", "executable_sha256", "gpu_backend", "codec_capabilities"]
     },
     "wkwebview": {
-      "runner": "dedicated Tart macOS guest",
+      "runner": "dedicated macOS runner (not configured locally)",
       "identity_required": ["macos_build", "webkit_version", "app_sha256", "codec_capabilities"]
     }
   },

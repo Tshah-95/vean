@@ -282,7 +282,7 @@ Add `scripts/vm/macos-package-vm.ts`, `config/vm/macos-package.json`,
 The config requires an immutable digest for a non-Xcode arm64 macOS 26 base, a
 unique VM/SSH/known-host identity, zero shares, and no clone/bootstrap command.
 The harness creates an ephemeral clone/reset for every baseline and mutant. The
-attestation records base digest, Tart config, VM UUID and hardware identity, OS
+attestation records base digest, runner config, VM UUID and hardware identity, OS
 build, snapshot hash, mounts, users, pre-run filesystem/process/listener state,
 and verifier identity. Dev-VM UUID/image/mount evidence or a reused dirty
 consumer fails `E_NOT_CLEAN_CONSUMER`.

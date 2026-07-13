@@ -25,9 +25,8 @@ exception for. Bringing the window forward is exactly what was requested.
 
 This exception is human-only and is never test evidence. Agents must not drive
 the foreground window after launch. Browser verification uses
-`bun run drive verify`; native menus, file dialogs, focus, and window lifecycle use
-`bun run vm:macos:verify-native` in the hidden Tart guest. Never use host
-computer-use for native verification.
+`bun run drive verify`. Native menus, file dialogs, focus, and window lifecycle
+have no unattended local oracle; never use host computer-use to manufacture one.
 
 ## The one fact that makes this correct
 

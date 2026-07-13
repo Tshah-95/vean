@@ -239,24 +239,10 @@ bun run verify:tauri --provider auto
 bun run verify:tauri-release-negative
 ```
 
-Native menus, focus, and file dialogs must never be automated in the host login
-session. Route them through the hidden Tart guest:
-
-```bash
-bun run vm:macos:status
-bun run vm:macos:ready
-bun run vm:macos:doctor-guest
-bun run vm:macos:verify-native
-bun run vm:macos:collect-evidence
-```
-
-`vm:macos:ready` is the normal daily entry point. It starts only the hidden
-guest, synchronizes `main` against the remote's independently advertised commit,
-checks key-only SSH and guest disk headroom, verifies read-only media shares,
-and refreshes the versioned guest-local H07 audiovisual smoke project (footage,
-PCM audio, and an alpha overlay, without overwriting edits). See
-[`artifacts/specs/macos-vm-harness.md`](artifacts/specs/macos-vm-harness.md) for
-safe project provisioning and allowlisted artifact collection.
+Native menus, focus, and file dialogs are not part of the unattended local
+harness. Test their underlying actions through the headless browser/action
+surfaces above. Use `/view` only when a human explicitly asks to inspect the
+foreground native app; agents must not drive that host window as test evidence.
 
 Those are development-app claims. They do not claim that unsigned packaging,
 signing/notarization, updater, release-lineage, or manual accessibility gates are
