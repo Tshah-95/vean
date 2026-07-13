@@ -122,6 +122,18 @@ interface VeanPerf {
 }
 type VeanPerfWindow = Window & { __veanPerf?: VeanPerf; __veanPerfReset?: () => void };
 
+export interface MediaProductSnapshot {
+  currentFrame: number;
+  shownFrame: number;
+  decodingKeys: string[];
+  cache: ReturnType<FrameCache["getStats"]>;
+  decoder: ReturnType<ParallelDecoder["getStats"]> | null;
+  audio: ReturnType<AudioGraph["getStats"]> | null;
+  resources: ReturnType<MediaResourceLedger["snapshot"]>;
+  contextRecovery: { losses: number; restores: number; contentValid: boolean } | null;
+  approximate: { active: boolean; hasStill: boolean; stillFrame: number | null };
+}
+
 export function FootageStage({
   timeline,
   revision,
@@ -696,6 +708,41 @@ export function FootageStage({
       (window as unknown as { __veanApprox?: unknown }).__veanApprox = undefined;
     };
   }, [approximate, stillUrl, requestExactStill]);
+
+  // Product-state bridge for native/browser assurance. It only observes the real
+  // FootageStage instances above: the actual pool, cache, graph, GL recovery and
+  // ownership ledger. The harness is forbidden from replacing these with ad-hoc
+  // canvases/workers/AudioContexts because that proves browser APIs, not Vean.
+  useEffect(() => {
+    const snapshot = (): MediaProductSnapshot => ({
+      currentFrame: clockInstance.getSnapshot().currentFrame,
+      shownFrame: shownFrame.current,
+      decodingKeys: [...decoding.current].sort(),
+      cache: cache.current.getStats(),
+      decoder: decoder.current?.getStats() ?? null,
+      audio: audioGraph.current?.getStats() ?? null,
+      resources: resourceLedger.current.snapshot(),
+      contextRecovery:
+        (
+          window as unknown as {
+            __veanContextRecovery?: { losses: number; restores: number; contentValid: boolean };
+          }
+        ).__veanContextRecovery ?? null,
+      approximate: {
+        active: approximate,
+        hasStill: stillUrl != null,
+        stillFrame: stillFrame.current,
+      },
+    });
+    (window as unknown as { __veanMediaState?: () => MediaProductSnapshot }).__veanMediaState =
+      snapshot;
+    return () => {
+      // Preserve a post-unmount snapshot function. It reads the same refs after all
+      // product cleanups have run, so the harness can require a balanced ledger.
+      (window as unknown as { __veanMediaState?: () => MediaProductSnapshot }).__veanMediaState =
+        snapshot;
+    };
+  }, [approximate, stillUrl, clockInstance]);
 
   // Headless LAYERS bridge (`window.__veanLayers`) — the no-UI handle the
   // §9-step-4 live-overlay gate uses to prove the footage compositor SKIPS a graphic

@@ -138,8 +138,24 @@ describe("H07 media assurance contract", () => {
       expect(plan.scenario_control).toBe(expected[controlId]);
       expect(plan.before_hash).not.toBe(plan.mutated_hash);
       const mutation = JSON.parse(readFileSync(plan.manifestPath, "utf8"));
-      expect(mutation.changed_paths).toHaveLength(1);
+      expect(mutation.changed_paths).toHaveLength(controlId === "nc-media-resilience" ? 2 : 1);
       expect(mutation.scenario_control).toBe(expected[controlId]);
+      if (controlId === "nc-media-resilience") {
+        const cleanupMutation = mutation.changed_paths.find((entry: { path: string }) =>
+          entry.path.endsWith("viewer/src/decode/frameCache.ts"),
+        );
+        expect(cleanupMutation).toBeTruthy();
+        const mutated = readFileSync(
+          resolve(dirname(plan.manifestPath), cleanupMutation.mutated_snapshot_path),
+          "utf8",
+        );
+        const before = readFileSync(
+          resolve(dirname(plan.manifestPath), cleanupMutation.before_snapshot_path),
+          "utf8",
+        );
+        const marker = 'this.ledger?.close("image-bitmap", e.key)';
+        expect(mutated.split(marker)).toHaveLength(before.split(marker).length - 1);
+      }
     }
     for (const path of mediaOracleImplementationPaths) {
       expect(statSync(resolve(repo, path)).isFile()).toBe(true);
@@ -155,6 +171,26 @@ describe("H07 media assurance contract", () => {
       expect(claim.oracle_implementation_paths).toEqual(mediaOracleImplementationPaths);
       expect(mediaClaimControlIds).toContain(claim.negative_control.control_id);
     }
+  });
+
+  it("runs ingest, fallback, alpha failure, and resilience through product surfaces", () => {
+    const runner = readFileSync(resolve(repo, "e2e/media/product-media.ts"), "utf8");
+    const legacy = readFileSync(resolve(repo, "e2e/media/media.spec.ts"), "utf8");
+    expect(runner).toContain("/api/source-proxy");
+    expect(runner).toContain("__veanMediaState");
+    expect(runner).toContain("__veanApprox");
+    expect(runner).toContain("__veanHarnessUnmount");
+    expect(runner).toContain("ALPHA_PROBE_UNKNOWN");
+    expect(runner).not.toMatch(/\bcreateImageBitmap\s*\(/);
+    expect(legacy).not.toMatch(/\bcreateImageBitmap\s*\(/);
+    expect(mediaOracleImplementationPaths).toEqual(
+      expect.arrayContaining([
+        "e2e/media/product-media.ts",
+        "viewer/src/components/FootageStage.tsx",
+        "viewer/src/decode/parallelDecoder.ts",
+        "viewer/src/decode/frameCache.ts",
+      ]),
+    );
   });
 
   it("independently validates WKWebView cell coverage and hashed artifacts", () => {

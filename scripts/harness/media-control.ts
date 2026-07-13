@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -30,7 +30,11 @@ export const mediaOracleImplementationPaths = [
   "scripts/harness/media-control-policy.json",
   "scripts/harness/media-domain-truth.ts",
   "e2e/media/media.spec.ts",
+  "e2e/media/product-media.ts",
   "e2e/media/performance-sample.ts",
+  "viewer/src/components/FootageStage.tsx",
+  "viewer/src/decode/parallelDecoder.ts",
+  "viewer/src/decode/frameCache.ts",
   "viewer/src/test-bridge/resourceLedger.ts",
   "scripts/media-fixtures.ts",
   "scripts/media-goldens.ts",
@@ -98,6 +102,46 @@ export function prepareMediaControl(controlId: MediaClaimControlId, requireBasel
   writeFileSync(mutatedSnapshot, mutated);
   const beforeHash = hash(beforeSnapshot);
   const mutatedHash = hash(mutatedSnapshot);
+  const changedPaths = [
+    {
+      path: relative(root, policyPath),
+      before_snapshot_path: relative(root, beforeSnapshot),
+      mutated_snapshot_path: relative(root, mutatedSnapshot),
+      before_hash: beforeHash,
+      mutated_hash: mutatedHash,
+      restored_hash: beforeHash,
+    },
+  ];
+  if (controlId === "nc-media-resilience") {
+    const cachePath = resolve(repo, "viewer/src/decode/frameCache.ts");
+    const cacheBeforeSnapshot = resolve(root, "frameCache.before.ts");
+    const cacheMutatedSnapshot = resolve(root, "frameCache.mutated.ts");
+    const cacheBefore =
+      !requireBaseline && existsSync(cacheBeforeSnapshot)
+        ? readFileSync(cacheBeforeSnapshot, "utf8")
+        : readFileSync(cachePath, "utf8");
+    const cleanup = `    for (const e of this.cache.values()) {\n      e.bitmap.close();\n      this.ledger?.close("image-bitmap", e.key);\n    }`;
+    if (!cacheBefore.includes(cleanup))
+      throw new Error(
+        "nc-media-resilience could not find the real FrameCache.clear cleanup branch",
+      );
+    const cacheAfter = cacheBefore.replace(
+      cleanup,
+      "    // nc-media-resilience: the real cache clear branch intentionally omits\n    // ImageBitmap.close and ownership-ledger close. The product runner must fail.",
+    );
+    writeFileSync(cacheBeforeSnapshot, cacheBefore);
+    writeFileSync(cacheMutatedSnapshot, cacheAfter);
+    const cacheBeforeHash = hash(cacheBeforeSnapshot);
+    const cacheMutatedHash = hash(cacheMutatedSnapshot);
+    changedPaths.push({
+      path: relative(root, cachePath),
+      before_snapshot_path: relative(root, cacheBeforeSnapshot),
+      mutated_snapshot_path: relative(root, cacheMutatedSnapshot),
+      before_hash: cacheBeforeHash,
+      mutated_hash: cacheMutatedHash,
+      restored_hash: cacheBeforeHash,
+    });
+  }
   writeFileSync(
     manifestPath,
     `${JSON.stringify(
@@ -108,16 +152,7 @@ export function prepareMediaControl(controlId: MediaClaimControlId, requireBasel
         mutated_hash: mutatedHash,
         scenario_control: mutatedPolicy.active_control,
         semantic_mutation: `activate the ${mutatedPolicy.active_control} media scenario control`,
-        changed_paths: [
-          {
-            path: relative(root, policyPath),
-            before_snapshot_path: relative(root, beforeSnapshot),
-            mutated_snapshot_path: relative(root, mutatedSnapshot),
-            before_hash: beforeHash,
-            mutated_hash: mutatedHash,
-            restored_hash: beforeHash,
-          },
-        ],
+        changed_paths: changedPaths,
       },
       null,
       2,

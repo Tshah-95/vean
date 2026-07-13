@@ -68,6 +68,9 @@ export interface ParallelDecoderStats {
   inFlight: number;
   /** Decode requests waiting for an in-flight slot. */
   queued: number;
+  activeClipIds: string[];
+  failures: number;
+  lastError: string | null;
 }
 
 let nextRequestId = 0;
@@ -85,6 +88,8 @@ export class ParallelDecoder {
   private decodes = 0;
   private staleDropped = 0;
   private totalDecodeMs = 0;
+  private failures = 0;
+  private lastError: string | null = null;
   private readonly ledger?: MediaResourceLedger;
 
   // Per-worker in-flight + overflow queue (the §8.5 cap). Keyed by worker index.
@@ -193,7 +198,11 @@ export class ParallelDecoder {
       });
       if (!resp.ok) throw new Error(resp.error ?? "open failed");
       return true;
-    })();
+    })().catch((error) => {
+      this.failures++;
+      this.lastError = error instanceof Error ? error.message : String(error);
+      throw error;
+    });
     w.clips.set(uuid, { opened, width, height });
     opened.catch(() => {
       // A failed open must not poison the cache — drop it so a retry can re-open
@@ -285,7 +294,11 @@ export class ParallelDecoder {
         clipId: uuid,
         time: sourceSeconds,
       });
-      if (!resp.bitmap) return null;
+      if (!resp.bitmap) {
+        this.failures++;
+        this.lastError = resp.error ?? "decoder returned no frame";
+        return null;
+      }
       // The decode finished AFTER a fresher seek — discard it (close the bitmap, do
       // not return it). This is the cancel that keeps the cache from filling with
       // frames the playhead already left.
@@ -326,6 +339,9 @@ export class ParallelDecoder {
       averageDecodeMs: this.decodes > 0 ? this.totalDecodeMs / this.decodes : 0,
       inFlight,
       queued,
+      activeClipIds: [...this.clipWorker.keys()].sort(),
+      failures: this.failures,
+      lastError: this.lastError,
     };
   }
 

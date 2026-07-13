@@ -17,8 +17,12 @@
   ],
   "scenarios": [
     {
+      "id": "media.chrome.ingest-product-path",
+      "predicate": "authorized H.264, HEVC, ProRes 422, and ProRes 4444 sources traverse /api/source-proxy, bind persisted source/artifact hashes plus codec/pixfmt/alpha lineage, and decode through FootageStage's ParallelDecoder and FrameCache"
+    },
+    {
       "id": "media.chrome.proxy-avc",
-      "predicate": "exact fixture bytes seek to requested timestamp and yield nonblank pixels"
+      "predicate": "the separately declared runtime-proxy cell decodes exact fixture bytes; it cannot substitute for an ingest cell"
     },
     {
       "id": "media.chrome.proxy-vp9-alpha",
@@ -38,11 +42,19 @@
     },
     {
       "id": "media.resources.lifecycle",
-      "predicate": "owned bitmap, worker, audio, and GL opens exactly balance closes"
+      "predicate": "actual FootageStage scrub/play/seek/unmount balances FrameCache bitmaps, ParallelDecoder workers, AudioGraph context, and GL ownership; mutation removes the real FrameCache.clear cleanup branch"
     },
     {
       "id": "media.webgl.context-loss",
-      "predicate": "forced loss restores a valid nonblack content pixel"
+      "predicate": "the actual FootageStage canvas loses/restores its GL context and republishes valid product state"
+    },
+    {
+      "id": "media.chrome.approx-filter-product-fallback",
+      "predicate": "a parsed unsupported filter activates FootageStage's approximate state and exactly one real /api/still request produces the exact-still product overlay"
+    },
+    {
+      "id": "media.chrome.alpha-probe-product-failure",
+      "predicate": "an authorized unprobeable source traverses the real viewer/server flow and fails with attributed ALPHA_PROBE_UNKNOWN; no opaque proxy is published"
     },
     {
       "id": "media.render.golden",
@@ -58,7 +70,7 @@
     },
     {
       "id": "media.wkwebview.matrix",
-      "predicate": "the same fixture hashes run through the H05 actual-WKWebView provider"
+      "predicate": "the same fixture hashes run through the actual WKWebView product provider; the measured Mediabunny CanvasSink decoder failure remains blocking and cannot be replaced by HTML video or Chrome evidence"
     },
     {
       "id": "media.performance.release-package",

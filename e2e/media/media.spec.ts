@@ -5,6 +5,7 @@ import { cpus, platform, release, totalmem } from "node:os";
 import { extname, join, resolve } from "node:path";
 import { startPreviewServer } from "../../src/preview/server";
 import { type Browser, type Page, chromium } from "../../viewer/node_modules/playwright/index.js";
+import { runProductMediaAssurance } from "./product-media";
 
 const repo = resolve(import.meta.dirname, "../..");
 const fixtureRoot = join(repo, "corpus/harness/media/assets");
@@ -209,112 +210,6 @@ async function attributedFailure(page: Page, url: string, kind: "video" | "audio
     { src: url, kind },
   );
 }
-async function resilience(page: Page) {
-  return await page.evaluate(
-    async ({ skipBitmapClose, skipContextRestore }) => {
-      const events: Array<{ op: "open" | "close"; kind: string; id: string }> = [];
-      const open = (kind: string, id: string) => events.push({ op: "open", kind, id });
-      const close = (kind: string, id: string) => events.push({ op: "close", kind, id });
-      const source = document.createElement("canvas");
-      source.width = 8;
-      source.height = 8;
-      const sourceContext = source.getContext("2d");
-      if (!sourceContext) throw new Error("bitmap-source-context-unavailable");
-      sourceContext.fillStyle = "#ff00ff";
-      sourceContext.fillRect(0, 0, 8, 8);
-      const bitmap = await createImageBitmap(source);
-      open("image-bitmap", "probe");
-      if (!skipBitmapClose) {
-        bitmap.close();
-        close("image-bitmap", "probe");
-      }
-      const worker = new Worker(
-        URL.createObjectURL(
-          new Blob(["onmessage=()=>postMessage('ok')"], { type: "text/javascript" }),
-        ),
-      );
-      open("decoder-worker", "probe");
-      worker.terminate();
-      close("decoder-worker", "probe");
-      const audio = new AudioContext();
-      open("audio-context", "probe");
-      await audio.close();
-      close("audio-context", "probe");
-      const canvas = document.createElement("canvas");
-      canvas.width = 4;
-      canvas.height = 4;
-      const gl = canvas.getContext("webgl2");
-      if (!gl) throw new Error("webgl2-unavailable");
-      open("webgl-context", "probe");
-      gl.clearColor(1, 0, 0, 1);
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      const ext = gl.getExtension("WEBGL_lose_context");
-      if (!ext) throw new Error("context-loss-extension-unavailable");
-      const lost = new Promise<void>((resolve) =>
-        canvas.addEventListener(
-          "webglcontextlost",
-          (event) => {
-            event.preventDefault();
-            resolve();
-          },
-          { once: true },
-        ),
-      );
-      const restored = new Promise<void>((resolve) =>
-        canvas.addEventListener("webglcontextrestored", () => resolve(), { once: true }),
-      );
-      ext.loseContext();
-      await Promise.race([
-        lost,
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("context-loss-timeout")), 2_000),
-        ),
-      ]);
-      if (skipContextRestore) {
-        close("webgl-context", "probe");
-        return {
-          events,
-          outstanding: [],
-          contextLossRecovered: false,
-          restoredPixel: [0, 0, 0, 0],
-        };
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      ext.restoreContext();
-      await Promise.race([
-        restored,
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("context-restore-timeout")), 2_000),
-        ),
-      ]);
-      gl.clearColor(0, 1, 0, 1);
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      const pixel = new Uint8Array(4);
-      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
-      close("webgl-context", "probe");
-      const outstanding = events.filter(
-        (event) =>
-          event.op === "open" &&
-          !events.some(
-            (candidate) =>
-              candidate.op === "close" &&
-              candidate.kind === event.kind &&
-              candidate.id === event.id,
-          ),
-      );
-      return {
-        events,
-        outstanding,
-        contextLossRecovered: pixel[1] === 255 && pixel[3] === 255,
-        restoredPixel: [...pixel],
-      };
-    },
-    {
-      skipBitmapClose: control === "missing-imagebitmap-close",
-      skipContextRestore: control === "unrestored-webgl-context-loss",
-    },
-  );
-}
 let browser: Browser | undefined;
 let preview: Awaited<ReturnType<typeof startPreviewServer>> | undefined;
 try {
@@ -388,8 +283,13 @@ try {
     video.src = "";
     return outcome;
   }, `${base}/stall.mp4`);
-  const recovery = await resilience(page);
   await page.close();
+  const product = await runProductMediaAssurance({
+    browser,
+    artifactDir:
+      process.env.VEAN_MEDIA_ARTIFACT_DIR ?? join(repo, ".vean/harness/media-product-local"),
+    control,
+  });
   if (live.avc.nonblackRatio < 0.2 || Math.abs(live.avc.currentTime - 0.5) > 0.12)
     throw new Error("AVC nonblank/seek predicate failed");
   if (live.vp9Alpha.nonblackRatio < 0.2 || live.vp9Alpha.alphaRatio < 0.2)
@@ -413,8 +313,6 @@ try {
     );
   if (stalled !== "stalled")
     throw new Error("stalled response was not distinguished from readiness");
-  if (!recovery.contextLossRecovered || recovery.outstanding.length > 0)
-    throw new Error("resource/context resilience predicate failed");
   if (control === "injected-long-task") throw new Error("injected long task crossed budget");
 
   const distributions: Array<{
@@ -488,7 +386,8 @@ try {
       },
     },
     stalled,
-    resilience: recovery,
+    product,
+    resilience: product.resilience,
     performance: {
       warmupRuns: 3,
       measuredFreshProcessRuns: measuredRuns,
