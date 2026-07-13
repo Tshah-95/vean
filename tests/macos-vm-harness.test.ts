@@ -351,9 +351,11 @@ describe("macOS Tart VM harness policy", () => {
     );
     expect(remote).toContain("git ls-remote --exit-code origin");
     expect(remote).toContain("test ! -e");
-    const archive = provisionArchiveGuestCommand("project", "a".repeat(40));
+    const archive = provisionArchiveGuestCommand("project", "a".repeat(40), "b".repeat(40));
     expect(archive).toContain("tar -xzf -");
     expect(archive).toContain("git init -q");
+    expect(archive).toContain("vean.sourceCommit");
+    expect(archive).toContain("vean.sourceTree");
   });
 
   it("collects only fixed artifact roots and refuses symlink-bearing payloads", () => {

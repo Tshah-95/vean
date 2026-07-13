@@ -1122,7 +1122,10 @@ function provisionRemoteProject(url: string, sourceRef: string, name: string): v
   print({ ok: true, vm: VM_NAME, project: target, source: "remote", sourceRef });
 }
 
-function createTrackedArchive(source: string, sourceRef: string): { archive: Buffer; sha: string } {
+function createTrackedArchive(
+  source: string,
+  sourceRef: string,
+): { archive: Buffer; sha: string; tree: string } {
   const root = realpathSync(source);
   if (!lstatSync(root).isDirectory()) fail(`local project source is not a directory: ${root}`);
   const inside = run("git", ["-C", root, "rev-parse", "--is-inside-work-tree"], {
@@ -1141,18 +1144,24 @@ function createTrackedArchive(source: string, sourceRef: string): { archive: Buf
   }
   const ref = validateSourceRef(sourceRef);
   const sha = run("git", ["-C", root, "rev-parse", "--verify", `${ref}^{commit}`]).stdout.trim();
+  const tree = run("git", ["-C", root, "rev-parse", "--verify", `${sha}^{tree}`]).stdout.trim();
   const temporary = mkdtempSync(join(stateDir(), "project-archive-"));
   const archivePath = join(temporary, "tracked.tar.gz");
   try {
     run("git", ["-C", root, "archive", "--format=tar.gz", "-o", archivePath, sha]);
-    return { archive: readFileSync(archivePath), sha };
+    return { archive: readFileSync(archivePath), sha, tree };
   } finally {
     rmSync(temporary, { recursive: true, force: true });
   }
 }
 
-export function provisionArchiveGuestCommand(name: string, sourceSha: string): string {
+export function provisionArchiveGuestCommand(
+  name: string,
+  sourceSha: string,
+  sourceTree: string,
+): string {
   if (!/^[0-9a-f]{40}$/.test(sourceSha)) fail(`invalid archive source commit: ${sourceSha}`);
+  if (!/^[0-9a-f]{40,64}$/.test(sourceTree)) fail(`invalid archive source tree: ${sourceTree}`);
   const target = guestProjectPath(name);
   return [
     "set -euo pipefail",
@@ -1167,6 +1176,7 @@ export function provisionArchiveGuestCommand(name: string, sourceSha: string): s
     "git add -A",
     `git -c user.name=vean-harness -c user.email=vean-harness@invalid commit -q -m ${shellQuote(`Provision tracked snapshot ${sourceSha}`)}`,
     `git config vean.sourceCommit ${shellQuote(sourceSha)}`,
+    `git config vean.sourceTree ${shellQuote(sourceTree)}`,
     'test -z "$(git status --porcelain)"',
     "cd ..",
     'mv "$tmp" "$target"',
@@ -1179,8 +1189,8 @@ function provisionArchiveProject(source: string, sourceRef: string, name: string
   assertRunning();
   ensureStateDir();
   const target = guestProjectPath(name);
-  const { archive, sha } = createTrackedArchive(source, sourceRef);
-  runGuestCommandWithInput(provisionArchiveGuestCommand(name, sha), archive);
+  const { archive, sha, tree } = createTrackedArchive(source, sourceRef);
+  runGuestCommandWithInput(provisionArchiveGuestCommand(name, sha, tree), archive);
   print({
     ok: true,
     vm: VM_NAME,
@@ -1188,6 +1198,7 @@ function provisionArchiveProject(source: string, sourceRef: string, name: string
     source: "tracked-archive",
     sourceRef,
     sourceSha: sha,
+    sourceTree: tree,
     bytes: archive.length,
     excludesUntrackedFiles: true,
   });

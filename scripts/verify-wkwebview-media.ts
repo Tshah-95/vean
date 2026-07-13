@@ -75,9 +75,16 @@ const matrix = policies[0] as {
   required_cells: Array<{ id: string; wkwebview: string; source: string; derived: string }>;
 };
 
-const sourceSha =
-  runMaybe(["git", "config", "--get", "vean.sourceCommit"]) ?? run(["git", "rev-parse", "HEAD"]);
+const sourceSha = run(["git", "rev-parse", "HEAD"]);
 const treeHash = run(["git", "rev-parse", "HEAD^{tree}"]);
+const archiveSourceSha = runMaybe(["git", "config", "--get", "vean.sourceCommit"]);
+const archiveSourceTreeHash = runMaybe(["git", "config", "--get", "vean.sourceTree"]);
+if (Boolean(archiveSourceSha) !== Boolean(archiveSourceTreeHash)) {
+  throw new Error("E_H07_WK_ARCHIVE_PROVENANCE_INCOMPLETE");
+}
+if (archiveSourceTreeHash && archiveSourceTreeHash !== treeHash) {
+  throw new Error("E_H07_WK_ARCHIVE_TREE_MISMATCH");
+}
 if (run(["git", "status", "--porcelain"]) !== "") throw new Error("E_H07_WK_SOURCE_DIRTY");
 const developerCanary = join(repo, ".vean/harness/developer-state-canary");
 mkdirSync(dirname(developerCanary), { recursive: true });
@@ -252,7 +259,11 @@ const artifactFiles: Record<string, string> = {
   "runtime:screenshot": native.screenshotPath,
   "runtime:wdio-stdout": join(outputRoot, "wdio.stdout.log"),
   "runtime:wdio-stderr": join(outputRoot, "wdio.stderr.log"),
+  "runtime:provider-report": nativePath,
 };
+const evidenceBinaryPath = join(outputRoot, "app-executable");
+copyFileSync(binaryPath, evidenceBinaryPath);
+artifactFiles["runtime:app-binary"] = evidenceBinaryPath;
 const cells = native.cells.map((cell) => {
   const declaration = matrix.required_cells.find((candidate) => candidate.id === cell.id);
   if (!declaration) throw new Error(`E_H07_WK_UNDECLARED_CELL:${cell.id}`);
@@ -293,7 +304,19 @@ const evidence = {
   status: "verified",
   fixture_manifest_sha256: expectedManifestSha,
   policy_sha256s: policySha256s,
-  source: { git_sha: sourceSha, git_tree_hash: treeHash, git_status_clean: true },
+  source: {
+    git_sha: sourceSha,
+    git_tree_hash: treeHash,
+    git_status_clean: true,
+    archive_provenance:
+      archiveSourceSha && archiveSourceTreeHash
+        ? {
+            kind: "tracked_archive",
+            source_git_sha: archiveSourceSha,
+            source_git_tree_hash: archiveSourceTreeHash,
+          }
+        : null,
+  },
   runtime: {
     runner: "tauri/wkwebview",
     macos_build: macosBuild,
@@ -305,6 +328,8 @@ const evidence = {
     final_url: native.runtime.finalUrl,
     user_agent: native.runtime.userAgent,
     codec_capabilities: Object.fromEntries(cells.map((cell) => [cell.id, cell.outcome])),
+    app_binary_artifact_id: "runtime:app-binary",
+    provider_report_artifact_id: "runtime:provider-report",
   },
   artifacts: Object.fromEntries(
     Object.entries(artifactFiles).map(([id, path]) => [
@@ -324,6 +349,8 @@ try {
   verifyExternalMediaEvidence({
     evidencePath: pendingPath,
     kind: "wkwebview-media-runtime",
+    expectedSourceGitSha: archiveSourceSha ?? sourceSha,
+    expectedSourceGitTreeHash: archiveSourceTreeHash ?? treeHash,
     fixtureManifestSha256: expectedManifestSha,
     policySha256s,
     requiredCellOutcomes: Object.fromEntries(

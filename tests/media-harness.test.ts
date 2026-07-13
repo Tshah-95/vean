@@ -1,6 +1,15 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -152,6 +161,9 @@ describe("H07 media assurance contract", () => {
     const root = mkdtempSync(join(tmpdir(), "vean-wk-media-evidence-"));
     const artifact = join(root, "runtime.json");
     writeFileSync(artifact, "observed runtime data\n");
+    const binary = join(root, "app-executable");
+    writeFileSync(binary, "actual app executable bytes\n");
+    const providerReport = join(root, "native-session.json");
     const cellRuntime = join(root, "cell-runtime.json");
     const cellFailure = join(root, "cell-failure.json");
     const evidencePath = join(root, "evidence.json");
@@ -166,21 +178,26 @@ describe("H07 media assurance contract", () => {
         git_sha: "a".repeat(40),
         git_tree_hash: "b".repeat(40),
         git_status_clean: true,
+        archive_provenance: null,
       },
       runtime: {
         runner: "tauri/wkwebview",
         macos_build: "25E246",
         webkit_version: "WebKit-1",
-        app_sha256: "c".repeat(64),
+        app_sha256: hash(binary),
         app_bundle_id: "studio.vean.desktop.harness",
         app_pid: 4242,
         webdriver_session_id: "actual-session",
         final_url: "http://127.0.0.1:43127/?route=timeline%3Amain",
         user_agent: "Mozilla/5.0 AppleWebKit/620.4",
         codec_capabilities: { h264: true },
+        app_binary_artifact_id: "runtime:app-binary",
+        provider_report_artifact_id: "runtime:provider-report",
       },
       artifacts: {
         runtime: { path: "runtime.json", sha256: hash(artifact) },
+        "runtime:app-binary": { path: "app-executable", sha256: hash(binary) },
+        "runtime:provider-report": { path: "native-session.json", sha256: "pending" },
         "cell:runtime.proxy-avc": { path: "cell-runtime.json", sha256: "pending" },
         "cell:failure": { path: "cell-failure.json", sha256: "pending" },
       },
@@ -212,6 +229,20 @@ describe("H07 media assurance contract", () => {
     const failureCell = evidence.cells[1];
     if (!runtimeCell || !failureCell) throw new Error("test evidence cells are incomplete");
     writeFileSync(
+      providerReport,
+      `${JSON.stringify({
+        sourceSha: evidence.source.git_sha,
+        process: {
+          executableHash: evidence.runtime.app_sha256,
+          observedBundleId: evidence.runtime.app_bundle_id,
+        },
+        runtime: {
+          finalUrl: evidence.runtime.final_url,
+          webkitVersion: evidence.runtime.webkit_version,
+        },
+      })}\n`,
+    );
+    writeFileSync(
       cellRuntime,
       `${JSON.stringify({ id: runtimeCell.id, outcome: runtimeCell.outcome, observations: runtimeCell.observations })}\n`,
     );
@@ -221,10 +252,13 @@ describe("H07 media assurance contract", () => {
     );
     evidence.artifacts["cell:runtime.proxy-avc"].sha256 = hash(cellRuntime);
     evidence.artifacts["cell:failure"].sha256 = hash(cellFailure);
+    evidence.artifacts["runtime:provider-report"].sha256 = hash(providerReport);
     writeFileSync(evidencePath, `${JSON.stringify(evidence)}\n`);
     const options = {
       evidencePath,
       kind: "wkwebview-media-runtime" as const,
+      expectedSourceGitSha: "a".repeat(40),
+      expectedSourceGitTreeHash: "b".repeat(40),
       fixtureManifestSha256: "f".repeat(64),
       policySha256s,
       requiredCellOutcomes: {
@@ -233,6 +267,151 @@ describe("H07 media assurance contract", () => {
       },
     };
     expect(verifyExternalMediaEvidence(options)).toMatchObject({ status: "verified" });
+
+    writeFileSync(
+      evidencePath,
+      `${JSON.stringify({
+        ...evidence,
+        source: { ...evidence.source, git_sha: "c".repeat(40) },
+      })}\n`,
+    );
+    expect(() => verifyExternalMediaEvidence(options)).toThrow("E_MEDIA_EXTERNAL_SOURCE_STALE_SHA");
+
+    writeFileSync(
+      evidencePath,
+      `${JSON.stringify({
+        ...evidence,
+        source: { ...evidence.source, git_tree_hash: "c".repeat(40) },
+      })}\n`,
+    );
+    expect(() => verifyExternalMediaEvidence(options)).toThrow(
+      "E_MEDIA_EXTERNAL_SOURCE_STALE_TREE",
+    );
+
+    const archivedEvidence = {
+      ...evidence,
+      source: {
+        ...evidence.source,
+        git_sha: "c".repeat(40),
+        archive_provenance: {
+          kind: "tracked_archive",
+          source_git_sha: "a".repeat(40),
+          source_git_tree_hash: "b".repeat(40),
+        },
+      },
+    };
+    writeFileSync(evidencePath, `${JSON.stringify(archivedEvidence)}\n`);
+    expect(() => verifyExternalMediaEvidence(options)).toThrow(
+      "E_MEDIA_EXTERNAL_WK_PROVIDER_REPORT_MISMATCH",
+    );
+    writeFileSync(
+      providerReport,
+      `${JSON.stringify({
+        sourceSha: archivedEvidence.source.git_sha,
+        process: {
+          executableHash: evidence.runtime.app_sha256,
+          observedBundleId: evidence.runtime.app_bundle_id,
+        },
+        runtime: {
+          finalUrl: evidence.runtime.final_url,
+          webkitVersion: evidence.runtime.webkit_version,
+        },
+      })}\n`,
+    );
+    archivedEvidence.artifacts["runtime:provider-report"].sha256 = hash(providerReport);
+    writeFileSync(evidencePath, `${JSON.stringify(archivedEvidence)}\n`);
+    expect(verifyExternalMediaEvidence(options)).toMatchObject({ status: "verified" });
+    writeFileSync(
+      evidencePath,
+      `${JSON.stringify({
+        ...archivedEvidence,
+        source: {
+          ...archivedEvidence.source,
+          archive_provenance: {
+            ...archivedEvidence.source.archive_provenance,
+            source_git_sha: "d".repeat(40),
+          },
+        },
+      })}\n`,
+    );
+    expect(() => verifyExternalMediaEvidence(options)).toThrow("E_MEDIA_EXTERNAL_SOURCE_STALE_SHA");
+    writeFileSync(
+      evidencePath,
+      `${JSON.stringify({
+        ...archivedEvidence,
+        source: { ...archivedEvidence.source, git_tree_hash: "d".repeat(40) },
+      })}\n`,
+    );
+    expect(() => verifyExternalMediaEvidence(options)).toThrow(
+      "E_MEDIA_EXTERNAL_ARCHIVE_TREE_MISMATCH",
+    );
+
+    writeFileSync(providerReport, "changed provider report\n");
+    writeFileSync(evidencePath, `${JSON.stringify(archivedEvidence)}\n`);
+    expect(() => verifyExternalMediaEvidence(options)).toThrow("E_MEDIA_EXTERNAL_ARTIFACT_DRIFT");
+    writeFileSync(binary, "changed app executable bytes\n");
+    expect(() => verifyExternalMediaEvidence(options)).toThrow("E_MEDIA_EXTERNAL_ARTIFACT_DRIFT");
+
+    writeFileSync(binary, "actual app executable bytes\n");
+    writeFileSync(
+      providerReport,
+      `${JSON.stringify({
+        sourceSha: archivedEvidence.source.git_sha,
+        process: {
+          executableHash: evidence.runtime.app_sha256,
+          observedBundleId: evidence.runtime.app_bundle_id,
+        },
+        runtime: {
+          finalUrl: evidence.runtime.final_url,
+          webkitVersion: evidence.runtime.webkit_version,
+        },
+      })}\n`,
+    );
+    archivedEvidence.artifacts["runtime:provider-report"].sha256 = hash(providerReport);
+    const assertRejectedArtifact = (path: string, message: string) => {
+      writeFileSync(
+        evidencePath,
+        `${JSON.stringify({
+          ...archivedEvidence,
+          artifacts: {
+            ...archivedEvidence.artifacts,
+            attack: { path, sha256: hash(artifact) },
+          },
+        })}\n`,
+      );
+      expect(() => verifyExternalMediaEvidence(options)).toThrow(message);
+    };
+    const outside = join(dirname(root), `${root.split("/").at(-1)}-outside`);
+    writeFileSync(outside, "observed runtime data\n");
+    symlinkSync(outside, join(root, "outside-link"));
+    assertRejectedArtifact("outside-link", "E_MEDIA_EXTERNAL_ARTIFACT_SYMLINK");
+    symlinkSync("runtime.json", join(root, "inside-link"));
+    assertRejectedArtifact("inside-link", "E_MEDIA_EXTERNAL_ARTIFACT_SYMLINK");
+    mkdirSync(join(root, "actual-parent"));
+    writeFileSync(join(root, "actual-parent/nested.json"), "observed runtime data\n");
+    symlinkSync("actual-parent", join(root, "linked-parent"));
+    assertRejectedArtifact("linked-parent/nested.json", "E_MEDIA_EXTERNAL_ARTIFACT_SYMLINK_PARENT");
+    assertRejectedArtifact("evidence.json", "E_MEDIA_EXTERNAL_ARTIFACT_PATH_ESCAPE");
+    mkdirSync(join(root, "directory-artifact"));
+    assertRejectedArtifact("directory-artifact", "E_MEDIA_EXTERNAL_ARTIFACT_NOT_REGULAR");
+    linkSync(artifact, join(root, "hardlink-artifact"));
+    assertRejectedArtifact("hardlink-artifact", "E_MEDIA_EXTERNAL_ARTIFACT_HARDLINK");
+    rmSync(join(root, "hardlink-artifact"));
+    writeFileSync(
+      providerReport,
+      `${JSON.stringify({
+        sourceSha: evidence.source.git_sha,
+        process: {
+          executableHash: evidence.runtime.app_sha256,
+          observedBundleId: evidence.runtime.app_bundle_id,
+        },
+        runtime: {
+          finalUrl: evidence.runtime.final_url,
+          webkitVersion: evidence.runtime.webkit_version,
+        },
+      })}\n`,
+    );
+    evidence.artifacts["runtime:provider-report"].sha256 = hash(providerReport);
 
     writeFileSync(
       evidencePath,
@@ -264,6 +443,7 @@ describe("H07 media assurance contract", () => {
         git_sha: "a".repeat(40),
         git_tree_hash: "b".repeat(40),
         git_status_clean: true,
+        archive_provenance: null,
       },
       runtime: {
         runner: "installed-release-package",
@@ -295,6 +475,8 @@ describe("H07 media assurance contract", () => {
     const options = {
       evidencePath,
       kind: "release-package-performance" as const,
+      expectedSourceGitSha: "a".repeat(40),
+      expectedSourceGitTreeHash: "b".repeat(40),
       fixtureManifestSha256: "f".repeat(64),
       policySha256s,
       performanceSampling: { warmupRuns: 1, measuredRuns: 2, samplesPerRun: 3 },

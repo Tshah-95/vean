@@ -66,6 +66,13 @@ if (accepting) {
 function hash(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
+function gitValue(args: string[]): string {
+  const result = Bun.spawnSync(["git", ...args], { cwd: repo, stdout: "pipe", stderr: "pipe" });
+  if (result.exitCode !== 0) throw new Error(`E_MEDIA_SOURCE_IDENTITY:${args.join(" ")}`);
+  return result.stdout.toString().trim();
+}
+const expectedSourceGitSha = gitValue(["rev-parse", "HEAD"]);
+const expectedSourceGitTreeHash = gitValue(["rev-parse", "HEAD^{tree}"]);
 const claimBySuite = {
   live: {
     claimId: "claim-live-media",
@@ -221,6 +228,8 @@ if (accepting) {
     return verifyExternalMediaEvidence({
       evidencePath: resolve(repo, path),
       kind,
+      expectedSourceGitSha,
+      expectedSourceGitTreeHash,
       fixtureManifestSha256,
       policySha256s,
       requiredCellOutcomes:

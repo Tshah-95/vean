@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
+import type { Stats } from "node:fs";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 type JsonObject = Record<string, unknown>;
 
@@ -9,6 +10,8 @@ export type ExternalMediaEvidenceKind = "wkwebview-media-runtime" | "release-pac
 export type ExternalMediaEvidenceOptions = {
   evidencePath: string;
   kind: ExternalMediaEvidenceKind;
+  expectedSourceGitSha: string;
+  expectedSourceGitTreeHash: string;
   fixtureManifestSha256: string;
   policySha256s: Record<string, string>;
   requiredCellOutcomes?: Record<string, string>;
@@ -52,15 +55,40 @@ function sameJson(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-function assertSourceIdentity(source: unknown): void {
+function assertGitObjectId(value: unknown, label: string): string {
+  const id = string(value, label);
+  if (!/^[a-f0-9]{40,64}$/.test(id)) throw new Error(`E_MEDIA_EXTERNAL_${label}`);
+  return id;
+}
+
+function assertSourceIdentity(
+  source: unknown,
+  expectedGitSha: string,
+  expectedGitTreeHash: string,
+): string {
   if (!object(source)) throw new Error("E_MEDIA_EXTERNAL_SOURCE_IDENTITY");
-  if (!/^[a-f0-9]{40,64}$/.test(string(source.git_sha, "SOURCE_SHA"))) {
-    throw new Error("E_MEDIA_EXTERNAL_SOURCE_SHA");
-  }
-  if (!/^[a-f0-9]{40,64}$/.test(string(source.git_tree_hash, "SOURCE_TREE"))) {
-    throw new Error("E_MEDIA_EXTERNAL_SOURCE_TREE");
-  }
+  const providerGitSha = assertGitObjectId(source.git_sha, "SOURCE_SHA");
+  const providerTreeHash = assertGitObjectId(source.git_tree_hash, "SOURCE_TREE");
   if (source.git_status_clean !== true) throw new Error("E_MEDIA_EXTERNAL_SOURCE_DIRTY");
+  const provenance = source.archive_provenance;
+  if (provenance === null) {
+    if (providerGitSha !== expectedGitSha) throw new Error("E_MEDIA_EXTERNAL_SOURCE_STALE_SHA");
+    if (providerTreeHash !== expectedGitTreeHash) {
+      throw new Error("E_MEDIA_EXTERNAL_SOURCE_STALE_TREE");
+    }
+    return providerGitSha;
+  }
+  if (!object(provenance) || provenance.kind !== "tracked_archive") {
+    throw new Error("E_MEDIA_EXTERNAL_ARCHIVE_PROVENANCE");
+  }
+  const archivedSha = assertGitObjectId(provenance.source_git_sha, "ARCHIVE_SOURCE_SHA");
+  const archivedTree = assertGitObjectId(provenance.source_git_tree_hash, "ARCHIVE_SOURCE_TREE");
+  if (archivedSha !== expectedGitSha) throw new Error("E_MEDIA_EXTERNAL_SOURCE_STALE_SHA");
+  if (archivedTree !== expectedGitTreeHash) throw new Error("E_MEDIA_EXTERNAL_SOURCE_STALE_TREE");
+  if (providerTreeHash !== archivedTree) {
+    throw new Error("E_MEDIA_EXTERNAL_ARCHIVE_TREE_MISMATCH");
+  }
+  return providerGitSha;
 }
 
 function assertRuntime(kind: ExternalMediaEvidenceKind, runtime: unknown): void {
@@ -98,6 +126,29 @@ function assertRuntime(kind: ExternalMediaEvidenceKind, runtime: unknown): void 
   }
 }
 
+function assertRegularUnlinkedFile(path: string, label: string): Stats {
+  const entry = lstatSync(path);
+  if (entry.isSymbolicLink()) throw new Error(`E_MEDIA_EXTERNAL_ARTIFACT_SYMLINK:${label}`);
+  if (!entry.isFile()) throw new Error(`E_MEDIA_EXTERNAL_ARTIFACT_NOT_REGULAR:${label}`);
+  if (entry.nlink !== 1) throw new Error(`E_MEDIA_EXTERNAL_ARTIFACT_HARDLINK:${label}`);
+  return statSync(path);
+}
+
+function assertNoSymlinkParents(root: string, path: string, label: string): void {
+  const nested = relative(root, dirname(path));
+  if (!nested) return;
+  let current = root;
+  for (const part of nested.split(sep)) {
+    current = resolve(current, part);
+    const entry = lstatSync(current);
+    if (entry.isSymbolicLink())
+      throw new Error(`E_MEDIA_EXTERNAL_ARTIFACT_SYMLINK_PARENT:${label}`);
+    if (!entry.isDirectory()) {
+      throw new Error(`E_MEDIA_EXTERNAL_ARTIFACT_PARENT_NOT_DIRECTORY:${label}`);
+    }
+  }
+}
+
 function assertArtifacts(
   evidencePath: string,
   artifacts: unknown,
@@ -105,17 +156,48 @@ function assertArtifacts(
   if (!object(artifacts) || Object.keys(artifacts).length === 0) {
     throw new Error("E_MEDIA_EXTERNAL_ARTIFACTS_REQUIRED");
   }
-  const root = dirname(resolve(evidencePath));
+  const absoluteEvidencePath = resolve(evidencePath);
+  const root = dirname(absoluteEvidencePath);
+  const rootEntry = lstatSync(root);
+  if (rootEntry.isSymbolicLink() || !rootEntry.isDirectory()) {
+    throw new Error("E_MEDIA_EXTERNAL_ARTIFACT_ROOT");
+  }
+  const realRoot = realpathSync(root);
+  const evidenceStat = assertRegularUnlinkedFile(absoluteEvidencePath, "evidence");
   const verified: Record<string, { sha256: string; path: string }> = {};
+  const verifiedInodes = new Set<string>();
   for (const [id, entry] of Object.entries(artifacts)) {
     if (!object(entry)) throw new Error(`E_MEDIA_EXTERNAL_ARTIFACT_SCHEMA:${id}`);
-    const path = resolve(root, string(entry.path, `ARTIFACT_PATH:${id}`));
-    const expected = string(entry.sha256, `ARTIFACT_SHA:${id}`);
-    const escaped = relative(root, path);
-    if (escaped.startsWith("..") || resolve(path) === resolve(evidencePath)) {
+    const declaredPath = string(entry.path, `ARTIFACT_PATH:${id}`);
+    if (isAbsolute(declaredPath) || declaredPath.split(/[\\/]/).includes("..")) {
       throw new Error(`E_MEDIA_EXTERNAL_ARTIFACT_PATH_ESCAPE:${id}`);
     }
-    if (!statSync(path).isFile() || sha256(path) !== expected) {
+    const path = resolve(root, declaredPath);
+    const expected = string(entry.sha256, `ARTIFACT_SHA:${id}`);
+    const escaped = relative(root, path);
+    if (escaped.startsWith("..") || isAbsolute(escaped) || path === absoluteEvidencePath) {
+      throw new Error(`E_MEDIA_EXTERNAL_ARTIFACT_PATH_ESCAPE:${id}`);
+    }
+    assertNoSymlinkParents(root, path, id);
+    const artifactStat = assertRegularUnlinkedFile(path, id);
+    const realPath = realpathSync(path);
+    const realEscaped = relative(realRoot, realPath);
+    if (
+      realEscaped.startsWith("..") ||
+      isAbsolute(realEscaped) ||
+      realPath === realpathSync(absoluteEvidencePath)
+    ) {
+      throw new Error(`E_MEDIA_EXTERNAL_ARTIFACT_PATH_ESCAPE:${id}`);
+    }
+    const inode = `${artifactStat.dev}:${artifactStat.ino}`;
+    if (
+      (artifactStat.dev === evidenceStat.dev && artifactStat.ino === evidenceStat.ino) ||
+      verifiedInodes.has(inode)
+    ) {
+      throw new Error(`E_MEDIA_EXTERNAL_ARTIFACT_ALIAS:${id}`);
+    }
+    verifiedInodes.add(inode);
+    if (sha256(path) !== expected) {
       throw new Error(`E_MEDIA_EXTERNAL_ARTIFACT_DRIFT:${id}`);
     }
     verified[id] = { sha256: expected, path };
@@ -244,6 +326,37 @@ function assertWkCells(
   }
 }
 
+function assertWkRuntimeArtifacts(
+  runtime: JsonObject,
+  artifacts: Record<string, { sha256: string; path: string }>,
+  providerGitSha: string,
+): void {
+  const binaryId = string(runtime.app_binary_artifact_id, "WK_APP_BINARY_ARTIFACT");
+  const reportId = string(runtime.provider_report_artifact_id, "WK_PROVIDER_REPORT_ARTIFACT");
+  const binary = artifacts[binaryId];
+  const report = artifacts[reportId];
+  if (!binary || binaryId !== "runtime:app-binary") {
+    throw new Error("E_MEDIA_EXTERNAL_WK_APP_BINARY_ARTIFACT");
+  }
+  if (!report || reportId !== "runtime:provider-report") {
+    throw new Error("E_MEDIA_EXTERNAL_WK_PROVIDER_REPORT_ARTIFACT");
+  }
+  if (binary.sha256 !== runtime.app_sha256) throw new Error("E_MEDIA_EXTERNAL_WK_APP_BINARY_HASH");
+  const providerReport = JSON.parse(readFileSync(report.path, "utf8")) as unknown;
+  if (
+    !object(providerReport) ||
+    !object(providerReport.process) ||
+    !object(providerReport.runtime) ||
+    providerReport.sourceSha !== providerGitSha ||
+    providerReport.process.executableHash !== runtime.app_sha256 ||
+    providerReport.process.observedBundleId !== runtime.app_bundle_id ||
+    providerReport.runtime.finalUrl !== runtime.final_url ||
+    providerReport.runtime.webkitVersion !== runtime.webkit_version
+  ) {
+    throw new Error("E_MEDIA_EXTERNAL_WK_PROVIDER_REPORT_MISMATCH");
+  }
+}
+
 function nearestRank(values: number[], percentile: number): number {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.max(0, Math.ceil((percentile / 100) * sorted.length) - 1)] ?? 0;
@@ -337,12 +450,17 @@ export function verifyExternalMediaEvidence(options: ExternalMediaEvidenceOption
   if (!sameJson(evidence.policy_sha256s, options.policySha256s)) {
     throw new Error("E_MEDIA_EXTERNAL_POLICY_LINEAGE");
   }
-  assertSourceIdentity(evidence.source);
+  const providerGitSha = assertSourceIdentity(
+    evidence.source,
+    options.expectedSourceGitSha,
+    options.expectedSourceGitTreeHash,
+  );
   assertRuntime(options.kind, evidence.runtime);
   const artifacts = assertArtifacts(evidencePath, evidence.artifacts);
   const artifactIds = new Set(Object.keys(artifacts));
   if (options.kind === "wkwebview-media-runtime") {
     if (!options.requiredCellOutcomes) throw new Error("E_MEDIA_EXTERNAL_WK_DECLARATIONS");
+    assertWkRuntimeArtifacts(evidence.runtime as JsonObject, artifacts, providerGitSha);
     assertWkCells(evidence.cells, options.requiredCellOutcomes, artifacts);
   } else {
     if (!options.performanceSampling || !options.performanceBudgets || !options.functionalCaps) {
